@@ -2,17 +2,17 @@
 //   Netra Voice Assistant - One-Shot Install (Background Script)
 //
 //   USAGE:
-//     1. Create a scoped app "Netra Voice Assistant" with scope "x_netra"
+//     1. Create a scoped app "Netra Voice Assistant" with scope "x_196061_netra"
 //        (System Applications -> My Company Applications -> Create new)
 //     2. System Definition -> Scripts - Background
 //     3. Paste this entire script. Confirm "Run this script in:" shows your
-//        x_netra scope (or "global" if your instance allows cross-scope writes).
+//        x_196061_netra scope (or "global" if your instance allows cross-scope writes).
 //     4. Click Run script.
 //
 //   IDEMPOTENT - re-running updates records in place, does not duplicate.
 //
 //   This script creates EVERYTHING for the Netra app:
-//     - 2 tables  (x_netra_notification, x_netra_user_pref)
+//     - 2 tables  (x_196061_netra_notification, x_196061_netra_user_pref)
 //     - 4 Script Includes  (NetraIntent, NetraTools, NetraResponder, NetraScanner)
 //     - 1 Business Rule    (Netra Notify On Comment)
 //     - 1 Scheduled Job    (Netra Watch, every 3 minutes)
@@ -23,8 +23,9 @@
 (function () {
     'use strict';
 
-    var SCOPE_NAME = 'x_netra';
-    var APP_LABEL  = 'Netra Voice Assistant';
+    var SCOPE_NAME   = 'x_196061_netra';
+    var SCOPE_SYS_ID = 'b16d304f937c4f10936af0a75d03d66f';   // known sys_id (fallback)
+    var APP_LABEL    = 'Netra Voice Assistant';
 
     var log = [];
     function say(msg) { log.push(msg); gs.print(msg); }
@@ -252,8 +253,18 @@
 
     var scope = lookupScope(SCOPE_NAME);
     if (!scope) {
+        // Fallback to the known sys_id if name lookup fails (some scopes
+        // hide from cross-scope GlideRecord queries).
+        var gr = new GlideRecord('sys_scope');
+        if (gr.get(SCOPE_SYS_ID)) {
+            scope = SCOPE_SYS_ID;
+            say('Resolved scope by sys_id ' + SCOPE_SYS_ID);
+        }
+    }
+    if (!scope) {
         say('');
         say('ERROR: scoped app "' + SCOPE_NAME + '" not found.');
+        say('       (Also checked sys_id ' + SCOPE_SYS_ID + ' — no record.)');
         say('');
         say('Create it first:');
         say('  System Applications -> My Company Applications -> Create new');
@@ -266,7 +277,7 @@
 
     say('');
     say('Tables...');
-    upsertTable('x_netra_notification', 'Netra Notification', scope, [
+    upsertTable('x_196061_netra_notification', 'Netra Notification', scope, [
         { name: 'user',          type: 'reference', ref: 'sys_user', label: 'User' },
         { name: 'ticket_sys_id', type: 'string',    length: 32,   label: 'Ticket sys_id' },
         { name: 'ticket_number', type: 'string',    length: 32,   label: 'Ticket Number' },
@@ -275,7 +286,7 @@
         { name: 'delivered',     type: 'boolean',                 label: 'Delivered', default: 'false' },
         { name: 'delivered_at',  type: 'glide_date_time',         label: 'Delivered At' }
     ]);
-    upsertTable('x_netra_user_pref', 'Netra User Pref', scope, [
+    upsertTable('x_196061_netra_user_pref', 'Netra User Pref', scope, [
         { name: 'user',              type: 'reference', ref: 'sys_user', label: 'User' },
         { name: 'active',            type: 'boolean',                 label: 'Active', default: 'true' },
         { name: 'paused_until',      type: 'glide_date_time',         label: 'Paused Until' },

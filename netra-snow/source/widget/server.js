@@ -1,7 +1,7 @@
 /**
  * Service Portal widget server script — netra-mic.
  *
- * Ensures the current user has an x_netra_user_pref row so the
+ * Ensures the current user has an x_196061_netra_user_pref row so the
  * scheduled scanner picks them up. Returns initial state to the client.
  */
 (function () {
@@ -9,7 +9,7 @@
     var user = gs.getUserID();
 
     // Ensure the pref row exists (implicit opt-in just by loading the widget).
-    var pref = new GlideRecord('x_netra_user_pref');
+    var pref = new GlideRecord('x_196061_netra_user_pref');
     pref.addQuery('user', user);
     pref.setLimit(1);
     pref.query();
@@ -34,7 +34,7 @@
     }
 
     data.user_name = gs.getUserDisplayName();
-    data.api_base = '/api/x_netra/voice';
+    data.api_base = '/api/x_196061_netra/voice';
     data.is_guest = gs.getUser().isPublic();
     data.paused = paused;
     data.paused_until = pausedUntil;

@@ -3,7 +3,7 @@
  *
  * Adds:
  *   • pending-state two-turn dialogue (e.g. "pause" → "for how long?" → "2 hours")
- *   • pause/resume UI synced with server-side x_netra_user_pref
+ *   • pause/resume UI synced with server-side x_196061_netra_user_pref
  *   • last-response memory (for "repeat that")
  *   • smarter wake-word handling (ignores wake when the user is mid-dialogue)
  */
@@ -171,7 +171,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         announce('Processing.');
         $scope.$applyAsync();
 
-        $http.post('/api/x_netra/voice/command', {
+        $http.post('/api/x_196061_netra/voice/command', {
             transcript: transcript,
             pending: pendingContext
         })
@@ -232,7 +232,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
 
     function refreshPauseStatus() {
         // Re-read the pause window from the notifications endpoint
-        $http.get('/api/x_netra/voice/notifications').then(function (resp) {
+        $http.get('/api/x_196061_netra/voice/notifications').then(function (resp) {
             var d = resp.data || {};
             c.paused = !!d.paused;
             c.pausedUntilLabel = d.paused_until ? formatLocalTime(d.paused_until) : '';
@@ -267,7 +267,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     function startNotificationPolling() {
         var POLL_MS = 8000;
         var tick = function () {
-            $http.get('/api/x_netra/voice/notifications')
+            $http.get('/api/x_196061_netra/voice/notifications')
                 .then(function (resp) {
                     var d = resp.data || {};
                     c.paused = !!d.paused;

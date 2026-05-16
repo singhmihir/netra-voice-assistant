@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Netra — Preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --blue:#1a56db; --dark:#0e2e7a; --red:#c81e1e; --green:#057a55;
+    --amber:#b54708; --grey:#475569; --purple:#5b21b6; --bg:#0f1426;
+    --panel:#151a30; --text:#eef; --muted:#9ab; --line:#232845;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(180deg, #0f1426 0%, #1a2547 100%);
+    color: var(--text); min-height: 100vh;
+  }
+  header {
+    padding: 32px 24px 16px;
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 22px; }
+  header .tag {
+    background: var(--blue); color: white; padding: 3px 10px;
+    border-radius: 999px; font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  header .pill {
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 6px 12px; border-radius: 999px; color: var(--muted); font-size: 13px;
+  }
+  main {
+    max-width: 1000px; margin: 0 auto;
+    padding: 24px; display: grid;
+    grid-template-columns: 1fr 1fr; gap: 20px;
+  }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px 20px;
+  }
+  .card h2 {
+    margin: 0 0 12px; font-size: 14px;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  }
+
+  .ticket {
+    padding: 10px 0; border-bottom: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .ticket:last-child { border: none; }
+  .ticket .num { font-family: ui-monospace, monospace; font-weight: 700; color: #79a7ff; }
+  .ticket .desc { font-size: 14px; }
+  .ticket .meta { font-size: 12px; color: var(--muted); }
+  .ticket.resolved .num { color: var(--green); text-decoration: line-through; }
+  .ticket.assigned { background: rgba(220,180,30,0.08); margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-left: 3px solid var(--amber); }
+
+  .convo { max-height: 360px; overflow-y: auto; }
+  .turn { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .turn:last-child { border: none; }
+  .turn .who {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    font-weight: 700; color: var(--muted); margin-bottom: 2px;
+  }
+  .turn.you .who { color: #79a7ff; }
+  .turn.netra .who { color: #62d99d; }
+  .turn.system .who { color: #d8a948; }
+  .turn .what { font-size: 14px; line-height: 1.5; }
+
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .controls button {
+    background: var(--blue); color: white; border: 0;
+    padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    font-weight: 600; font-size: 13px;
+  }
+  .controls button:hover { background: var(--dark); }
+  .controls button.ghost {
+    background: transparent; border: 1px solid var(--line); color: var(--muted);
+  }
+  .controls button.ghost:hover { color: white; border-color: var(--blue); }
+
+  .hint { font-size: 13px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+  .hint kbd {
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace;
+  }
+
+  /* ============================================================
+     Netra floating widget (matches the Service Portal version)
+     ============================================================ */
+  .netra-root { position: fixed; right: 24px; bottom: 24px; z-index: 9999; color: #111; }
+  .netra-dock {
+    display: flex; align-items: center; gap: 12px;
+    background: #fff; border: 2px solid var(--blue);
+    border-radius: 999px; padding: 10px 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  }
+  .netra-mic {
+    position: relative; width: 56px; height: 56px;
+    border-radius: 50%; border: 0; background: var(--blue); color: white;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: background 0.2s, transform 0.2s;
+  }
+  .netra-mic:hover:not(:disabled) { background: var(--dark); }
+  .netra-mic:disabled { opacity: 0.6; cursor: not-allowed; }
+  .netra-mic-dot {
+    position: absolute; top: 6px; right: 6px;
+    width: 12px; height: 12px; background: #94a3b8;
+    border: 2px solid #fff; border-radius: 50%;
+  }
+  .netra-meta { display: flex; flex-direction: column; line-height: 1.2; }
+  .netra-name { font-size: 16px; color: var(--dark); font-weight: 700; }
+  .netra-status { font-size: 13px; color: var(--grey); }
+  .netra-toggle-wake, .netra-pause, .netra-resume, .netra-help {
+    border: 2px solid var(--blue); background: white; color: var(--blue);
+    border-radius: 999px; padding: 4px 10px;
+    font-weight: 700; font-size: 13px; cursor: pointer;
+  }
+  .netra-toggle-wake:hover, .netra-pause:hover, .netra-resume:hover, .netra-help:hover {
+    background: var(--blue); color: white;
+  }
+  .netra-pause, .netra-resume, .netra-help {
+    width: 32px; height: 32px; padding: 0; font-size: 16px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .netra-banner {
+    margin-top: 10px; background: white; color: #111;
+    border-radius: 14px; padding: 10px 14px;
+    font-size: 14px; max-width: 440px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .netra-banner-pending { border: 2px solid var(--amber); }
+  .netra-banner-paused  { border: 2px solid var(--purple); background: #faf5ff; }
+
+  /* status-driven styles */
+  .netra-status-listening .netra-mic     { background: var(--red); }
+  .netra-status-listening .netra-mic-dot { background: var(--red); animation: pulse 1.2s infinite; }
+  .netra-status-thinking  .netra-mic     { background: var(--amber); }
+  .netra-status-speaking  .netra-mic     { background: var(--green); }
+  .netra-paused           .netra-mic     { background: var(--purple); }
+  @keyframes pulse {
+    0%,100% { transform: scale(1);   box-shadow: 0 0 0 0    rgba(200,30,30,0.7); }
+    50%     { transform: scale(1.2); box-shadow: 0 0 0 12px rgba(200,30,30,0);   }
+  }
+
+  .hotkey { margin-top: 8px; text-align: right; font-size: 11px; color: var(--muted); }
+  .hotkey kbd {
+    background: #fff; color: #111; border: 1px solid #cbd5e1;
+    border-bottom-width: 2px; padding: 1px 5px; border-radius: 4px;
+    font-family: ui-monospace, monospace;
+  }
+  .sr-only {
+    position: absolute !important; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0);
+    white-space: nowrap; border: 0;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="tag">Preview</span>
+  <h1>Netra Voice Assistant</h1>
+  <span class="pill" id="browser-check"></span>
+  <span class="pill">Web Speech API · no backend</span>
+</header>
+
+<main>
+  <!-- Tickets -->
+  <section class="card">
+    <h2>Your tickets (mocked)</h2>
+    <div id="tickets"></div>
+    <div class="controls">
+      <button class="ghost" onclick="resetTickets()">Reset tickets</button>
+      <button class="ghost" onclick="simulateNewAssignment()">Simulate new assignment</button>
+      <button class="ghost" onclick="simulateNewComment()">Simulate new comment</button>
+    </div>
+    <p class="hint">The right-hand buttons fake what the 3-minute scanner and the comment Business Rule would do on a real ServiceNow instance.</p>
+  </section>
+
+  <!-- Conversation -->
+  <section class="card">
+    <h2>Conversation log</h2>
+    <div id="convo" class="convo"></div>
+    <div class="controls">
+      <button onclick="netra.toggleRecording()">🎙️ Click or press <kbd style="margin:0 4px;color:#111;background:#fff;border:1px solid #cbd5e1;border-radius:3px;padding:1px 5px">Alt+N</kbd> to talk</button>
+      <button class="ghost" onclick="netra.help()">What can I say?</button>
+    </div>
+    <p class="hint">
+      Or just say <strong>"Netra"</strong> aloud — the wake word is always listening when the toggle is ON.<br>
+      Try: <em>"create a ticket for my email is broken"</em> · <em>"list my tickets"</em> ·
+      <em>"resolve I N C zero zero zero one two three four"</em> · <em>"pause"</em> · <em>"hi"</em> · <em>"thanks"</em>
+    </p>
+  </section>
+</main>
+
+<!-- Netra floating widget -->
+<div class="netra-root" id="netra-root">
+  <div class="netra-dock" role="toolbar" aria-label="Netra controls">
+    <button class="netra-mic" id="micBtn" onclick="netra.toggleRecording()" aria-label="Start recording — click or say Netra">
+      <span class="netra-mic-dot" aria-hidden="true"></span>
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/>
+      </svg>
+    </button>
+    <div class="netra-meta">
+      <strong class="netra-name">Netra</strong>
+      <span class="netra-status" id="statusLbl" aria-live="polite">ready</span>
+    </div>
+    <button class="netra-toggle-wake" id="wakeBtn" onclick="netra.toggleWake()" aria-label="Wake word listening on">ON</button>
+    <button class="netra-pause" id="pauseBtn" onclick="netra.askPause()" aria-label="Pause notifications">⏸</button>
+    <button class="netra-resume" id="resumeBtn" onclick="netra.resume()" style="display:none" aria-label="Resume notifications">▶</button>
+    <button class="netra-help" onclick="netra.help()" aria-label="Help">?</button>
+  </div>
+  <div class="netra-banner netra-banner-pending" id="pendingBanner" style="display:none">
+    <span aria-hidden="true">💬</span><span id="pendingText"></span>
+  </div>
+  <div class="netra-banner netra-banner-paused" id="pausedBanner" style="display:none">
+    <span aria-hidden="true">🔕</span>
+    <span>Notifications paused<span id="pausedUntil"></span>. Say <em>"resume"</em> to bring me back.</span>
+  </div>
+  <div class="hotkey" aria-hidden="true">Press <kbd>Alt</kbd>+<kbd>N</kbd> · <kbd>Esc</kbd> to stop</div>
+  <div role="status" aria-live="assertive" aria-atomic="true" class="sr-only" id="aria-live"></div>
+</div>
+
+<script>
+// =============================================================
+//  Mock backend — what would run inside ServiceNow as GlideRecord
+// =============================================================
+const initialTickets = [
+  { number: 'INC0001234', desc: 'VPN keeps dropping every 10 minutes', state: 'in progress', priority: 'moderate', assignee: 'You', resolved: false, justAssigned: false },
+  { number: 'INC0001235', desc: 'Cannot access shared drive',           state: 'new',         priority: 'high',     assignee: 'IT Helpdesk', resolved: false, justAssigned: false },
+];
+let tickets = JSON.parse(JSON.stringify(initialTickets));
+let nextNum = 1236;
+
+function resetTickets() {
+  tickets = JSON.parse(JSON.stringify(initialTickets));
+  nextNum = 1236;
+  renderTickets();
+  log('system', 'Tickets reset.');
+}
+
+function renderTickets() {
+  const root = document.getElementById('tickets');
+  if (!tickets.length) { root.innerHTML = '<p style="color:var(--muted);font-size:14px">No tickets.</p>'; return; }
+  root.innerHTML = tickets.map(t => `
+    <div class="ticket ${t.resolved ? 'resolved' : ''} ${t.justAssigned ? 'assigned' : ''}">
+      <div class="num">${t.number}</div>
+      <div class="desc">${escapeHtml(t.desc)}</div>
+      <div class="meta">${t.state} · ${t.priority} · ${t.assignee || 'unassigned'}</div>
+    </div>
+  `).join('');
+}
+
+function findTicket(number) {
+  return tickets.find(t => t.number.toUpperCase() === String(number).toUpperCase());
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+}
+
+// Tools (mirrors NetraTools)
+const tools = {
+  createTicket(desc) {
+    if (!desc || desc.trim().length < 3) return { ok: false, error: 'Description is too short.' };
+    const num = 'INC' + String(nextNum++).padStart(7, '0');
+    const t = { number: num, desc, state: 'new', priority: 'moderate', assignee: 'You', resolved: false, justAssigned: false };
+    tickets.unshift(t);
+    renderTickets();
+    return { ok: true, ticket: t };
+  },
+  listMyTickets() { return { ok: true, tickets: tickets.filter(t => !t.resolved) }; },
+  resolveTicket(num) {
+    const t = findTicket(num);
+    if (!t) return { ok: false, error: 'Ticket ' + num + ' not found.' };
+    t.resolved = true; t.state = 'resolved';
+    renderTickets();
+    return { ok: true, number: num };
+  },
+  updateTicket(num, comment) {
+    const t = findTicket(num);
+    if (!t) return { ok: false, error: 'Ticket ' + num + ' not found.' };
+    log('system', `(comment posted to ${num}: "${comment}")`);
+    return { ok: true, number: num };
+  },
+  getStatus(num) {
+    const t = findTicket(num);
+    if (!t) return { ok: false, error: 'Ticket ' + num + ' not found.' };
+    return { ok: true, ticket: t };
+  },
+};
+
+// =============================================================
+//  Intent parser — ported from NetraIntent.js
+// =============================================================
+function parseIntent(transcript, pendingContext) {
+  const raw = String(transcript || '').trim();
+  const t = raw.toLowerCase().replace(/[.!?,;]+$/g, '').trim();
+  if (!t) return { action: 'unknown', args: {}, original: raw };
+
+  // Multi-turn continuation
+  if (pendingContext === 'pause_duration') {
+    const dur = extractDuration(t);
+    if (dur !== null) return { action: 'pause_for', args: { hours: dur }, original: raw };
+    if (/^(cancel|never mind|nevermind|forget it|no)/.test(t)) return { action: 'cancel', args: {}, original: raw };
+    return { action: 'pause_ask', args: { reprompt: true }, original: raw };
+  }
+  if (pendingContext === 'ticket_description') {
+    if (/^(cancel|never mind|nevermind)/.test(t)) return { action: 'cancel', args: {}, original: raw };
+    return { action: 'create', args: { description: cleanDesc(raw) }, original: raw };
+  }
+  if (pendingContext === 'resolve_number') {
+    const num = extractTicketNumber(t);
+    if (num) return { action: 'resolve', args: { ticket_number: num }, original: raw };
+    if (/^(cancel|never mind|nevermind)/.test(t)) return { action: 'cancel', args: {}, original: raw };
+    return { action: 'partial_resolve', args: { reprompt: true }, original: raw };
+  }
+
+  if (/^(stop|cancel|quiet|shut up|never mind|nevermind|forget it|enough|silence|hush)\b/.test(t))
+    return { action: 'cancel', args: {}, original: raw };
+
+  // Pause / resume
+  const pauseFor = t.match(/(pause|mute|silence|hush|hold off|be quiet)\s+(notifications?\s+)?(for\s+)?(.+)/i);
+  if (pauseFor) {
+    const d = extractDuration(pauseFor[4]);
+    if (d !== null) return { action: 'pause_for', args: { hours: d }, original: raw };
+  }
+  if (/^(pause|mute|silence(?:\s+yourself)?|be quiet|hold on|hold off|don't bother me|leave me alone)\b/.test(t))
+    return { action: 'pause_ask', args: {}, original: raw };
+  if (/^(resume|unpause|un-pause|wake up|come back|start (?:listening|talking) again|i'?m back)\b/.test(t))
+    return { action: 'resume', args: {}, original: raw };
+
+  // Smalltalk
+  if (/^(hi|hey|hello|hiya|greetings|good (?:morning|afternoon|evening|day))\b/.test(t)
+      || /^(?:hi|hey|hello)\s+netra\b/.test(t))
+    return { action: 'greet', args: {}, original: raw };
+  if (/^(thanks|thank you|thx|ty|appreciate it|cheers|much obliged)\b/.test(t)
+      || /^(good job|nice work|well done|you'?re (?:awesome|great|the best))/.test(t))
+    return { action: 'thanks', args: {}, original: raw };
+  if (/^(how are you|how'?s it going|how are things|what'?s up|sup|how do you do)/.test(t))
+    return { action: 'smalltalk', args: { kind: 'how_are_you' }, original: raw };
+  if (/^(what'?s your name|who are you|tell me about yourself)/.test(t))
+    return { action: 'smalltalk', args: { kind: 'who_are_you' }, original: raw };
+  if (/(can you (?:please )?)?(repeat|say (?:that|it) again|what did you say|come again|pardon)/.test(t))
+    return { action: 'repeat', args: {}, original: raw };
+
+  if (/^(help|what can you do|how does this work|what are my options|what can i ask|commands|menu)/.test(t))
+    return { action: 'help', args: {}, original: raw };
+
+  // Resolve / close
+  const resolveMatch = t.match(/(resolve|close|mark.*resolved|close out)\s+(ticket\s+)?(inc\d{4,})/i)
+                   || t.match(/(inc\d{4,})\s+is\s+(resolved|done|fixed|closed)/i);
+  if (resolveMatch) {
+    const num = extractTicketNumber(resolveMatch[3] || resolveMatch[1]);
+    if (num) return { action: 'resolve', args: { ticket_number: num }, original: raw };
+  }
+  if (/^(resolve|close|finish|complete)\s+(a |the |my )?ticket/i.test(t))
+    return { action: 'partial_resolve', args: {}, original: raw };
+
+  // Update
+  const updateMatch = t.match(/(update|comment on|add (a )?(note|comment) to|note on)\s+(inc\d{4,})[,:\-\s]*(?:with\s+|that\s+|saying\s+)?(.+)/i);
+  if (updateMatch) {
+    const unum = extractTicketNumber(updateMatch[4]);
+    const comment = (updateMatch[5] || '').trim();
+    if (unum && comment) return { action: 'update', args: { ticket_number: unum, comment }, original: raw };
+  }
+
+  // Status
+  const statusMatch = t.match(/(status of|what(?:'s| is)|tell me about|how(?:'s| is)|details (?:on|for))\s+(?:ticket\s+)?(inc\d{4,})/i)
+                  || t.match(/(inc\d{4,})\s+(status|what.*about)/i);
+  if (statusMatch) {
+    const snum = extractTicketNumber(statusMatch[2] || statusMatch[1]);
+    if (snum) return { action: 'status', args: { ticket_number: snum }, original: raw };
+  }
+
+  // List
+  if (/(list|show|tell me|what(?:'s| are| is))(.*?)(my |open |all my )?tickets?\b/i.test(t)
+      || /what(?:'s| is) on my plate/i.test(t)
+      || /any (?:new |open )?tickets?/i.test(t)
+      || /what(?:'s| is) new\b/.test(t))
+    return { action: 'list', args: {}, original: raw };
+
+  // Create
+  const createMatch = t.match(/(?:create|open|log|raise|submit|file|i (?:need|want) (?:a |to (?:create|open|log) (?:a )?))?\s*(?:a |an )?(?:new )?ticket\s+(?:for|about|that|on|regarding)?[,:\-\s]+(.+)/i);
+  if (createMatch && createMatch[1] && createMatch[1].trim().length > 2)
+    return { action: 'create', args: { description: cleanDesc(createMatch[1]) }, original: raw };
+  const reportMatch = t.match(/^(?:please\s+)?report\s+(?:that\s+)?(.+)/i);
+  if (reportMatch && reportMatch[1].trim().length > 2)
+    return { action: 'create', args: { description: cleanDesc(reportMatch[1]) }, original: raw };
+  if (/^(create|open|raise|log|file|submit|i (?:need|want))(?:\s+(?:a|an|the|me|to (?:open|log|file)))?\s+(?:new\s+)?ticket\b/i.test(t))
+    return { action: 'partial_create', args: {}, original: raw };
+
+  return { action: 'unknown', args: {}, original: raw };
+}
+
+function extractTicketNumber(s) {
+  if (!s) return null;
+  const compact = String(s).toUpperCase().replace(/\s+/g, '');
+  const m = compact.match(/INC(\d+)/);
+  if (!m) return null;
+  let digits = m[1];
+  while (digits.length < 7) digits = '0' + digits;
+  return 'INC' + digits;
+}
+function cleanDesc(s) {
+  return String(s).replace(/^[—\-:,\s]+/, '').replace(/^(that |saying |with )/i, '').replace(/\s+/g, ' ').trim();
+}
+function extractDuration(s) {
+  if (!s) return null;
+  const t = String(s).toLowerCase().trim();
+  const w = { an:1, a:1, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, half:0.5, quarter:0.25 };
+  if (/(rest of (?:the )?day|all day|today|end of day)/.test(t)) return 8;
+  if (/(until|till) (?:tomorrow|the morning)/.test(t)) return 12;
+  const compound = t.match(/(\w+)\s+and\s+(?:a\s+)?(half|quarter)\s+hours?/);
+  if (compound) { const b = w[compound[1]] ?? parseFloat(compound[1]); const f = w[compound[2]] || 0; if (!isNaN(b)) return b + f; }
+  const h = t.match(/(\d+(?:\.\d+)?|\w+)\s*(?:hours?|hrs?|h)\b/);
+  if (h) { const v = w[h[1]] ?? parseFloat(h[1]); if (!isNaN(v)) return v; }
+  const m = t.match(/(\d+(?:\.\d+)?|\w+)\s*(?:minutes?|mins?|m)\b/);
+  if (m) { const v = w[m[1]] ?? parseFloat(m[1]); if (!isNaN(v)) return v / 60; }
+  const n = parseFloat(t); if (!isNaN(n) && n > 0 && n < 24) return n;
+  const firstWord = t.split(/\s+/)[0]; if (w[firstWord] != null) return w[firstWord];
+  return null;
+}
+
+// =============================================================
+//  Responder — ported from NetraResponder.js
+// =============================================================
+function pickOne(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function sayNumber(num) {
+  if (!num) return '';
+  const m = String(num).match(/^([A-Z]+)(\d+)$/);
+  if (!m) return num;
+  const letters = m[1].split('').join(' ');
+  const dw = {'0':'zero','1':'one','2':'two','3':'three','4':'four','5':'five','6':'six','7':'seven','8':'eight','9':'nine'};
+  const digits = m[2].split('').map(d => dw[d] || d).join(' ');
+  return letters + ' ' + digits;
+}
+function spokenDuration(h) {
+  if (h == null) return '';
+  if (h < 1) { const m = Math.round(h * 60); return m + ' minute' + (m === 1 ? '' : 's'); }
+  if (h === 1) return 'an hour';
+  return h + ' hours';
+}
+
+function handle(intent) {
+  switch (intent.action) {
+    case 'create': {
+      const r = tools.createTicket(intent.args.description);
+      if (!r.ok) return { ok: false, message: "Sorry, I couldn't open the ticket. " + r.error };
+      return {
+        ok: true,
+        message: pickOne([
+          'Done. Ticket ' + sayNumber(r.ticket.number) + ' opened. Issue recorded: ' + r.ticket.desc + '.',
+          'Got it — ' + sayNumber(r.ticket.number) + ' is now open for ' + r.ticket.desc + '.',
+          "I've opened " + sayNumber(r.ticket.number) + ' for you. Issue noted as: ' + r.ticket.desc + '.'
+        ]),
+        clear_pending: true
+      };
+    }
+    case 'partial_create':
+      return { ok: true, message: pickOne(["Sure. What's the issue?", "Of course. Tell me what's going on.", "Right. What should I report?"]), pending: 'ticket_description' };
+
+    case 'list': {
+      const r = tools.listMyTickets();
+      const ts = r.tickets;
+      if (!ts.length) return { ok: true, message: pickOne(["Good news — you have no open tickets.", "All clear, no open tickets.", "Your queue is empty."]), clear_pending: true };
+      const pieces = ts.slice(0, 5).map(t => sayNumber(t.number) + ', ' + t.desc + ', state ' + t.state);
+      return { ok: true, message: 'You have ' + ts.length + ' open ticket' + (ts.length === 1 ? '' : 's') + '. ' + pieces.join('. ') + '.', clear_pending: true };
+    }
+
+    case 'resolve': {
+      const num = intent.args.ticket_number;
+      const r = tools.resolveTicket(num);
+      if (!r.ok) return { ok: false, message: r.error };
+      return { ok: true, message: pickOne([
+        'Ticket ' + sayNumber(num) + ' is marked resolved.',
+        'Done — ' + sayNumber(num) + ' is now resolved.',
+        'Resolved ' + sayNumber(num) + '.'
+      ]), clear_pending: true };
+    }
+    case 'partial_resolve':
+      return { ok: true, message: intent.args.reprompt
+        ? "I didn't catch the ticket number. Say something like I N C zero zero zero one two three four."
+        : pickOne(["Which ticket should I resolve?", "Sure. Which I N C number?"]),
+        pending: 'resolve_number' };
+
+    case 'update': {
+      const r = tools.updateTicket(intent.args.ticket_number, intent.args.comment);
+      if (!r.ok) return { ok: false, message: r.error };
+      return { ok: true, message: pickOne([
+        'Added your note to ticket ' + sayNumber(intent.args.ticket_number) + '.',
+        'Comment posted on ' + sayNumber(intent.args.ticket_number) + '.'
+      ]), clear_pending: true };
+    }
+
+    case 'status': {
+      const r = tools.getStatus(intent.args.ticket_number);
+      if (!r.ok) return { ok: false, message: r.error };
+      const t = r.ticket;
+      const who = t.assignee ? ('assigned to ' + t.assignee) : 'unassigned';
+      return { ok: true, message: 'Ticket ' + sayNumber(t.number) + ': ' + t.desc + '. State, ' + t.state + '. Priority, ' + t.priority + '. ' + who + '.', clear_pending: true };
+    }
+
+    case 'pause_ask':
+      return { ok: true, message: intent.args.reprompt
+        ? "I didn't catch a duration. Try two hours, thirty minutes, or rest of the day."
+        : pickOne(["Sure. For how many hours should I pause notifications?", "Okay. How long would you like me quiet?", "Got it. How long should I hold off — an hour, two, the rest of the day?"]),
+        pending: 'pause_duration' };
+
+    case 'pause_for': {
+      const h = intent.args.hours;
+      state.paused = true;
+      state.pausedUntil = Date.now() + h * 3600 * 1000;
+      updatePauseUI();
+      const niceDur = spokenDuration(h);
+      const until = new Date(state.pausedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return { ok: true, message: pickOne([
+        "Okay. Pausing for " + niceDur + ". I'll be back around " + until + ".",
+        "Got it — " + niceDur + " of quiet. See you at " + until + ".",
+        "Done. Notifications paused for " + niceDur + "."
+      ]), clear_pending: true };
+    }
+
+    case 'resume':
+      state.paused = false; state.pausedUntil = null;
+      updatePauseUI();
+      return { ok: true, message: pickOne(["Welcome back. Notifications are on again.", "Resumed. I'll let you know when things come up.", "Got it. I'm back to listening."]), clear_pending: true };
+
+    case 'greet': {
+      const hour = new Date().getHours();
+      const g = hour < 12 ? pickOne(["Good morning.", "Morning."]) :
+                hour < 18 ? pickOne(["Good afternoon.", "Hi there."]) :
+                            pickOne(["Good evening.", "Evening."]);
+      return { ok: true, message: g + " " + pickOne(["What can I do?", "How can I help?", "Ready when you are."]), clear_pending: true };
+    }
+    case 'thanks':
+      return { ok: true, message: pickOne(["You're welcome.", "Anytime.", "Happy to help.", "Glad to be useful."]), clear_pending: true };
+    case 'smalltalk':
+      return { ok: true, message: intent.args.kind === 'how_are_you'
+        ? pickOne(["Doing well, thank you. Ready when you are.", "All systems normal. What can I do for you?"])
+        : "I'm Netra, your ServiceNow voice assistant. I can open tickets, list them, resolve them, or update them.", clear_pending: true };
+    case 'repeat':
+      return { ok: true, message: '__REPEAT__' };
+    case 'help':
+      return { ok: true, message: "You can ask me to create a ticket, list your tickets, resolve one by number, update one with a comment, or pause notifications. Say stop at any time.", clear_pending: true };
+    case 'cancel':
+      return { ok: true, message: pickOne(["Okay.", "Cancelled.", "No problem."]), stop: true, clear_pending: true };
+    default:
+      return { ok: false, message: pickOne([
+        "I didn't quite catch that. Try: create a ticket for, list my tickets, resolve one, or update one.",
+        "Sorry, that didn't match anything I know. Say help to hear what I can do."
+      ])};
+  }
+}
+
+// =============================================================
+//  Widget controller (mirrors widget/client.js)
+// =============================================================
+const state = {
+  status: 'idle',
+  busy: false,
+  wakeOn: true,
+  paused: false,
+  pausedUntil: null,
+  pending: null,
+  lastSpoken: '',
+};
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const TTS = window.speechSynthesis;
+const hasSR = !!SR, hasTTS = !!TTS;
+let wakeRec = null, cmdRec = null;
+
+document.getElementById('browser-check').textContent =
+  hasSR ? 'Web Speech ✓ (mic enabled)' : 'Web Speech ✗ — use Chrome or Edge';
+if (!hasSR) document.getElementById('browser-check').style.color = '#ff8080';
+
+function setStatus(s) {
+  state.status = s;
+  document.getElementById('netra-root').className = 'netra-root netra-status-' + s + (state.paused ? ' netra-paused' : '');
+  const labels = { idle: state.pending ? 'waiting for answer' : 'ready', listening: 'listening...', thinking: 'thinking...', speaking: 'speaking...' };
+  document.getElementById('statusLbl').textContent = state.paused ? 'paused' : (labels[s] || s);
+}
+
+function updatePauseUI() {
+  document.getElementById('pauseBtn').style.display  = state.paused ? 'none' : 'inline-flex';
+  document.getElementById('resumeBtn').style.display = state.paused ? 'inline-flex' : 'none';
+  const banner = document.getElementById('pausedBanner');
+  banner.style.display = state.paused ? 'flex' : 'none';
+  if (state.pausedUntil) {
+    const until = new Date(state.pausedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    document.getElementById('pausedUntil').textContent = ' until ' + until;
+  } else {
+    document.getElementById('pausedUntil').textContent = '';
+  }
+  setStatus(state.status);
+}
+function showPending(text) {
+  document.getElementById('pendingText').textContent = text;
+  document.getElementById('pendingBanner').style.display = text ? 'flex' : 'none';
+}
+function announce(text) {
+  const el = document.getElementById('aria-live');
+  el.textContent = '';
+  setTimeout(() => { el.textContent = text; }, 30);
+}
+
+function log(who, what) {
+  const convo = document.getElementById('convo');
+  const div = document.createElement('div');
+  div.className = 'turn ' + who;
+  div.innerHTML = '<div class="who">' + (who === 'you' ? 'You said' : who === 'netra' ? 'Netra' : 'System') + '</div><div class="what">' + escapeHtml(what) + '</div>';
+  convo.appendChild(div);
+  convo.scrollTop = convo.scrollHeight;
+}
+
+function speak(text, done) {
+  if (!hasTTS || !text) { done && done(); return; }
+  TTS.cancel();
+  state.lastSpoken = text;
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0; u.pitch = 1.0; u.lang = 'en-US';
+  const voices = TTS.getVoices();
+  const pick = voices.find(v => /Natural|Online|Google/i.test(v.name)) || voices.find(v => /en-US/i.test(v.lang));
+  if (pick) u.voice = pick;
+  u.onstart = () => setStatus('speaking');
+  u.onend = () => { done && done(); };
+  u.onerror = () => { done && done(); };
+  TTS.speak(u);
+}
+
+function startWakeWord() {
+  if (!hasSR || !state.wakeOn) return;
+  try { wakeRec && wakeRec.stop(); } catch {}
+  wakeRec = new SR();
+  wakeRec.continuous = true; wakeRec.interimResults = true; wakeRec.lang = 'en-US';
+  wakeRec.onresult = (ev) => {
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const txt = ev.results[i][0].transcript.toLowerCase();
+      if (state.status !== 'idle' || state.busy) return;
+      if (/\bnetra\b/.test(txt) || /\bjarvis\b/.test(txt)) {
+        const after = txt.split(/\bnetra\b|\bjarvis\b/i)[1];
+        if (after && after.trim().length > 3) handleCommand(after.trim());
+        else startCommand();
+        return;
+      }
+    }
+  };
+  wakeRec.onerror = () => { if (state.wakeOn && state.status === 'idle') setTimeout(startWakeWord, 800); };
+  wakeRec.onend  = () => { if (state.wakeOn && state.status === 'idle') setTimeout(startWakeWord, 400); };
+  try { wakeRec.start(); } catch {}
+}
+
+function startCommand() {
+  if (state.busy || !hasSR) return;
+  try { wakeRec && wakeRec.stop(); } catch {}
+  TTS && TTS.cancel();
+  cmdRec = new SR();
+  cmdRec.continuous = false; cmdRec.interimResults = false; cmdRec.lang = 'en-US';
+  let captured = '';
+  cmdRec.onstart = () => { setStatus('listening'); announce('Listening.'); };
+  cmdRec.onresult = (ev) => { captured = ev.results[0][0].transcript; };
+  cmdRec.onerror = (ev) => { log('system', 'mic error: ' + ev.error); resetIdle(); };
+  cmdRec.onend = () => { captured ? handleCommand(captured) : resetIdle(); };
+  speak('Yes?', () => { try { cmdRec.start(); } catch { resetIdle(); } });
+}
+
+function handleCommand(transcript) {
+  log('you', transcript);
+  setStatus('thinking');
+  state.busy = true;
+  const intent = parseIntent(transcript, state.pending);
+  let result = handle(intent);
+  if (result.message === '__REPEAT__') result.message = state.lastSpoken || "I haven't said anything yet.";
+  log('netra', result.message);
+  announce(result.message);
+  if (result.pending) { state.pending = result.pending; showPending(result.message); }
+  else if (result.clear_pending) { state.pending = null; showPending(''); }
+  if (result.stop) { resetIdle(); return; }
+  speak(result.message, () => resetIdle());
+}
+
+function resetIdle() {
+  setStatus('idle');
+  state.busy = false;
+  if (state.wakeOn) setTimeout(startWakeWord, 300);
+}
+
+const netra = {
+  toggleRecording() {
+    if (state.status === 'listening') { try { cmdRec && cmdRec.stop(); } catch {} }
+    else if (!state.busy) startCommand();
+  },
+  toggleWake() {
+    state.wakeOn = !state.wakeOn;
+    document.getElementById('wakeBtn').textContent = state.wakeOn ? 'ON' : 'OFF';
+    if (state.wakeOn) startWakeWord();
+    else { try { wakeRec && wakeRec.stop(); } catch {} }
+    log('system', state.wakeOn ? 'Wake word on.' : 'Wake word off.');
+  },
+  askPause()   { handleCommand('pause'); },
+  resume()     { handleCommand('resume'); },
+  help()       { handleCommand('help'); },
+};
+
+// =============================================================
+//  Simulated proactive notifications
+// =============================================================
+function simulateNewAssignment() {
+  const num = 'INC' + String(nextNum++).padStart(7, '0');
+  const t = { number: num, desc: 'Mailbox keeps disconnecting from Outlook', state: 'new', priority: 'high', assignee: 'You', resolved: false, justAssigned: true };
+  tickets.unshift(t); renderTickets();
+  const msg = 'Heads up. Incident ' + sayNumber(num) + ' has been assigned to you. The issue is: ' + t.desc + '.';
+  log('system', '(scanner found new assignment)');
+  if (state.paused) { log('system', '(suppressed — paused)'); return; }
+  speak(msg); log('netra', msg);
+}
+
+function simulateNewComment() {
+  const t = tickets.find(x => !x.resolved) || tickets[0];
+  if (!t) return;
+  const comment = "Have you tried the new VPN profile we pushed yesterday?";
+  const msg = 'New comment on ' + sayNumber(t.number) + ' from Sara Patel. ' + comment;
+  log('system', '(business rule fired)');
+  if (state.paused) { log('system', '(suppressed — paused)'); return; }
+  speak(msg); log('netra', msg);
+}
+
+// =============================================================
+//  Boot
+// =============================================================
+renderTickets();
+updatePauseUI();
+window.addEventListener('keydown', (e) => {
+  if (e.altKey && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); netra.toggleRecording(); }
+  if (e.key === 'Escape') { TTS && TTS.cancel(); state.pending = null; showPending(''); resetIdle(); }
+});
+// Defer wake word start until voices are loaded (some browsers populate async)
+setTimeout(() => {
+  startWakeWord();
+  // Greeting on first load
+  setTimeout(() => {
+    const greet = 'Netra ready. Say my name or click the mic to start.';
+    log('netra', greet);
+    speak(greet);
+  }, 600);
+}, 400);
+</script>
+
+</body>
+</html>

@@ -5,9 +5,9 @@
 -->
 <unload unload_date="2026-05-16 12:00:00">
   <sys_remote_update_set action="INSERT_OR_UPDATE">
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <application_name>Netra Voice Assistant</application_name>
-    <application_scope>x_netra</application_scope>
+    <application_scope>x_196061_netra</application_scope>
     <application_version>2.0.0</application_version>
     <description>Voice-first ServiceNow assistant for blind users. Free stack - Web Speech APIs, regex intent parsing, 3-minute scheduled scanner.</description>
     <name>Netra Voice Assistant v2.0.0</name>
@@ -21,14 +21,14 @@
   </sys_remote_update_set>
   <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <category>customer</category>
     <name>sys_script_include_4e0ac3f5db00121095ab18f4f3961401</name>
     <payload>&lt;record_update table="sys_script_include"&gt;
 &lt;sys_script_include action="INSERT_OR_UPDATE"&gt;
   &lt;access&gt;package_private&lt;/access&gt;
   &lt;active&gt;true&lt;/active&gt;
-  &lt;api_name&gt;x_netra.NetraIntent&lt;/api_name&gt;
+  &lt;api_name&gt;x_196061_netra.NetraIntent&lt;/api_name&gt;
   &lt;client_callable&gt;false&lt;/client_callable&gt;
   &lt;description&gt;Regex-based natural-language intent parser with smalltalk and multi-turn support.&lt;/description&gt;
   &lt;name&gt;NetraIntent&lt;/name&gt;
@@ -293,8 +293,8 @@ NetraIntent.prototype = {
   &lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;
   &lt;sys_id&gt;4e0ac3f5db00121095ab18f4f3961401&lt;/sys_id&gt;
   &lt;sys_name&gt;NetraIntent&lt;/sys_name&gt;
-  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
-  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra"&gt;x_196061_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_196061_netra&lt;/sys_scope&gt;
   &lt;sys_update_name&gt;sys_script_include_4e0ac3f5db00121095ab18f4f3961401&lt;/sys_update_name&gt;
 &lt;/sys_script_include&gt;
 &lt;/record_update&gt;</payload>
@@ -310,14 +310,14 @@ NetraIntent.prototype = {
   </sys_update_xml>
   <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <category>customer</category>
     <name>sys_script_include_4e0ac3f5db00121095ab18f4f3961402</name>
     <payload>&lt;record_update table="sys_script_include"&gt;
 &lt;sys_script_include action="INSERT_OR_UPDATE"&gt;
   &lt;access&gt;package_private&lt;/access&gt;
   &lt;active&gt;true&lt;/active&gt;
-  &lt;api_name&gt;x_netra.NetraTools&lt;/api_name&gt;
+  &lt;api_name&gt;x_196061_netra.NetraTools&lt;/api_name&gt;
   &lt;client_callable&gt;false&lt;/client_callable&gt;
   &lt;description&gt;GlideRecord operations for incidents + user preferences (pause / resume).&lt;/description&gt;
   &lt;name&gt;NetraTools&lt;/name&gt;
@@ -410,7 +410,7 @@ NetraTools.prototype = {
 
     /**
      * Pause Netra notifications for the given duration (in hours).
-     * Stored in x_netra_user_pref.paused_until as an absolute GlideDateTime.
+     * Stored in x_196061_netra_user_pref.paused_until as an absolute GlideDateTime.
      */
     pauseNotifications: function (hours) {
         if (!hours || hours &lt;= 0) return { ok: false, error: 'Invalid pause duration.' };
@@ -443,7 +443,7 @@ NetraTools.prototype = {
      * @param {boolean} [readOnly] if true, returns null when no row exists
      */
     _getOrCreatePref: function (readOnly) {
-        var gr = new GlideRecord('x_netra_user_pref');
+        var gr = new GlideRecord('x_196061_netra_user_pref');
         gr.addQuery('user', this.userSysId);
         gr.setLimit(1);
         gr.query();
@@ -493,8 +493,8 @@ NetraTools.prototype = {
   &lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;
   &lt;sys_id&gt;4e0ac3f5db00121095ab18f4f3961402&lt;/sys_id&gt;
   &lt;sys_name&gt;NetraTools&lt;/sys_name&gt;
-  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
-  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra"&gt;x_196061_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_196061_netra&lt;/sys_scope&gt;
   &lt;sys_update_name&gt;sys_script_include_4e0ac3f5db00121095ab18f4f3961402&lt;/sys_update_name&gt;
 &lt;/sys_script_include&gt;
 &lt;/record_update&gt;</payload>
@@ -510,14 +510,14 @@ NetraTools.prototype = {
   </sys_update_xml>
   <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <category>customer</category>
     <name>sys_script_include_4e0ac3f5db00121095ab18f4f3961403</name>
     <payload>&lt;record_update table="sys_script_include"&gt;
 &lt;sys_script_include action="INSERT_OR_UPDATE"&gt;
   &lt;access&gt;package_private&lt;/access&gt;
   &lt;active&gt;true&lt;/active&gt;
-  &lt;api_name&gt;x_netra.NetraResponder&lt;/api_name&gt;
+  &lt;api_name&gt;x_196061_netra.NetraResponder&lt;/api_name&gt;
   &lt;client_callable&gt;false&lt;/client_callable&gt;
   &lt;description&gt;Composes spoken replies with variety; handles greetings, smalltalk, pause flow.&lt;/description&gt;
   &lt;name&gt;NetraResponder&lt;/name&gt;
@@ -852,8 +852,8 @@ NetraResponder.prototype = {
   &lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;
   &lt;sys_id&gt;4e0ac3f5db00121095ab18f4f3961403&lt;/sys_id&gt;
   &lt;sys_name&gt;NetraResponder&lt;/sys_name&gt;
-  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
-  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra"&gt;x_196061_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_196061_netra&lt;/sys_scope&gt;
   &lt;sys_update_name&gt;sys_script_include_4e0ac3f5db00121095ab18f4f3961403&lt;/sys_update_name&gt;
 &lt;/sys_script_include&gt;
 &lt;/record_update&gt;</payload>
@@ -869,14 +869,14 @@ NetraResponder.prototype = {
   </sys_update_xml>
   <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <category>customer</category>
     <name>sys_script_include_4e0ac3f5db00121095ab18f4f3961404</name>
     <payload>&lt;record_update table="sys_script_include"&gt;
 &lt;sys_script_include action="INSERT_OR_UPDATE"&gt;
   &lt;access&gt;package_private&lt;/access&gt;
   &lt;active&gt;true&lt;/active&gt;
-  &lt;api_name&gt;x_netra.NetraScanner&lt;/api_name&gt;
+  &lt;api_name&gt;x_196061_netra.NetraScanner&lt;/api_name&gt;
   &lt;client_callable&gt;false&lt;/client_callable&gt;
   &lt;description&gt;Periodic scanner for new assignments, approvals, catalog tasks.&lt;/description&gt;
   &lt;name&gt;NetraScanner&lt;/name&gt;
@@ -885,7 +885,7 @@ NetraResponder.prototype = {
  *
  * Invoked by the "Netra Watch" scheduled job every 3 minutes.
  *
- * For every user with an x_netra_user_pref row, scans for:
+ * For every user with an x_196061_netra_user_pref row, scans for:
  *   1. Incidents newly assigned to them since their last scan
  *   2. Approvals newly waiting on them
  *   3. Service Catalog tasks newly assigned to them
@@ -894,7 +894,7 @@ NetraResponder.prototype = {
  * Comments on tickets are handled separately by the Business Rule on
  * sys_journal_field (real-time, not part of this scan).
  *
- * Each fresh hit creates one x_netra_notification row, deduplicated by
+ * Each fresh hit creates one x_196061_netra_notification row, deduplicated by
  * a (table, sys_id, kind) key in the message so we never re-announce.
  */
 var NetraScanner = Class.create();
@@ -910,7 +910,7 @@ NetraScanner.prototype = {
         var processed = 0;
         var enqueued = 0;
 
-        var prefs = new GlideRecord('x_netra_user_pref');
+        var prefs = new GlideRecord('x_196061_netra_user_pref');
         prefs.addQuery('active', true);
         prefs.query();
 
@@ -929,7 +929,7 @@ NetraScanner.prototype = {
     },
 
     /**
-     * @param {GlideRecord} pref  x_netra_user_pref row, already loaded
+     * @param {GlideRecord} pref  x_196061_netra_user_pref row, already loaded
      * @returns {number}          count of notifications enqueued for this user
      */
     scanForUser: function (pref) {
@@ -1084,7 +1084,7 @@ NetraScanner.prototype = {
     //  Dedupe + enqueue
     // ============================================================
     _alreadyNotified: function (userSysId, recordSysId, kind) {
-        var gr = new GlideRecord('x_netra_notification');
+        var gr = new GlideRecord('x_196061_netra_notification');
         gr.addQuery('user', userSysId);
         gr.addQuery('ticket_sys_id', recordSysId);
         gr.addQuery('kind', kind);
@@ -1094,7 +1094,7 @@ NetraScanner.prototype = {
     },
 
     _enqueue: function (userSysId, opts) {
-        var gr = new GlideRecord('x_netra_notification');
+        var gr = new GlideRecord('x_196061_netra_notification');
         gr.initialize();
         gr.user = userSysId;
         gr.ticket_sys_id = opts.ticket_sys_id;
@@ -1121,8 +1121,8 @@ NetraScanner.prototype = {
   &lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;
   &lt;sys_id&gt;4e0ac3f5db00121095ab18f4f3961404&lt;/sys_id&gt;
   &lt;sys_name&gt;NetraScanner&lt;/sys_name&gt;
-  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
-  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra"&gt;x_196061_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_196061_netra&lt;/sys_scope&gt;
   &lt;sys_update_name&gt;sys_script_include_4e0ac3f5db00121095ab18f4f3961404&lt;/sys_update_name&gt;
 &lt;/sys_script_include&gt;
 &lt;/record_update&gt;</payload>
@@ -1138,7 +1138,7 @@ NetraScanner.prototype = {
   </sys_update_xml>
   <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <category>customer</category>
     <name>sys_script_5f1bd406db00121095ab18f4f3961501</name>
     <payload>&lt;record_update table="sys_script"&gt;
@@ -1221,7 +1221,7 @@ NetraScanner.prototype = {
     }
 
     function enqueue(userSysId, incidentGR, num, spokenNum, kind, body, author) {
-        var n = new GlideRecord('x_netra_notification');
+        var n = new GlideRecord('x_196061_netra_notification');
         n.initialize();
         n.user = userSysId;
         n.ticket_sys_id = String(incidentGR.sys_id);
@@ -1238,8 +1238,8 @@ NetraScanner.prototype = {
   &lt;sys_class_name&gt;sys_script&lt;/sys_class_name&gt;
   &lt;sys_id&gt;5f1bd406db00121095ab18f4f3961501&lt;/sys_id&gt;
   &lt;sys_name&gt;Netra Notify On Comment&lt;/sys_name&gt;
-  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
-  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra"&gt;x_196061_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_196061_netra&lt;/sys_scope&gt;
   &lt;sys_update_name&gt;sys_script_5f1bd406db00121095ab18f4f3961501&lt;/sys_update_name&gt;
   &lt;when&gt;async&lt;/when&gt;
 &lt;/sys_script&gt;
@@ -1256,7 +1256,7 @@ NetraScanner.prototype = {
   </sys_update_xml>
   <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <category>customer</category>
     <name>sysauto_script_5f1bd406db00121095ab18f4f3961502</name>
     <payload>&lt;record_update table="sysauto_script"&gt;
@@ -1295,8 +1295,8 @@ NetraScanner.prototype = {
   &lt;sys_domain&gt;global&lt;/sys_domain&gt;
   &lt;sys_id&gt;5f1bd406db00121095ab18f4f3961502&lt;/sys_id&gt;
   &lt;sys_name&gt;Netra Watch&lt;/sys_name&gt;
-  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
-  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra"&gt;x_196061_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_196061_netra&lt;/sys_scope&gt;
   &lt;sys_update_name&gt;sysauto_script_5f1bd406db00121095ab18f4f3961502&lt;/sys_update_name&gt;
   &lt;upgrade_safe&gt;false&lt;/upgrade_safe&gt;
 &lt;/sysauto_script&gt;

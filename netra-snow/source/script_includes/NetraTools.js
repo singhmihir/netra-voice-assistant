@@ -87,7 +87,7 @@ NetraTools.prototype = {
 
     /**
      * Pause Netra notifications for the given duration (in hours).
-     * Stored in x_netra_user_pref.paused_until as an absolute GlideDateTime.
+     * Stored in x_196061_netra_user_pref.paused_until as an absolute GlideDateTime.
      */
     pauseNotifications: function (hours) {
         if (!hours || hours <= 0) return { ok: false, error: 'Invalid pause duration.' };
@@ -120,7 +120,7 @@ NetraTools.prototype = {
      * @param {boolean} [readOnly] if true, returns null when no row exists
      */
     _getOrCreatePref: function (readOnly) {
-        var gr = new GlideRecord('x_netra_user_pref');
+        var gr = new GlideRecord('x_196061_netra_user_pref');
         gr.addQuery('user', this.userSysId);
         gr.setLimit(1);
         gr.query();

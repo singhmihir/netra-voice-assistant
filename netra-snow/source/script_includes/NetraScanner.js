@@ -3,7 +3,7 @@
  *
  * Invoked by the "Netra Watch" scheduled job every 3 minutes.
  *
- * For every user with an x_netra_user_pref row, scans for:
+ * For every user with an x_196061_netra_user_pref row, scans for:
  *   1. Incidents newly assigned to them since their last scan
  *   2. Approvals newly waiting on them
  *   3. Service Catalog tasks newly assigned to them
@@ -12,7 +12,7 @@
  * Comments on tickets are handled separately by the Business Rule on
  * sys_journal_field (real-time, not part of this scan).
  *
- * Each fresh hit creates one x_netra_notification row, deduplicated by
+ * Each fresh hit creates one x_196061_netra_notification row, deduplicated by
  * a (table, sys_id, kind) key in the message so we never re-announce.
  */
 var NetraScanner = Class.create();
@@ -28,7 +28,7 @@ NetraScanner.prototype = {
         var processed = 0;
         var enqueued = 0;
 
-        var prefs = new GlideRecord('x_netra_user_pref');
+        var prefs = new GlideRecord('x_196061_netra_user_pref');
         prefs.addQuery('active', true);
         prefs.query();
 
@@ -47,7 +47,7 @@ NetraScanner.prototype = {
     },
 
     /**
-     * @param {GlideRecord} pref  x_netra_user_pref row, already loaded
+     * @param {GlideRecord} pref  x_196061_netra_user_pref row, already loaded
      * @returns {number}          count of notifications enqueued for this user
      */
     scanForUser: function (pref) {
@@ -202,7 +202,7 @@ NetraScanner.prototype = {
     //  Dedupe + enqueue
     // ============================================================
     _alreadyNotified: function (userSysId, recordSysId, kind) {
-        var gr = new GlideRecord('x_netra_notification');
+        var gr = new GlideRecord('x_196061_netra_notification');
         gr.addQuery('user', userSysId);
         gr.addQuery('ticket_sys_id', recordSysId);
         gr.addQuery('kind', kind);
@@ -212,7 +212,7 @@ NetraScanner.prototype = {
     },
 
     _enqueue: function (userSysId, opts) {
-        var gr = new GlideRecord('x_netra_notification');
+        var gr = new GlideRecord('x_196061_netra_notification');
         gr.initialize();
         gr.user = userSysId;
         gr.ticket_sys_id = opts.ticket_sys_id;

@@ -1,5 +1,5 @@
 /**
- * Scripted REST resource: POST /api/x_netra/voice/command
+ * Scripted REST resource: POST /api/x_196061_netra/voice/command
  *
  * Request body:
  *   {

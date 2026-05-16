@@ -84,8 +84,8 @@ netra-snow/
     │   ├── NetraResponder.js                ← composes varied spoken replies
     │   └── NetraScanner.js                  ← periodic scan: assignments, approvals, tasks
     ├── scripted_rest/
-    │   ├── command.js                       ← POST /api/x_netra/voice/command
-    │   └── notifications.js                 ← GET  /api/x_netra/voice/notifications
+    │   ├── command.js                       ← POST /api/x_196061_netra/voice/command
+    │   └── notifications.js                 ← GET  /api/x_196061_netra/voice/notifications
     ├── scheduled_jobs/
     │   └── netra_watch.js                   ← runs every 3 min, delegates to NetraScanner
     ├── business_rule/
@@ -97,8 +97,8 @@ netra-snow/
     │   ├── stylesheet.scss
     │   └── option_schema.json
     └── tables/
-        ├── x_netra_notification.md
-        └── x_netra_user_pref.md
+        ├── x_196061_netra_notification.md
+        └── x_196061_netra_user_pref.md
 ```
 
 ---
@@ -143,19 +143,19 @@ netra-snow/
    │     ┌─────────────────┴─────────────────┐                    │
    │     ▼                                   ▼                    │
    │  Iterates active users         For each user, scans:         │
-   │  in x_netra_user_pref          • incident.assigned_to        │
+   │  in x_196061_netra_user_pref          • incident.assigned_to        │
    │                                • change_request.assigned_to  │
    │                                • sc_task.assigned_to         │
    │                                • sysapproval_approver        │
    │                                Enqueues into                 │
-   │                                x_netra_notification          │
+   │                                x_196061_netra_notification          │
    │                                                              │
    │  Business Rule on sys_journal_field (incident comments)      │
-   │  fires instantly — also enqueues to x_netra_notification     │
+   │  fires instantly — also enqueues to x_196061_netra_notification     │
    └─────────────────────────────────────────────────────────────┘
 ```
 
-Every notification path lands in `x_netra_notification`. The widget polls and announces. Pause is honored at every layer (widget UI, scanner skips paused users, notifications endpoint returns empty while paused).
+Every notification path lands in `x_196061_netra_notification`. The widget polls and announces. Pause is honored at every layer (widget UI, scanner skips paused users, notifications endpoint returns empty while paused).
 
 ---
 

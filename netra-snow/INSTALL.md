@@ -19,7 +19,7 @@
 2. Click **Start from scratch**.
 3. Fill in:
    - **Name:** `Netra Voice Assistant`
-   - **Scope:** `x_netra` *(must match exactly)*
+   - **Scope:** `x_196061_netra` *(must match exactly)*
    - **Version:** `2.0.0`
 4. Click **Create**.
 
@@ -34,13 +34,13 @@
 You should see output like:
 ```
 === Netra install starting ===
-Using scope x_netra (sys_id ...)
+Using scope x_196061_netra (sys_id ...)
 
 Tables...
-  + table x_netra_notification
-    . column x_netra_notification.user (reference)
+  + table x_196061_netra_notification
+    . column x_196061_netra_notification.user (reference)
     ...
-  + table x_netra_user_pref
+  + table x_196061_netra_user_pref
     ...
 
 Script Includes...
@@ -56,7 +56,7 @@ Scheduled Job...
   > scheduled job Netra Watch (every 00:03:00)
 
 Scripted REST API...
-  > scripted REST service Netra Voice (/api/x_netra/voice)
+  > scripted REST service Netra Voice (/api/x_196061_netra/voice)
   > REST resource POST /command
   > REST resource GET /notifications
 
@@ -111,12 +111,12 @@ Widget via the UI — about 6 steps total, ~10 minutes.
 
 | Symptom | Fix |
 |---|---|
-| `ERROR: scoped app "x_netra" not found.` | Complete step A.1 first. |
+| `ERROR: scoped app "x_196061_netra" not found.` | Complete step A.1 first. |
 | Background Script fails partway | Re-run it — it's idempotent. Common cause: scope dropdown was on `global`; switch to `Netra Voice Assistant` scope. |
 | Tables appear but columns missing | Re-run the script. The `upsertColumn` step creates them. |
 | Wake word does nothing | Use Chrome or Edge. Confirm mic permission. Site must be HTTPS (dev instances are). |
-| Scheduled job never fires | Confirm **Netra Watch** is active. Confirm `x_netra_user_pref` has rows (the widget creates one when first loaded). Use **Execute Now** to test. |
-| Pause doesn't stick | Confirm `x_netra_user_pref.paused_until` column exists. Re-run Background Script. |
+| Scheduled job never fires | Confirm **Netra Watch** is active. Confirm `x_196061_netra_user_pref` has rows (the widget creates one when first loaded). Use **Execute Now** to test. |
+| Pause doesn't stick | Confirm `x_196061_netra_user_pref.paused_until` column exists. Re-run Background Script. |
 
 ---
 
@@ -125,5 +125,5 @@ Widget via the UI — about 6 steps total, ~10 minutes.
 To remove Netra entirely:
 
 1. **System Applications → All Available Applications → My Apps → Netra Voice Assistant**
-2. Click **Delete** on the row. ServiceNow removes every record in the `x_netra` scope automatically — tables, script includes, business rules, scheduled jobs, REST API, widget.
+2. Click **Delete** on the row. ServiceNow removes every record in the `x_196061_netra` scope automatically — tables, script includes, business rules, scheduled jobs, REST API, widget.
 3. Remove the widget instance from any portal pages.

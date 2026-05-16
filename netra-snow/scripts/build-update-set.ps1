@@ -74,14 +74,14 @@ function ScriptIncludeRecord($r) {
 @"
   <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <category>customer</category>
     <name>sys_script_include_$($r.sysId)</name>
     <payload>&lt;record_update table="sys_script_include"&gt;
 &lt;sys_script_include action="INSERT_OR_UPDATE"&gt;
   &lt;access&gt;package_private&lt;/access&gt;
   &lt;active&gt;true&lt;/active&gt;
-  &lt;api_name&gt;x_netra.$($r.name)&lt;/api_name&gt;
+  &lt;api_name&gt;x_196061_netra.$($r.name)&lt;/api_name&gt;
   &lt;client_callable&gt;false&lt;/client_callable&gt;
   &lt;description&gt;$($r.desc)&lt;/description&gt;
   &lt;name&gt;$($r.name)&lt;/name&gt;
@@ -89,8 +89,8 @@ function ScriptIncludeRecord($r) {
   &lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;
   &lt;sys_id&gt;$($r.sysId)&lt;/sys_id&gt;
   &lt;sys_name&gt;$($r.name)&lt;/sys_name&gt;
-  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
-  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra"&gt;x_196061_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_196061_netra&lt;/sys_scope&gt;
   &lt;sys_update_name&gt;sys_script_include_$($r.sysId)&lt;/sys_update_name&gt;
 &lt;/sys_script_include&gt;
 &lt;/record_update&gt;</payload>
@@ -113,7 +113,7 @@ function BusinessRuleRecord($r) {
 @"
   <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <category>customer</category>
     <name>sys_script_$($r.sysId)</name>
     <payload>&lt;record_update table="sys_script"&gt;
@@ -142,8 +142,8 @@ function BusinessRuleRecord($r) {
   &lt;sys_class_name&gt;sys_script&lt;/sys_class_name&gt;
   &lt;sys_id&gt;$($r.sysId)&lt;/sys_id&gt;
   &lt;sys_name&gt;$($r.name)&lt;/sys_name&gt;
-  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
-  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra"&gt;x_196061_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_196061_netra&lt;/sys_scope&gt;
   &lt;sys_update_name&gt;sys_script_$($r.sysId)&lt;/sys_update_name&gt;
   &lt;when&gt;async&lt;/when&gt;
 &lt;/sys_script&gt;
@@ -167,7 +167,7 @@ function ScheduledJobRecord($r) {
 @"
   <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <category>customer</category>
     <name>sysauto_script_$($r.sysId)</name>
     <payload>&lt;record_update table="sysauto_script"&gt;
@@ -188,8 +188,8 @@ function ScheduledJobRecord($r) {
   &lt;sys_domain&gt;global&lt;/sys_domain&gt;
   &lt;sys_id&gt;$($r.sysId)&lt;/sys_id&gt;
   &lt;sys_name&gt;$($r.name)&lt;/sys_name&gt;
-  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
-  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra"&gt;x_196061_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_196061_netra&lt;/sys_scope&gt;
   &lt;sys_update_name&gt;sysauto_script_$($r.sysId)&lt;/sys_update_name&gt;
   &lt;upgrade_safe&gt;false&lt;/upgrade_safe&gt;
 &lt;/sysauto_script&gt;
@@ -219,9 +219,9 @@ $body = New-Object System.Text.StringBuilder
 # Update set header
 [void]$body.AppendLine(@"
   <sys_remote_update_set action="INSERT_OR_UPDATE">
-    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application display_value="Netra Voice Assistant">x_196061_netra</application>
     <application_name>Netra Voice Assistant</application_name>
-    <application_scope>x_netra</application_scope>
+    <application_scope>x_196061_netra</application_scope>
     <application_version>2.0.0</application_version>
     <description>Voice-first ServiceNow assistant for blind users. Free stack - Web Speech APIs, regex intent parsing, 3-minute scheduled scanner.</description>
     <name>Netra Voice Assistant v2.0.0</name>

@@ -1,5 +1,5 @@
 /**
- * Scripted REST resource: GET /api/x_netra/voice/notifications
+ * Scripted REST resource: GET /api/x_196061_netra/voice/notifications
  *
  * Returns and CONSUMES (marks delivered) any pending Netra notifications
  * for the current user — UNLESS the user has paused notifications, in
@@ -16,7 +16,7 @@
     var user = gs.getUserID();
 
     // Check pause state
-    var pref = new GlideRecord('x_netra_user_pref');
+    var pref = new GlideRecord('x_196061_netra_user_pref');
     pref.addQuery('user', user);
     pref.setLimit(1);
     pref.query();
@@ -41,7 +41,7 @@
         return { ok: true, paused: true, paused_until: pausedUntil, notifications: [] };
     }
 
-    var gr = new GlideRecord('x_netra_notification');
+    var gr = new GlideRecord('x_196061_netra_notification');
     gr.addQuery('user', user);
     gr.addQuery('delivered', false);
     gr.orderBy('sys_created_on');

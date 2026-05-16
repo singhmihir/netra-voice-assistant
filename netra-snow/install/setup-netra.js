@@ -2,17 +2,17 @@
 //   Netra Voice Assistant - One-Shot Install (Background Script)
 //
 //   USAGE:
-//     1. Create a scoped app "Netra Voice Assistant" with scope "x_netra"
+//     1. Create a scoped app "Netra Voice Assistant" with scope "x_196061_netra"
 //        (System Applications -> My Company Applications -> Create new)
 //     2. System Definition -> Scripts - Background
 //     3. Paste this entire script. Confirm "Run this script in:" shows your
-//        x_netra scope (or "global" if your instance allows cross-scope writes).
+//        x_196061_netra scope (or "global" if your instance allows cross-scope writes).
 //     4. Click Run script.
 //
 //   IDEMPOTENT - re-running updates records in place, does not duplicate.
 //
 //   This script creates EVERYTHING for the Netra app:
-//     - 2 tables  (x_netra_notification, x_netra_user_pref)
+//     - 2 tables  (x_196061_netra_notification, x_196061_netra_user_pref)
 //     - 4 Script Includes  (NetraIntent, NetraTools, NetraResponder, NetraScanner)
 //     - 1 Business Rule    (Netra Notify On Comment)
 //     - 1 Scheduled Job    (Netra Watch, every 3 minutes)
@@ -23,8 +23,9 @@
 (function () {
     'use strict';
 
-    var SCOPE_NAME = 'x_netra';
-    var APP_LABEL  = 'Netra Voice Assistant';
+    var SCOPE_NAME   = 'x_196061_netra';
+    var SCOPE_SYS_ID = 'b16d304f937c4f10936af0a75d03d66f';   // known sys_id (fallback)
+    var APP_LABEL    = 'Netra Voice Assistant';
 
     var log = [];
     function say(msg) { log.push(msg); gs.print(msg); }
@@ -384,7 +385,7 @@
         "",
         "    /**",
         "     * Pause Netra notifications for the given duration (in hours).",
-        "     * Stored in x_netra_user_pref.paused_until as an absolute GlideDateTime.",
+        "     * Stored in x_196061_netra_user_pref.paused_until as an absolute GlideDateTime.",
         "     */",
         "    pauseNotifications: function (hours) {",
         "        if (!hours || hours <= 0) return { ok: false, error: 'Invalid pause duration.' };",
@@ -417,7 +418,7 @@
         "     * @param {boolean} [readOnly] if true, returns null when no row exists",
         "     */",
         "    _getOrCreatePref: function (readOnly) {",
-        "        var gr = new GlideRecord('x_netra_user_pref');",
+        "        var gr = new GlideRecord('x_196061_netra_user_pref');",
         "        gr.addQuery('user', this.userSysId);",
         "        gr.setLimit(1);",
         "        gr.query();",
@@ -801,7 +802,7 @@
         " *",
         " * Invoked by the \"Netra Watch\" scheduled job every 3 minutes.",
         " *",
-        " * For every user with an x_netra_user_pref row, scans for:",
+        " * For every user with an x_196061_netra_user_pref row, scans for:",
         " *   1. Incidents newly assigned to them since their last scan",
         " *   2. Approvals newly waiting on them",
         " *   3. Service Catalog tasks newly assigned to them",
@@ -810,7 +811,7 @@
         " * Comments on tickets are handled separately by the Business Rule on",
         " * sys_journal_field (real-time, not part of this scan).",
         " *",
-        " * Each fresh hit creates one x_netra_notification row, deduplicated by",
+        " * Each fresh hit creates one x_196061_netra_notification row, deduplicated by",
         " * a (table, sys_id, kind) key in the message so we never re-announce.",
         " */",
         "var NetraScanner = Class.create();",
@@ -826,7 +827,7 @@
         "        var processed = 0;",
         "        var enqueued = 0;",
         "",
-        "        var prefs = new GlideRecord('x_netra_user_pref');",
+        "        var prefs = new GlideRecord('x_196061_netra_user_pref');",
         "        prefs.addQuery('active', true);",
         "        prefs.query();",
         "",
@@ -845,7 +846,7 @@
         "    },",
         "",
         "    /**",
-        "     * @param {GlideRecord} pref  x_netra_user_pref row, already loaded",
+        "     * @param {GlideRecord} pref  x_196061_netra_user_pref row, already loaded",
         "     * @returns {number}          count of notifications enqueued for this user",
         "     */",
         "    scanForUser: function (pref) {",
@@ -1000,7 +1001,7 @@
         "    //  Dedupe + enqueue",
         "    // ============================================================",
         "    _alreadyNotified: function (userSysId, recordSysId, kind) {",
-        "        var gr = new GlideRecord('x_netra_notification');",
+        "        var gr = new GlideRecord('x_196061_netra_notification');",
         "        gr.addQuery('user', userSysId);",
         "        gr.addQuery('ticket_sys_id', recordSysId);",
         "        gr.addQuery('kind', kind);",
@@ -1010,7 +1011,7 @@
         "    },",
         "",
         "    _enqueue: function (userSysId, opts) {",
-        "        var gr = new GlideRecord('x_netra_notification');",
+        "        var gr = new GlideRecord('x_196061_netra_notification');",
         "        gr.initialize();",
         "        gr.user = userSysId;",
         "        gr.ticket_sys_id = opts.ticket_sys_id;",
@@ -1094,7 +1095,7 @@
         "    }",
         "",
         "    function enqueue(userSysId, incidentGR, num, spokenNum, kind, body, author) {",
-        "        var n = new GlideRecord('x_netra_notification');",
+        "        var n = new GlideRecord('x_196061_netra_notification');",
         "        n.initialize();",
         "        n.user = userSysId;",
         "        n.ticket_sys_id = String(incidentGR.sys_id);",
@@ -1132,7 +1133,7 @@
 ");
 
     SRC.command = ["/**",
-        " * Scripted REST resource: POST /api/x_netra/voice/command",
+        " * Scripted REST resource: POST /api/x_196061_netra/voice/command",
         " *",
         " * Request body:",
         " *   {",
@@ -1180,7 +1181,7 @@
 ");
 
     SRC.notifications = ["/**",
-        " * Scripted REST resource: GET /api/x_netra/voice/notifications",
+        " * Scripted REST resource: GET /api/x_196061_netra/voice/notifications",
         " *",
         " * Returns and CONSUMES (marks delivered) any pending Netra notifications",
         " * for the current user — UNLESS the user has paused notifications, in",
@@ -1197,7 +1198,7 @@
         "    var user = gs.getUserID();",
         "",
         "    // Check pause state",
-        "    var pref = new GlideRecord('x_netra_user_pref');",
+        "    var pref = new GlideRecord('x_196061_netra_user_pref');",
         "    pref.addQuery('user', user);",
         "    pref.setLimit(1);",
         "    pref.query();",
@@ -1222,7 +1223,7 @@
         "        return { ok: true, paused: true, paused_until: pausedUntil, notifications: [] };",
         "    }",
         "",
-        "    var gr = new GlideRecord('x_netra_notification');",
+        "    var gr = new GlideRecord('x_196061_netra_notification');",
         "    gr.addQuery('user', user);",
         "    gr.addQuery('delivered', false);",
         "    gr.orderBy('sys_created_on');",
@@ -1355,7 +1356,7 @@
         " *",
         " * Adds:",
         " *   • pending-state two-turn dialogue (e.g. \"pause\" → \"for how long?\" → \"2 hours\")",
-        " *   • pause/resume UI synced with server-side x_netra_user_pref",
+        " *   • pause/resume UI synced with server-side x_196061_netra_user_pref",
         " *   • last-response memory (for \"repeat that\")",
         " *   • smarter wake-word handling (ignores wake when the user is mid-dialogue)",
         " */",
@@ -1523,7 +1524,7 @@
         "        announce('Processing.');",
         "        $scope.$applyAsync();",
         "",
-        "        $http.post('/api/x_netra/voice/command', {",
+        "        $http.post('/api/x_196061_netra/voice/command', {",
         "            transcript: transcript,",
         "            pending: pendingContext",
         "        })",
@@ -1584,7 +1585,7 @@
         "",
         "    function refreshPauseStatus() {",
         "        // Re-read the pause window from the notifications endpoint",
-        "        $http.get('/api/x_netra/voice/notifications').then(function (resp) {",
+        "        $http.get('/api/x_196061_netra/voice/notifications').then(function (resp) {",
         "            var d = resp.data || {};",
         "            c.paused = !!d.paused;",
         "            c.pausedUntilLabel = d.paused_until ? formatLocalTime(d.paused_until) : '';",
@@ -1619,7 +1620,7 @@
         "    function startNotificationPolling() {",
         "        var POLL_MS = 8000;",
         "        var tick = function () {",
-        "            $http.get('/api/x_netra/voice/notifications')",
+        "            $http.get('/api/x_196061_netra/voice/notifications')",
         "                .then(function (resp) {",
         "                    var d = resp.data || {};",
         "                    c.paused = !!d.paused;",
@@ -1683,7 +1684,7 @@
     SRC.server = ["/**",
         " * Service Portal widget server script — netra-mic.",
         " *",
-        " * Ensures the current user has an x_netra_user_pref row so the",
+        " * Ensures the current user has an x_196061_netra_user_pref row so the",
         " * scheduled scanner picks them up. Returns initial state to the client.",
         " */",
         "(function () {",
@@ -1691,7 +1692,7 @@
         "    var user = gs.getUserID();",
         "",
         "    // Ensure the pref row exists (implicit opt-in just by loading the widget).",
-        "    var pref = new GlideRecord('x_netra_user_pref');",
+        "    var pref = new GlideRecord('x_196061_netra_user_pref');",
         "    pref.addQuery('user', user);",
         "    pref.setLimit(1);",
         "    pref.query();",
@@ -1716,7 +1717,7 @@
         "    }",
         "",
         "    data.user_name = gs.getUserDisplayName();",
-        "    data.api_base = '/api/x_netra/voice';",
+        "    data.api_base = '/api/x_196061_netra/voice';",
         "    data.is_guest = gs.getUser().isPublic();",
         "    data.paused = paused;",
         "    data.paused_until = pausedUntil;",
@@ -2093,8 +2094,18 @@
 
     var scope = lookupScope(SCOPE_NAME);
     if (!scope) {
+        // Fallback to the known sys_id if name lookup fails (some scopes
+        // hide from cross-scope GlideRecord queries).
+        var gr = new GlideRecord('sys_scope');
+        if (gr.get(SCOPE_SYS_ID)) {
+            scope = SCOPE_SYS_ID;
+            say('Resolved scope by sys_id ' + SCOPE_SYS_ID);
+        }
+    }
+    if (!scope) {
         say('');
         say('ERROR: scoped app "' + SCOPE_NAME + '" not found.');
+        say('       (Also checked sys_id ' + SCOPE_SYS_ID + ' — no record.)');
         say('');
         say('Create it first:');
         say('  System Applications -> My Company Applications -> Create new');
@@ -2107,7 +2118,7 @@
 
     say('');
     say('Tables...');
-    upsertTable('x_netra_notification', 'Netra Notification', scope, [
+    upsertTable('x_196061_netra_notification', 'Netra Notification', scope, [
         { name: 'user',          type: 'reference', ref: 'sys_user', label: 'User' },
         { name: 'ticket_sys_id', type: 'string',    length: 32,   label: 'Ticket sys_id' },
         { name: 'ticket_number', type: 'string',    length: 32,   label: 'Ticket Number' },
@@ -2116,7 +2127,7 @@
         { name: 'delivered',     type: 'boolean',                 label: 'Delivered', default: 'false' },
         { name: 'delivered_at',  type: 'glide_date_time',         label: 'Delivered At' }
     ]);
-    upsertTable('x_netra_user_pref', 'Netra User Pref', scope, [
+    upsertTable('x_196061_netra_user_pref', 'Netra User Pref', scope, [
         { name: 'user',              type: 'reference', ref: 'sys_user', label: 'User' },
         { name: 'active',            type: 'boolean',                 label: 'Active', default: 'true' },
         { name: 'paused_until',      type: 'glide_date_time',         label: 'Paused Until' },
