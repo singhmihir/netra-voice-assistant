@@ -53,15 +53,29 @@ A voice-first, fully accessible assistant that runs **natively inside ServiceNow
 
 ---
 
+## Install
+
+**~3 minutes, two paths:**
+
+| Path | Files | Manual steps |
+|---|---|---|
+| **A. Background Script (Recommended)** | `install/setup-netra.js` | Create scope (1 click), paste + Run script (1 click), drop widget on page (1 click) |
+| B. Update Set XML | `update-set/netra-v2.0.0.xml` | Create scope + tables + REST API + widget manually, import Update Set |
+
+See [`INSTALL.md`](INSTALL.md) for the click-by-click walkthrough.
+
 ## Repository layout
 
 ```
 netra-snow/
 ├── README.md                                ← this file
-├── INSTALL.md                               ← step-by-step setup (~10 min)
+├── INSTALL.md                               ← step-by-step setup
+├── install/
+│   └── setup-netra.js                       ← single Background Script: creates everything
 ├── update-set/
-│   └── netra-v2.0.0.xml                     ← single-file importable bundle
+│   └── netra-v2.0.0.xml                     ← alternative: Update Set with code-bearing records
 ├── scripts/
+│   ├── build-setup-script.ps1               ← regenerates setup-netra.js from source/
 │   └── build-update-set.ps1                 ← regenerates the XML from source/
 └── source/
     ├── script_includes/
@@ -145,19 +159,19 @@ Every notification path lands in `x_netra_notification`. The widget polls and an
 
 ---
 
-## Install
+## Re-generating
 
-See [`INSTALL.md`](INSTALL.md).
-
-## Re-generating the Update Set
-
-If you edit any source file in `source/script_includes/`, `source/business_rule/`, or `source/scheduled_jobs/`, regenerate the XML:
+After editing any source file:
 
 ```powershell
+# Regenerate the Background Script (recommended path)
+powershell -ExecutionPolicy Bypass -File netra-snow\scripts\build-setup-script.ps1
+
+# Regenerate the Update Set XML (alternative path)
 powershell -ExecutionPolicy Bypass -File netra-snow\scripts\build-update-set.ps1
 ```
 
-The generator validates well-formedness automatically.
+Both generators validate the output and report sizes.
 
 ## License
 

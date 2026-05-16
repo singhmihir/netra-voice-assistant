@@ -1,177 +1,109 @@
 # Netra on ServiceNow — Installation Guide (v2.0.0)
 
-Total time: **~10 minutes**. Zero external services. Zero recurring cost.
+**Two install paths.** Pick one.
 
-> **Browser:** Chrome or Edge required for the wake word and Web Speech APIs.
+| Path | Time | Manual steps |
+|---|---|---|
+| **A. Background Script (Recommended)** | ~3 min | 2 paste-and-run, plus 1 portal click |
+| B. Update Set XML + UI clicks | ~10 min | 6 UI steps |
 
----
-
-## What you'll set up
-
-| Done by Update Set XML       | Done manually (UI, ~5 min)           |
-|---|---|
-| 4 Script Includes            | Scoped app `x_netra`                 |
-| Business Rule                | Table `x_netra_notification`         |
-| Scheduled Job (every 3 min)  | Table `x_netra_user_pref`            |
-|                              | Scripted REST API + 2 resources      |
-|                              | Service Portal widget                 |
+> Browser requirement: Chrome or Edge for the Web Speech APIs. Other browsers can still click the mic button but won't have wake word.
 
 ---
 
-## 1. Create the scoped application (1 min)
+## Path A — Background Script (Recommended)
 
-1. **System Applications → My Company Applications → Create new → Start from scratch**
-2. Settings:
+### A.1  Create the scoped application (1 min)
+
+1. In ServiceNow, navigate to **System Applications → My Company Applications → Create new**.
+2. Click **Start from scratch**.
+3. Fill in:
    - **Name:** `Netra Voice Assistant`
    - **Scope:** `x_netra` *(must match exactly)*
    - **Version:** `2.0.0`
-3. Click **Create**. ServiceNow drops you into **Studio** with this app open.
+4. Click **Create**.
 
-> Keep that Studio tab open — every subsequent step happens inside this app's scope.
+### A.2  Run the Background Script (1 min)
 
----
+1. Open the file `netra-snow/install/setup-netra.js` from this repo. Select all (`Ctrl+A`), copy.
+2. In ServiceNow, navigate to **System Definition → Scripts - Background**.
+3. At the top, set **Run this script in** to your app's scope (`Netra Voice Assistant`) — or leave it on `global` if you have admin and your instance allows cross-scope writes.
+4. Paste the script into the **Run script** box.
+5. Click **Run script**.
 
-## 2. Create the two tables (3 min)
+You should see output like:
+```
+=== Netra install starting ===
+Using scope x_netra (sys_id ...)
 
-### 2a. `x_netra_notification`
+Tables...
+  + table x_netra_notification
+    . column x_netra_notification.user (reference)
+    ...
+  + table x_netra_user_pref
+    ...
 
-In Studio: **Create Application File → Table**
+Script Includes...
+  > script include NetraIntent
+  > script include NetraTools
+  > script include NetraResponder
+  > script include NetraScanner
 
-| Setting   | Value                  |
-|-----------|------------------------|
-| Label     | `Netra Notification`   |
-| Name      | `x_netra_notification` |
+Business Rule...
+  > business rule Netra Notify On Comment on sys_journal_field
 
-Add these columns:
+Scheduled Job...
+  > scheduled job Netra Watch (every 00:03:00)
 
-| Column          | Type                  | Length | Default |
-|-----------------|-----------------------|--------|---------|
-| `user`          | Reference → `sys_user`| —      | —       |
-| `ticket_sys_id` | String                | 32     | —       |
-| `ticket_number` | String                | 32     | —       |
-| `kind`          | String                | 40     | —       |
-| `message`       | String                | 1000   | —       |
-| `delivered`     | True/False            | —      | `false` |
-| `delivered_at`  | Date/Time             | —      | —       |
+Scripted REST API...
+  > scripted REST service Netra Voice (/api/x_netra/voice)
+  > REST resource POST /command
+  > REST resource GET /notifications
 
-Save.
+Service Portal Widget...
+  > widget netra-mic
 
-### 2b. `x_netra_user_pref`
+=== Netra install complete ===
+```
 
-| Setting   | Value                |
-|-----------|----------------------|
-| Label     | `Netra User Pref`    |
-| Name      | `x_netra_user_pref`  |
+The script is **idempotent** — re-run it any time to update artifacts from refreshed source.
 
-Add these columns:
-
-| Column              | Type                  | Length | Default |
-|---------------------|-----------------------|--------|---------|
-| `user`              | Reference → `sys_user`| —      | —       |
-| `active`            | True/False            | —      | `true`  |
-| `paused_until`      | Date/Time             | —      | —       |
-| `last_scan_time`    | Date/Time             | —      | —       |
-| `watch_assignments` | True/False            | —      | `true`  |
-| `watch_comments`    | True/False            | —      | `true`  |
-| `watch_approvals`   | True/False            | —      | `true`  |
-
-Save.
-
----
-
-## 3. Import the Update Set (1 min)
-
-Drops the 4 Script Includes, the Business Rule, and the Scheduled Job in one shot.
-
-1. **System Update Sets → Retrieved Update Sets → Import Update Set from XML**
-2. Upload `netra-snow/update-set/netra-v2.0.0.xml` from this repo
-3. Open the loaded set, click **Preview Update Set**, then **Commit Update Set**
-
-You should now see in Studio under `Netra Voice Assistant`:
-- `NetraIntent`, `NetraTools`, `NetraResponder`, `NetraScanner` (Script Includes)
-- `Netra Notify On Comment` (Business Rule)
-- `Netra Watch` (Scheduled Script Execution, runs every 3 minutes)
-
-Confirm the scheduled job is active: **System Definition → Scheduled Jobs**, filter by Application = Netra. The next-run column should show a time within 3 minutes.
-
----
-
-## 4. Create the Scripted REST API (3 min)
-
-1. **System Web Services → Scripted REST APIs → New**
-2. Settings:
-   - **Name:** `Netra Voice`
-   - **API ID:** `voice`
-   - **Application:** `Netra Voice Assistant`
-3. Save. The full base path becomes `/api/x_netra/voice`.
-4. Open the related list **Resources**, click **New**:
-   - **Name:** `command`
-   - **HTTP method:** `POST`
-   - **Relative path:** `/command`
-   - **Requires authentication:** ✔
-   - **Script:** paste the entire contents of `netra-snow/source/scripted_rest/command.js`
-   - Save.
-5. **New** again:
-   - **Name:** `notifications`
-   - **HTTP method:** `GET`
-   - **Relative path:** `/notifications`
-   - **Requires authentication:** ✔
-   - **Script:** paste `netra-snow/source/scripted_rest/notifications.js`
-   - Save.
-
----
-
-## 5. Create the Service Portal widget (2 min)
-
-1. **Service Portal → Service Portal Configuration → Widgets → New**
-2. Settings:
-   - **Name:** `Netra Mic`
-   - **ID:** `netra-mic`
-   - **Application:** `Netra Voice Assistant`
-3. Save, then paste each section from `netra-snow/source/widget/`:
-   - **Body HTML template** ← `template.html`
-   - **Client controller** ← `client.js`
-   - **Server script** ← `server.js`
-   - **CSS - SCSS** ← `stylesheet.scss`
-   - **Option schema** ← `option_schema.json` *(content is just `[]`)*
-4. Save.
-
----
-
-## 6. Add the widget to a portal page (30 sec)
+### A.3  Add the widget to a portal page (1 min)
 
 1. **Service Portal → Service Portal Configuration → Designer**
 2. Open the **Service Portal home** page (portal `sp`, page id `index`)
-3. Drag a **Netra Mic** widget into any container — it floats fixed in the bottom-right corner
+3. Drag a **Netra Mic** widget into any container — it positions itself fixed in the bottom-right corner
 4. Save the page
+
+### A.4  Test (1 min)
+
+Open the portal in **Chrome or Edge**:
+`https://YOUR-INSTANCE.service-now.com/sp`
+
+Allow microphone when prompted.
+
+| Try this | Expected |
+|---|---|
+| Say *"Netra"* | Dock chimes, status flips to listening |
+| *"Create a ticket for my email is broken"* | Confirms with a new INC number |
+| *"List my tickets"* | Reads back open tickets |
+| *"Pause"* | Asks *"For how many hours?"* |
+| *"Two hours"* | Confirms pause; purple banner appears |
+| *"Resume"* | Comes back |
+
+Proactive scan check:
+- **System Definition → Scheduled Jobs → Netra Watch → Execute Now**
+- Then have another admin user assign an incident to you — within the 8-second poll window after the scheduler runs, Netra will interrupt and announce it.
 
 ---
 
-## 7. Test (1 min)
+## Path B — Update Set XML (alternative)
 
-Open the portal in Chrome/Edge:
-`https://YOUR-INSTANCE.service-now.com/sp`
-
-When prompted, allow microphone access.
-
-**Try in order:**
-
-| Step | Say (or type and press Alt+N) | Expected |
-|---|---|---|
-| 1 | *"Netra"* | Floating dock chimes and listens |
-| 2 | *"Create a ticket for my email is broken"* | Netra confirms with a new INC number |
-| 3 | *"List my tickets"* | She reads back open tickets |
-| 4 | *"Pause"* | She asks: "For how many hours should I pause?" |
-| 5 | *"Two hours"* | She confirms pause and shows the purple paused banner |
-| 6 | *"Resume"* | She comes back |
-
-**Test proactive notifications:**
-
-1. Have another admin user comment on one of your incidents → within 8 seconds, Netra speaks the comment aloud.
-2. Have another admin assign an incident to you → within 3 minutes (next NetraScanner run), Netra interrupts and announces it.
-
-To trigger the scanner manually for testing:
-- **System Definition → Scheduled Jobs → Netra Watch → Execute Now**
+If you'd rather use the standard Update Set flow, see the older instructions
+in [`README.md`](README.md). The XML at `update-set/netra-v2.0.0.xml`
+contains the 4 Script Includes + Business Rule + Scheduled Job. You'd still
+need to manually create the 2 tables, the Scripted REST API, and the
+Widget via the UI — about 6 steps total, ~10 minutes.
 
 ---
 
@@ -179,41 +111,19 @@ To trigger the scanner manually for testing:
 
 | Symptom | Fix |
 |---|---|
-| Wake word does nothing | Use Chrome or Edge. Site must be HTTPS (it is, by default on dev instances). Check mic permission. |
-| Scheduled job never fires | Confirm `Active = true` and `Run = Periodically` on **Netra Watch**. Check that `x_netra_user_pref` has at least one row (it's created when you first load the widget). |
-| Pause doesn't stick | Check that the table `x_netra_user_pref` has the `paused_until` column. Re-import the Update Set if Script Includes show errors. |
-| "I didn't catch that" loop | Ambient noise. Mute background tabs (especially other video). |
+| `ERROR: scoped app "x_netra" not found.` | Complete step A.1 first. |
+| Background Script fails partway | Re-run it — it's idempotent. Common cause: scope dropdown was on `global`; switch to `Netra Voice Assistant` scope. |
+| Tables appear but columns missing | Re-run the script. The `upsertColumn` step creates them. |
+| Wake word does nothing | Use Chrome or Edge. Confirm mic permission. Site must be HTTPS (dev instances are). |
+| Scheduled job never fires | Confirm **Netra Watch** is active. Confirm `x_netra_user_pref` has rows (the widget creates one when first loaded). Use **Execute Now** to test. |
+| Pause doesn't stick | Confirm `x_netra_user_pref.paused_until` column exists. Re-run Background Script. |
 
 ---
 
-## How it all fits together
+## Uninstall
 
-```
-                      ┌─────────────────────────────────────┐
-                      │   Service Portal page (Chrome/Edge) │
-                      │                                     │
-                      │   netra-mic widget                  │
-                      │   ├─ wake word "Netra"              │
-                      │   ├─ Web Speech STT                 │
-                      │   ├─ Web Speech TTS                 │
-                      │   └─ polls /notifications every 8s  │
-                      └────────┬────────────────────────────┘
-                               │
-                  POST /command│         GET /notifications
-                               ▼
-   ┌───────────────────────────────────────────────────────────┐
-   │  Scripted REST API  /api/x_netra/voice/*                  │
-   │     │                                                      │
-   │     ▼                                                      │
-   │  NetraIntent  → NetraResponder  → NetraTools (GlideRecord)│
-   │                                                            │
-   │                                          ┌──────────────┐ │
-   │  Scheduled Job "Netra Watch"  ──────────►│ x_netra_     │ │
-   │  every 3 min  → NetraScanner  ───────────┤ notification │ │
-   │  scans assignments/approvals/tasks        │ (queue)      │ │
-   │                                          └──────────────┘ │
-   │                                                  ▲         │
-   │  Business Rule on sys_journal_field ─────────────┘         │
-   │  fires the instant a comment is added                      │
-   └────────────────────────────────────────────────────────────┘
-```
+To remove Netra entirely:
+
+1. **System Applications → All Available Applications → My Apps → Netra Voice Assistant**
+2. Click **Delete** on the row. ServiceNow removes every record in the `x_netra` scope automatically — tables, script includes, business rules, scheduled jobs, REST API, widget.
+3. Remove the widget instance from any portal pages.
