@@ -1,0 +1,68 @@
+<!--
+  Service Portal widget template — netra-mic
+  Renders a floating, always-visible mic button plus an accessible status panel.
+  Everything is keyboard-reachable and announced via ARIA live regions.
+-->
+<div class="netra-root" ng-class="'netra-status-' + c.status" role="region" aria-label="Netra voice assistant">
+
+  <!-- Skip link target for keyboard users -->
+  <a href="#" ng-click="c.toggle($event)" class="netra-skip" tabindex="0">Skip to Netra</a>
+
+  <!-- Floating dock -->
+  <div class="netra-dock" role="toolbar" aria-label="Netra voice controls">
+
+    <button type="button"
+            class="netra-mic"
+            ng-click="c.toggleRecording()"
+            ng-disabled="c.busy"
+            aria-pressed="{{c.status === 'listening'}}"
+            aria-label="{{c.micLabel()}}">
+      <span class="netra-mic-dot" aria-hidden="true"></span>
+      <span class="netra-mic-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="28" height="28" focusable="false">
+          <path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/>
+        </svg>
+      </span>
+    </button>
+
+    <div class="netra-meta">
+      <strong class="netra-name">Netra</strong>
+      <span class="netra-status" aria-live="polite">{{c.statusLabel()}}</span>
+    </div>
+
+    <button type="button"
+            class="netra-toggle-wake"
+            ng-click="c.toggleWake()"
+            aria-pressed="{{c.wakeOn}}"
+            aria-label="{{c.wakeOn ? 'Wake word listening on — say Netra' : 'Wake word listening off'}}"
+            title="{{c.wakeOn ? 'Wake word listening on' : 'Wake word listening off'}}">
+      <span aria-hidden="true">{{c.wakeOn ? 'ON' : 'OFF'}}</span>
+    </button>
+
+    <button type="button"
+            class="netra-help"
+            ng-click="c.help()"
+            aria-label="What can I say">?</button>
+  </div>
+
+  <!-- Conversation panel — last user transcript + Netra response -->
+  <div class="netra-panel" ng-show="c.lastTranscript || c.lastResponse">
+    <div class="netra-row" ng-show="c.lastTranscript">
+      <div class="netra-row-label">You said</div>
+      <div class="netra-row-text">{{c.lastTranscript}}</div>
+    </div>
+    <div class="netra-row netra-row-reply" ng-show="c.lastResponse">
+      <div class="netra-row-label">Netra</div>
+      <div class="netra-row-text">{{c.lastResponse}}</div>
+    </div>
+  </div>
+
+  <!-- Hidden ARIA live region for screen-reader announcements -->
+  <div role="status" aria-live="assertive" aria-atomic="true" class="sr-only">{{c.announcement}}</div>
+
+  <!-- Press-to-talk hotkey hint -->
+  <div class="netra-hotkey" aria-hidden="true">
+    Press <kbd>Alt</kbd>+<kbd>N</kbd> to talk
+  </div>
+
+</div>

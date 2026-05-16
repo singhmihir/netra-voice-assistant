@@ -1,0 +1,521 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ============================================================================
+  Netra Voice Assistant — Update Set v1.0.0
+  Import in: System Update Sets → Retrieved Update Sets → Import Update Set from XML
+
+  PREREQUISITES (do these once before importing):
+    1.  Create a scoped application named "Netra Voice Assistant" with scope "x_netra".
+        (System Applications → My Company Applications → Create New)
+    2.  Inside that scope, create a table "x_netra_notification" with columns:
+          user            (Reference → sys_user)
+          ticket_sys_id   (String, 32)
+          ticket_number   (String, 32)
+          kind            (String, 40)
+          message         (String, 1000)
+          delivered       (True/False, default false)
+          delivered_at    (Date/Time)
+
+  After import:  Preview → Commit.
+  Then add the "netra-mic" widget to your portal page (any container).
+  ============================================================================
+-->
+<unload unload_date="2026-05-16 12:00:00">
+
+  <sys_remote_update_set action="INSERT_OR_UPDATE">
+    <application display_value="Netra Voice Assistant">x_netra</application>
+    <application_name>Netra Voice Assistant</application_name>
+    <application_scope>x_netra</application_scope>
+    <application_version>1.0.0</application_version>
+    <collisions/>
+    <commit_date/>
+    <description>Voice-first, accessibility-focused ServiceNow assistant for blind users. Uses browser Web Speech APIs (free) for STT and TTS, plus regex-based intent parsing in a Script Include. No external paid services.</description>
+    <name>Netra Voice Assistant v1.0.0</name>
+    <origin_sys_id/>
+    <release_date/>
+    <remote_sys_id>1aa9f8c7db40121095ab18f4f3961980</remote_sys_id>
+    <state>loaded</state>
+    <summary/>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-05-16 12:00:00</sys_created_on>
+    <sys_id>1aa9f8c7db40121095ab18f4f3961980</sys_id>
+    <sys_mod_count>0</sys_mod_count>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-05-16 12:00:00</sys_updated_on>
+  </sys_remote_update_set>
+
+  <!-- ====================================================================== -->
+  <!-- 1.  Script Include — NetraIntent                                       -->
+  <!-- ====================================================================== -->
+  <sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <application display_value="Netra Voice Assistant">x_netra</application>
+    <category>customer</category>
+    <comments/>
+    <name>sys_script_include_2cf8e1a3db40121095ab18f4f3961901</name>
+    <payload>&lt;record_update table="sys_script_include"&gt;
+&lt;sys_script_include action="INSERT_OR_UPDATE"&gt;
+  &lt;access&gt;package_private&lt;/access&gt;
+  &lt;active&gt;true&lt;/active&gt;
+  &lt;api_name&gt;x_netra.NetraIntent&lt;/api_name&gt;
+  &lt;client_callable&gt;false&lt;/client_callable&gt;
+  &lt;description&gt;Regex-based intent parser. Converts a free-form transcript into a structured intent object.&lt;/description&gt;
+  &lt;mobile_callable&gt;false&lt;/mobile_callable&gt;
+  &lt;name&gt;NetraIntent&lt;/name&gt;
+  &lt;sandbox_callable&gt;false&lt;/sandbox_callable&gt;
+  &lt;script&gt;&lt;![CDATA[var NetraIntent = Class.create();
+NetraIntent.prototype = {
+    initialize: function () {},
+
+    parse: function (transcript) {
+        var raw = String(transcript || '').trim();
+        var t = raw.toLowerCase().replace(/[.!?,;]+$/g, '').trim();
+        if (!t) return this._intent('unknown', {}, raw);
+
+        if (/^(stop|cancel|quiet|shut up|never mind|nevermind|forget it)\b/.test(t)) {
+            return this._intent('cancel', {}, raw);
+        }
+        if (/^(help|what can you do|how does this work|what are my options)/.test(t)) {
+            return this._intent('help', {}, raw);
+        }
+
+        var resolveMatch = t.match(/(resolve|close|mark.*resolved|close out)\s+(ticket\s+)?(inc\d{4,})/i)
+                       || t.match(/(inc\d{4,})\s+is\s+(resolved|done|fixed|closed)/i);
+        if (resolveMatch) {
+            var num = this._extractTicketNumber(resolveMatch[3] || resolveMatch[1]);
+            if (num) return this._intent('resolve', { ticket_number: num }, raw);
+        }
+
+        var updateMatch = t.match(/(update|comment on|add (a )?(note|comment) to|note on)\s+(inc\d{4,})[,:\-\s]*(?:with\s+|that\s+|saying\s+)?(.+)/i);
+        if (updateMatch) {
+            var unum = this._extractTicketNumber(updateMatch[4]);
+            var comment = (updateMatch[5] || '').trim();
+            if (unum && comment) return this._intent('update', { ticket_number: unum, comment: comment }, raw);
+        }
+
+        var statusMatch = t.match(/(status of|what(?:'s| is)|tell me about|how(?:'s| is)|details (?:on|for))\s+(?:ticket\s+)?(inc\d{4,})/i)
+                      || t.match(/(inc\d{4,})\s+(status|what.*about)/i);
+        if (statusMatch) {
+            var snum = this._extractTicketNumber(statusMatch[2] || statusMatch[1]);
+            if (snum) return this._intent('status', { ticket_number: snum }, raw);
+        }
+
+        if (/(list|show|tell me|what(?:'s| are| is))(.*?)(my |open |all my )?tickets?\b/i.test(t)
+            || /what(?:'s| is) on my plate/i.test(t)
+            || /any (?:new |open )?tickets?/i.test(t)) {
+            return this._intent('list', {}, raw);
+        }
+
+        var createMatch = t.match(/(?:create|open|log|raise|submit|file|i (?:need|want) (?:a |to (?:create|open|log) (?:a )?))?\s*(?:a |an )?(?:new )?ticket\s+(?:for|about|that|on|regarding)?[,:\-\s]+(.+)/i);
+        if (createMatch &amp;&amp; createMatch[1] &amp;&amp; createMatch[1].trim().length &gt; 2) {
+            return this._intent('create', { description: this._cleanDescription(createMatch[1]) }, raw);
+        }
+        var reportMatch = t.match(/^(?:please\s+)?report\s+(?:that\s+)?(.+)/i);
+        if (reportMatch &amp;&amp; reportMatch[1].trim().length &gt; 2) {
+            return this._intent('create', { description: this._cleanDescription(reportMatch[1]) }, raw);
+        }
+        var bareTicketMatch = t.match(/^(?:please\s+)?ticket[:\-\s]+(.+)/i);
+        if (bareTicketMatch &amp;&amp; bareTicketMatch[1].trim().length &gt; 2) {
+            return this._intent('create', { description: this._cleanDescription(bareTicketMatch[1]) }, raw);
+        }
+
+        return this._intent('unknown', {}, raw);
+    },
+
+    _extractTicketNumber: function (s) {
+        if (!s) return null;
+        var compact = String(s).toUpperCase().replace(/\s+/g, '');
+        var m = compact.match(/INC(\d+)/);
+        if (!m) return null;
+        var digits = m[1];
+        while (digits.length &lt; 7) digits = '0' + digits;
+        return 'INC' + digits;
+    },
+
+    _cleanDescription: function (s) {
+        return String(s)
+            .replace(/^[—\-:,\s]+/, '')
+            .replace(/^(that |saying |with )/i, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    },
+
+    _intent: function (action, args, original) {
+        return { action: action, args: args || {}, original: original };
+    },
+
+    type: 'NetraIntent'
+};]]&gt;&lt;/script&gt;
+  &lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;
+  &lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;
+  &lt;sys_id&gt;2cf8e1a3db40121095ab18f4f3961901&lt;/sys_id&gt;
+  &lt;sys_name&gt;NetraIntent&lt;/sys_name&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
+  &lt;sys_policy/&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_update_name&gt;sys_script_include_2cf8e1a3db40121095ab18f4f3961901&lt;/sys_update_name&gt;
+&lt;/sys_script_include&gt;
+&lt;/record_update&gt;</payload>
+    <remote_update_set display_value="Netra Voice Assistant v1.0.0">1aa9f8c7db40121095ab18f4f3961980</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-05-16 12:00:00</sys_created_on>
+    <sys_id>2cf8e1a3db40121095ab18f4f3961901</sys_id>
+    <sys_recorded_at>0:0</sys_recorded_at>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-05-16 12:00:00</sys_updated_on>
+    <target_name>NetraIntent</target_name>
+    <type>Script Include</type>
+    <update_domain>global</update_domain>
+    <update_guid>2cf8e1a3db40121095ab18f4f3961901</update_guid>
+  </sys_update_xml>
+
+  <!-- ====================================================================== -->
+  <!-- 2.  Script Include — NetraTools                                        -->
+  <!-- ====================================================================== -->
+  <sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <application display_value="Netra Voice Assistant">x_netra</application>
+    <category>customer</category>
+    <name>sys_script_include_2cf8e1a3db40121095ab18f4f3961902</name>
+    <payload>&lt;record_update table="sys_script_include"&gt;
+&lt;sys_script_include action="INSERT_OR_UPDATE"&gt;
+  &lt;access&gt;package_private&lt;/access&gt;
+  &lt;active&gt;true&lt;/active&gt;
+  &lt;api_name&gt;x_netra.NetraTools&lt;/api_name&gt;
+  &lt;client_callable&gt;false&lt;/client_callable&gt;
+  &lt;description&gt;GlideRecord operations on incidents, scoped to the current user as caller.&lt;/description&gt;
+  &lt;name&gt;NetraTools&lt;/name&gt;
+  &lt;script&gt;&lt;![CDATA[var NetraTools = Class.create();
+NetraTools.prototype = {
+
+    STATE: { NEW: '1', IN_PROGRESS: '2', ON_HOLD: '3', RESOLVED: '6', CLOSED: '7', CANCELLED: '8' },
+    STATE_LABEL: {
+        '1': 'new', '2': 'in progress', '3': 'on hold',
+        '6': 'resolved', '7': 'closed', '8': 'cancelled'
+    },
+    PRIORITY_LABEL: { '1': 'critical', '2': 'high', '3': 'moderate', '4': 'low', '5': 'planning' },
+
+    initialize: function () {
+        this.userSysId = gs.getUserID();
+        this.userName = gs.getUserName();
+    },
+
+    createTicket: function (description, urgency) {
+        if (!description || description.trim().length &lt; 3) {
+            return { ok: false, error: 'Description is too short.' };
+        }
+        var gr = new GlideRecord('incident');
+        gr.initialize();
+        gr.short_description = description;
+        gr.description = 'Created via Netra voice assistant.';
+        gr.caller_id = this.userSysId;
+        gr.urgency = urgency || '3';
+        gr.impact = '3';
+        gr.contact_type = 'self-service';
+        var sysId = gr.insert();
+        if (!sysId) return { ok: false, error: 'Could not create the ticket. ' + gr.getLastErrorMessage() };
+        gr.get(sysId);
+        return { ok: true, ticket: { number: String(gr.number), sys_id: sysId, short_description: String(gr.short_description) } };
+    },
+
+    listMyTickets: function (limit) {
+        var gr = new GlideRecord('incident');
+        gr.addQuery('caller_id', this.userSysId);
+        gr.addQuery('state', 'NOT IN', this.STATE.CLOSED + ',' + this.STATE.CANCELLED);
+        gr.orderByDesc('sys_updated_on');
+        gr.setLimit(limit || 10);
+        gr.query();
+        var out = [];
+        while (gr.next()) out.push(this._shape(gr));
+        return { ok: true, tickets: out };
+    },
+
+    resolveTicket: function (number, closeNotes) {
+        var gr = this._findByNumber(number);
+        if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found, or you are not the caller.' };
+        gr.state = this.STATE.RESOLVED;
+        gr.close_code = 'Solved (Permanently)';
+        gr.close_notes = closeNotes || 'Resolved by caller via Netra.';
+        gr.resolved_by = this.userSysId;
+        gr.resolved_at = new GlideDateTime();
+        gr.update();
+        return { ok: true, number: number };
+    },
+
+    updateTicket: function (number, comment) {
+        if (!comment || comment.trim().length &lt; 1) return { ok: false, error: 'Comment is empty.' };
+        var gr = this._findByNumber(number);
+        if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found, or you are not the caller.' };
+        gr.comments = comment;
+        gr.update();
+        return { ok: true, number: number };
+    },
+
+    getStatus: function (number) {
+        var gr = this._findByNumber(number);
+        if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found, or you are not the caller.' };
+        return { ok: true, ticket: this._shape(gr) };
+    },
+
+    _findByNumber: function (number) {
+        if (!number) return null;
+        var gr = new GlideRecord('incident');
+        gr.addQuery('number', String(number).toUpperCase());
+        gr.addQuery('caller_id', this.userSysId);
+        gr.query();
+        return gr.next() ? gr : null;
+    },
+
+    _shape: function (gr) {
+        var state = String(gr.state || '');
+        var prio = String(gr.priority || '');
+        return {
+            number: String(gr.number),
+            sys_id: String(gr.sys_id),
+            short_description: String(gr.short_description),
+            state: this.STATE_LABEL[state] || state,
+            priority: this.PRIORITY_LABEL[prio] || prio,
+            assigned_to: gr.assigned_to.getDisplayValue() || null,
+            updated: String(gr.sys_updated_on),
+            created: String(gr.sys_created_on)
+        };
+    },
+
+    type: 'NetraTools'
+};]]&gt;&lt;/script&gt;
+  &lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;
+  &lt;sys_id&gt;2cf8e1a3db40121095ab18f4f3961902&lt;/sys_id&gt;
+  &lt;sys_name&gt;NetraTools&lt;/sys_name&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_update_name&gt;sys_script_include_2cf8e1a3db40121095ab18f4f3961902&lt;/sys_update_name&gt;
+&lt;/sys_script_include&gt;
+&lt;/record_update&gt;</payload>
+    <remote_update_set display_value="Netra Voice Assistant v1.0.0">1aa9f8c7db40121095ab18f4f3961980</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-05-16 12:00:00</sys_created_on>
+    <sys_id>2cf8e1a3db40121095ab18f4f3961902</sys_id>
+    <target_name>NetraTools</target_name>
+    <type>Script Include</type>
+    <update_domain>global</update_domain>
+    <update_guid>2cf8e1a3db40121095ab18f4f3961902</update_guid>
+  </sys_update_xml>
+
+  <!-- ====================================================================== -->
+  <!-- 3.  Script Include — NetraResponder                                    -->
+  <!-- ====================================================================== -->
+  <sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <application display_value="Netra Voice Assistant">x_netra</application>
+    <category>customer</category>
+    <name>sys_script_include_2cf8e1a3db40121095ab18f4f3961903</name>
+    <payload>&lt;record_update table="sys_script_include"&gt;
+&lt;sys_script_include action="INSERT_OR_UPDATE"&gt;
+  &lt;access&gt;package_private&lt;/access&gt;
+  &lt;active&gt;true&lt;/active&gt;
+  &lt;api_name&gt;x_netra.NetraResponder&lt;/api_name&gt;
+  &lt;client_callable&gt;false&lt;/client_callable&gt;
+  &lt;description&gt;Generates natural-language spoken replies, dispatching intents to NetraTools.&lt;/description&gt;
+  &lt;name&gt;NetraResponder&lt;/name&gt;
+  &lt;script&gt;&lt;![CDATA[var NetraResponder = Class.create();
+NetraResponder.prototype = {
+    initialize: function () { this.tools = new NetraTools(); },
+
+    handle: function (intent) {
+        switch (intent.action) {
+            case 'create': return this._create(intent.args.description);
+            case 'list':   return this._list();
+            case 'resolve':return this._resolve(intent.args.ticket_number);
+            case 'update': return this._update(intent.args.ticket_number, intent.args.comment);
+            case 'status': return this._status(intent.args.ticket_number);
+            case 'help':   return this._help();
+            case 'cancel': return { ok: true, message: 'Okay.', stop: true };
+            default:
+                return { ok: false, message: "I didn't quite catch that. Try: create a ticket for, list my tickets, resolve I N C, or update I N C with." };
+        }
+    },
+
+    _create: function (description) {
+        var r = this.tools.createTicket(description);
+        if (!r.ok) return { ok: false, message: "Sorry, I couldn't open the ticket. " + r.error };
+        return { ok: true, message: 'Ticket ' + this._sayNumber(r.ticket.number) + ' opened. Issue recorded: ' + r.ticket.short_description + '.', refresh_tickets: true, data: r.ticket };
+    },
+
+    _list: function () {
+        var r = this.tools.listMyTickets(5);
+        if (!r.ok) return { ok: false, message: 'Sorry, I could not load your tickets.' };
+        var tickets = r.tickets || [];
+        if (tickets.length === 0) return { ok: true, message: 'You have no open tickets right now.', data: tickets };
+        var pieces = tickets.slice(0, 5).map(function (t) {
+            return this._sayNumber(t.number) + ', ' + t.short_description + ', state ' + t.state;
+        }.bind(this));
+        var msg = 'You have ' + tickets.length + ' open ticket' + (tickets.length === 1 ? '' : 's') + '. ';
+        msg += pieces.join('. ') + '.';
+        return { ok: true, message: msg, data: tickets, refresh_tickets: true };
+    },
+
+    _resolve: function (number) {
+        if (!number) return { ok: false, message: 'Which ticket should I resolve? Please say the I N C number.' };
+        var r = this.tools.resolveTicket(number);
+        if (!r.ok) return { ok: false, message: r.error };
+        return { ok: true, message: 'Ticket ' + this._sayNumber(number) + ' marked resolved.', refresh_tickets: true };
+    },
+
+    _update: function (number, comment) {
+        if (!number) return { ok: false, message: 'Which ticket should I update?' };
+        if (!comment) return { ok: false, message: 'What should I add as the comment?' };
+        var r = this.tools.updateTicket(number, comment);
+        if (!r.ok) return { ok: false, message: r.error };
+        return { ok: true, message: 'Added your note to ticket ' + this._sayNumber(number) + '.', refresh_tickets: true };
+    },
+
+    _status: function (number) {
+        if (!number) return { ok: false, message: 'Which ticket do you want the status of?' };
+        var r = this.tools.getStatus(number);
+        if (!r.ok) return { ok: false, message: r.error };
+        var t = r.ticket;
+        var who = t.assigned_to ? ('assigned to ' + t.assigned_to) : 'unassigned';
+        return { ok: true, message: 'Ticket ' + this._sayNumber(t.number) + ': ' + t.short_description + '. State, ' + t.state + '. Priority, ' + t.priority + '. ' + who + '.', data: t };
+    },
+
+    _help: function () {
+        return { ok: true, message: 'You can ask me to create a ticket, list your tickets, resolve a ticket by number, update a ticket with a comment, or ask for the status of a specific ticket. Say stop at any time to cancel.' };
+    },
+
+    _sayNumber: function (number) {
+        if (!number) return '';
+        var m = String(number).match(/^([A-Z]+)(\d+)$/);
+        if (!m) return number;
+        var letters = m[1].split('').join(' ');
+        var digitWords = { '0':'zero','1':'one','2':'two','3':'three','4':'four','5':'five','6':'six','7':'seven','8':'eight','9':'nine' };
+        var digits = m[2].split('').map(function (d) { return digitWords[d] || d; }).join(' ');
+        return letters + ' ' + digits;
+    },
+
+    type: 'NetraResponder'
+};]]&gt;&lt;/script&gt;
+  &lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;
+  &lt;sys_id&gt;2cf8e1a3db40121095ab18f4f3961903&lt;/sys_id&gt;
+  &lt;sys_name&gt;NetraResponder&lt;/sys_name&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_update_name&gt;sys_script_include_2cf8e1a3db40121095ab18f4f3961903&lt;/sys_update_name&gt;
+&lt;/sys_script_include&gt;
+&lt;/record_update&gt;</payload>
+    <remote_update_set display_value="Netra Voice Assistant v1.0.0">1aa9f8c7db40121095ab18f4f3961980</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-05-16 12:00:00</sys_created_on>
+    <sys_id>2cf8e1a3db40121095ab18f4f3961903</sys_id>
+    <target_name>NetraResponder</target_name>
+    <type>Script Include</type>
+    <update_domain>global</update_domain>
+    <update_guid>2cf8e1a3db40121095ab18f4f3961903</update_guid>
+  </sys_update_xml>
+
+  <!-- ====================================================================== -->
+  <!-- 4.  Business Rule — Netra Notify On Comment                            -->
+  <!-- ====================================================================== -->
+  <sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <application display_value="Netra Voice Assistant">x_netra</application>
+    <category>customer</category>
+    <name>sys_script_3df9b2e4db40121095ab18f4f3961904</name>
+    <payload>&lt;record_update table="sys_script"&gt;
+&lt;sys_script action="INSERT_OR_UPDATE"&gt;
+  &lt;abort_action&gt;false&lt;/abort_action&gt;
+  &lt;access&gt;package_private&lt;/access&gt;
+  &lt;action_delete&gt;false&lt;/action_delete&gt;
+  &lt;action_insert&gt;true&lt;/action_insert&gt;
+  &lt;action_query&gt;false&lt;/action_query&gt;
+  &lt;action_update&gt;false&lt;/action_update&gt;
+  &lt;active&gt;true&lt;/active&gt;
+  &lt;add_message&gt;false&lt;/add_message&gt;
+  &lt;advanced&gt;true&lt;/advanced&gt;
+  &lt;change_fields&gt;false&lt;/change_fields&gt;
+  &lt;client_callable&gt;false&lt;/client_callable&gt;
+  &lt;collection&gt;sys_journal_field&lt;/collection&gt;
+  &lt;condition/&gt;
+  &lt;description&gt;Enqueues a Netra notification when someone other than the caller comments on an incident.&lt;/description&gt;
+  &lt;execute_function&gt;false&lt;/execute_function&gt;
+  &lt;filter_condition/&gt;
+  &lt;is_rest&gt;false&lt;/is_rest&gt;
+  &lt;name&gt;Netra Notify On Comment&lt;/name&gt;
+  &lt;order&gt;100&lt;/order&gt;
+  &lt;priority&gt;100&lt;/priority&gt;
+  &lt;rest_method/&gt;
+  &lt;rest_service/&gt;
+  &lt;rest_service_text/&gt;
+  &lt;rest_variables/&gt;
+  &lt;role_conditions/&gt;
+  &lt;script&gt;&lt;![CDATA[(function executeRule(current, previous /*null when inserting*/) {
+
+    if (current.name != 'incident') return;
+    var element = String(current.element || '');
+    if (element != 'comments' &amp;&amp; element != 'work_notes') return;
+
+    var incident = new GlideRecord('incident');
+    if (!incident.get(String(current.element_id))) return;
+
+    var callerSysId = String(incident.caller_id);
+    if (!callerSysId) return;
+
+    var authorUserName = String(current.sys_created_by);
+    var callerUser = new GlideRecord('sys_user');
+    if (!callerUser.get(callerSysId)) return;
+    if (String(callerUser.user_name) == authorUserName) return;  // self-comment
+
+    var authorName = authorUserName;
+    var au = new GlideRecord('sys_user');
+    au.addQuery('user_name', authorUserName);
+    au.query();
+    if (au.next()) {
+        authorName = (String(au.first_name || '') + ' ' + String(au.last_name || '')).trim() || authorUserName;
+    }
+
+    var body = String(current.value || '').trim();
+    if (!body) return;
+
+    var num = String(incident.number);
+    var spoken = num.replace(/([A-Z])/g, '$1 ').trim() + ' ' +
+                 num.replace(/^[A-Z]+/, '').split('').join(' ');
+
+    var kind = element == 'work_notes' ? 'work note' : 'comment';
+
+    var n = new GlideRecord('x_netra_notification');
+    n.initialize();
+    n.user = callerSysId;
+    n.ticket_sys_id = String(incident.sys_id);
+    n.ticket_number = num;
+    n.kind = element;
+    n.message = 'New ' + kind + ' on ' + spoken + ' from ' + authorName + '. ' +
+                body.substring(0, 400) + (body.length &gt; 400 ? '...' : '');
+    n.delivered = false;
+    n.insert();
+
+})(current, previous);]]&gt;&lt;/script&gt;
+  &lt;sys_class_name&gt;sys_script&lt;/sys_class_name&gt;
+  &lt;sys_id&gt;3df9b2e4db40121095ab18f4f3961904&lt;/sys_id&gt;
+  &lt;sys_name&gt;Netra Notify On Comment&lt;/sys_name&gt;
+  &lt;sys_overrides/&gt;
+  &lt;sys_package display_value="Netra Voice Assistant" source="x_netra"&gt;x_netra&lt;/sys_package&gt;
+  &lt;sys_scope display_value="Netra Voice Assistant"&gt;x_netra&lt;/sys_scope&gt;
+  &lt;sys_update_name&gt;sys_script_3df9b2e4db40121095ab18f4f3961904&lt;/sys_update_name&gt;
+  &lt;template/&gt;
+  &lt;when&gt;async&lt;/when&gt;
+&lt;/sys_script&gt;
+&lt;/record_update&gt;</payload>
+    <remote_update_set display_value="Netra Voice Assistant v1.0.0">1aa9f8c7db40121095ab18f4f3961980</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-05-16 12:00:00</sys_created_on>
+    <sys_id>3df9b2e4db40121095ab18f4f3961904</sys_id>
+    <target_name>Netra Notify On Comment</target_name>
+    <type>Business Rule</type>
+    <update_domain>global</update_domain>
+    <update_guid>3df9b2e4db40121095ab18f4f3961904</update_guid>
+  </sys_update_xml>
+
+</unload>

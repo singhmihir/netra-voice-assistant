@@ -1,0 +1,151 @@
+/* ============================================================
+ *  Netra mic widget — accessible, high-contrast, fixed dock
+ *  Designed for blind / low-vision users; keyboard reachable.
+ * ============================================================ */
+
+$netra-blue:  #1a56db;
+$netra-dark:  #0e2e7a;
+$netra-red:   #c81e1e;
+$netra-green: #057a55;
+$netra-amber: #b54708;
+$netra-grey:  #475569;
+
+.netra-root {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 9999;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: #111;
+
+    .sr-only {
+        position: absolute !important;
+        width: 1px; height: 1px;
+        padding: 0; margin: -1px;
+        overflow: hidden;
+        clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+    }
+
+    .netra-skip {
+        position: absolute;
+        top: -100px;
+        left: 0;
+        background: $netra-blue;
+        color: white;
+        padding: 8px 14px;
+        font-weight: 600;
+        border-radius: 4px;
+        text-decoration: none;
+        &:focus { top: -28px; outline: 3px solid #fff; }
+    }
+
+    .netra-dock {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        background: #ffffff;
+        border: 2px solid $netra-blue;
+        border-radius: 999px;
+        padding: 10px 14px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+    }
+
+    .netra-mic {
+        position: relative;
+        width: 56px; height: 56px;
+        border-radius: 50%;
+        border: 0;
+        background: $netra-blue;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: background 0.2s, transform 0.2s;
+        &:hover:not(:disabled) { background: $netra-dark; }
+        &:focus-visible      { outline: 4px solid #fff; box-shadow: 0 0 0 6px $netra-blue; }
+        &:disabled           { opacity: 0.6; cursor: not-allowed; }
+    }
+
+    .netra-mic-dot {
+        position: absolute;
+        top: 6px; right: 6px;
+        width: 12px; height: 12px;
+        background: #94a3b8;
+        border: 2px solid #fff;
+        border-radius: 50%;
+    }
+
+    .netra-meta {
+        display: flex; flex-direction: column;
+        line-height: 1.2;
+    }
+    .netra-name   { font-size: 16px; color: $netra-dark; font-weight: 700; }
+    .netra-status { font-size: 13px; color: $netra-grey; }
+
+    .netra-toggle-wake,
+    .netra-help {
+        border: 2px solid $netra-blue;
+        background: white;
+        color: $netra-blue;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-weight: 700;
+        font-size: 13px;
+        cursor: pointer;
+        &:hover { background: $netra-blue; color: white; }
+        &:focus-visible { outline: 3px solid $netra-amber; }
+    }
+    .netra-help { width: 32px; height: 32px; padding: 0; font-size: 18px; }
+
+    .netra-panel {
+        margin-top: 12px;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 14px;
+        padding: 14px 16px;
+        max-width: 440px;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.10);
+    }
+    .netra-row {
+        padding: 6px 0;
+        & + .netra-row { border-top: 1px solid #e2e8f0; }
+    }
+    .netra-row-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+        color: $netra-grey;
+    }
+    .netra-row-text {
+        font-size: 15px;
+        margin-top: 2px;
+    }
+    .netra-row-reply .netra-row-label { color: $netra-blue; }
+
+    .netra-hotkey {
+        margin-top: 8px;
+        text-align: right;
+        font-size: 11px;
+        color: $netra-grey;
+        kbd {
+            background: #fff; border: 1px solid #cbd5e1;
+            border-bottom-width: 2px;
+            padding: 1px 5px; border-radius: 4px;
+            font-family: ui-monospace, "Cascadia Mono", monospace;
+        }
+    }
+
+    /* ---- status colors ---- */
+    &.netra-status-listening .netra-mic        { background: $netra-red; }
+    &.netra-status-listening .netra-mic-dot    { background: $netra-red; animation: netra-pulse 1.2s infinite; }
+    &.netra-status-thinking  .netra-mic        { background: $netra-amber; }
+    &.netra-status-speaking  .netra-mic        { background: $netra-green; }
+    &.netra-status-error     .netra-mic        { background: $netra-grey; }
+}
+
+@keyframes netra-pulse {
+    0%,100% { transform: scale(1);   box-shadow: 0 0 0 0    rgba(200,30,30,0.7); }
+    50%     { transform: scale(1.2); box-shadow: 0 0 0 12px rgba(200,30,30,0);   }
+}
