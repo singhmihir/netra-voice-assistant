@@ -2,10 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "next-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3000
+      "name": "Netra preview (static HTML)",
+      "type": "static",
+      "path": "netra-snow/preview/index.html"
     }
   ]
 }

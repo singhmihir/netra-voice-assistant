@@ -1,0 +1,75 @@
+/**
+ * NetraSummarizer — extractive summary of long text for the blind user.
+ *
+ * No LLM, no external API. Uses a simple sentence-scoring algorithm
+ * (similar to TextRank-lite): rank sentences by keyword density of the
+ * top frequent words, return the top N.
+ *
+ * Use cases:
+ *   - "Read me INC0001234"  -> too long, summarise to 3 sentences first
+ *   - Knowledge article summary
+ *   - Long comment thread summary
+ */
+var NetraSummarizer = Class.create();
+NetraSummarizer.prototype = {
+
+    initialize: function () {},
+
+    /**
+     * @param {string} text
+     * @param {number} [maxSentences=3]
+     * @returns {string}
+     */
+    summarise: function (text, maxSentences) {
+        var raw = String(text || '').trim();
+        if (!raw) return '';
+        var sentences = this._splitSentences(raw);
+        if (sentences.length <= maxSentences) return raw;
+
+        // Word frequency (ignoring stopwords)
+        var freq = {};
+        sentences.forEach(function (s) {
+            s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
+             .split(/\s+/).forEach(function (w) {
+                if (w.length >= 3 && !STOP[w]) freq[w] = (freq[w] || 0) + 1;
+            });
+        });
+
+        // Score sentences
+        var scored = sentences.map(function (s, idx) {
+            var words = s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/);
+            var score = 0;
+            words.forEach(function (w) { score += freq[w] || 0; });
+            // Length normalise
+            if (words.length) score = score / Math.sqrt(words.length);
+            // Position bonus: first sentence often summarises
+            if (idx === 0) score *= 1.4;
+            return { idx: idx, sentence: s, score: score };
+        });
+        scored.sort(function (a, b) { return b.score - a.score; });
+
+        // Take top N, then re-order by original position for readability
+        var picked = scored.slice(0, maxSentences || 3)
+                           .sort(function (a, b) { return a.idx - b.idx; })
+                           .map(function (x) { return x.sentence; });
+        return picked.join(' ');
+    },
+
+    _splitSentences: function (text) {
+        // Simple splitter — handles ., !, ? and newlines
+        return text
+            .replace(/\s+/g, ' ')
+            .split(/(?<=[.!?])\s+(?=[A-Z])/g)
+            .map(function (s) { return s.trim(); })
+            .filter(function (s) { return s.length > 0; });
+    },
+
+    type: 'NetraSummarizer'
+};
+
+var STOP = {
+    'the':1,'and':1,'for':1,'with':1,'this':1,'that':1,'have':1,'from':1,'are':1,
+    'you':1,'your':1,'how':1,'what':1,'when':1,'why':1,'can':1,'will':1,'all':1,
+    'about':1,'has':1,'was':1,'were':1,'they':1,'their':1,'them':1,'into':1,
+    'but':1,'not':1,'any':1,'one':1,'two':1,'out':1,'use':1,'used':1,'using':1
+};

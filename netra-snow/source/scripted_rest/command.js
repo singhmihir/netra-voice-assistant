@@ -1,15 +1,16 @@
 /**
- * Scripted REST resource: POST /api/x_196061_netra/voice/command
+ * Scripted REST resource: POST /api/__NETRA_SCOPE__/voice/command
  *
  * Request body:
  *   {
  *     "transcript": "create a ticket for my email is down",
- *     "pending":    "ticket_description" | "pause_duration" | "resolve_number" | null
+ *     "pending":    "ticket_description" | "pause_duration" | "resolve_number" |
+ *                   "kb_query" | "chat_reply_body" | "confirm_destructive" | null
  *   }
  *
  * Response:
  *   {
- *     ok, intent, message, data, refresh_tickets, stop,
+ *     ok, intent, message, data, refresh_tickets, stop, navigate,
  *     pending: <next pending state or null>,
  *     clear_pending: true/false,
  *     paused: true/false   (only on pause/resume actions)
@@ -37,6 +38,7 @@
         data: result.data || null,
         refresh_tickets: !!result.refresh_tickets,
         stop: !!result.stop,
+        navigate: result.navigate || null,
         pending: result.pending || null,
         clear_pending: !!result.clear_pending,
         paused: typeof result.paused === 'boolean' ? result.paused : null

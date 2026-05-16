@@ -3,7 +3,7 @@
  *
  * Adds:
  *   • pending-state two-turn dialogue (e.g. "pause" → "for how long?" → "2 hours")
- *   • pause/resume UI synced with server-side x_196061_netra_user_pref
+ *   • pause/resume UI synced with server-side __NETRA_SCOPE___user_pref
  *   • last-response memory (for "repeat that")
  *   • smarter wake-word handling (ignores wake when the user is mid-dialogue)
  */
@@ -171,7 +171,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         announce('Processing.');
         $scope.$applyAsync();
 
-        $http.post('/api/x_196061_netra/voice/command', {
+        $http.post('/api/__NETRA_SCOPE__/voice/command', {
             transcript: transcript,
             pending: pendingContext
         })
@@ -209,6 +209,15 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
 
             if (d.stop) { resetToIdle(); return; }
 
+            // Navigate after speaking, if requested
+            if (d.navigate) {
+                speak(msg, function () {
+                    resetToIdle();
+                    $window.location.href = d.navigate;
+                });
+                return;
+            }
+
             speak(msg, function () {
                 resetToIdle(/*keepPending=*/ !!d.pending);
             });
@@ -232,7 +241,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
 
     function refreshPauseStatus() {
         // Re-read the pause window from the notifications endpoint
-        $http.get('/api/x_196061_netra/voice/notifications').then(function (resp) {
+        $http.get('/api/__NETRA_SCOPE__/voice/notifications').then(function (resp) {
             var d = resp.data || {};
             c.paused = !!d.paused;
             c.pausedUntilLabel = d.paused_until ? formatLocalTime(d.paused_until) : '';
@@ -267,7 +276,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     function startNotificationPolling() {
         var POLL_MS = 8000;
         var tick = function () {
-            $http.get('/api/x_196061_netra/voice/notifications')
+            $http.get('/api/__NETRA_SCOPE__/voice/notifications')
                 .then(function (resp) {
                     var d = resp.data || {};
                     c.paused = !!d.paused;

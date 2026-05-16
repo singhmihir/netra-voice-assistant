@@ -1,0 +1,127 @@
+/**
+ * NetraKnowledge — search and read ServiceNow Knowledge Base articles.
+ *
+ * Pure GlideRecord over kb_knowledge. No external API. Results are scored by
+ * keyword overlap so the most relevant article surfaces first.
+ */
+var NetraKnowledge = Class.create();
+NetraKnowledge.prototype = {
+    initialize: function () {},
+
+    /**
+     * Search published KB articles.
+     * @param {string} query
+     * @param {number} [limit=5]
+     * @returns {{ok:boolean, articles:Array, query:string}}
+     */
+    search: function (query, limit) {
+        var q = String(query || '').trim();
+        if (q.length < 2) return { ok: false, articles: [], query: q };
+        var keywords = this._tokenize(q);
+
+        var gr = new GlideRecord('kb_knowledge');
+        gr.addQuery('workflow_state', 'published');
+        gr.addQuery('active', true);
+        // Build a CONTAINS query for the strongest keyword first to narrow the set
+        var primary = keywords.sort(function (a, b) { return b.length - a.length; })[0];
+        if (primary) {
+            gr.addQuery('short_descriptionLIKE' + primary + '^ORtextLIKE' + primary);
+        }
+        gr.setLimit(40);
+        gr.query();
+
+        var scored = [];
+        while (gr.next()) {
+            var titleScore  = this._score(String(gr.short_description || ''), keywords) * 3;
+            var bodyScore   = this._score(String(gr.text || ''), keywords);
+            var total = titleScore + bodyScore;
+            if (total > 0) {
+                scored.push({
+                    sys_id: String(gr.sys_id),
+                    number: String(gr.number),
+                    title:  String(gr.short_description),
+                    snippet: this._snippet(String(gr.text || ''), keywords, 220),
+                    kb_base: String(gr.kb_knowledge_base || ''),
+                    score:  total
+                });
+            }
+        }
+        scored.sort(function (a, b) { return b.score - a.score; });
+        return { ok: true, articles: scored.slice(0, limit || 5), query: q };
+    },
+
+    /** Read one article in full (returns title + plain-text body). */
+    read: function (numberOrSysId) {
+        var gr = new GlideRecord('kb_knowledge');
+        if (String(numberOrSysId).match(/^[0-9a-f]{32}$/)) {
+            if (!gr.get(numberOrSysId)) return { ok: false, error: 'Article not found.' };
+        } else {
+            gr.addQuery('number', numberOrSysId);
+            gr.query();
+            if (!gr.next()) return { ok: false, error: 'Article not found.' };
+        }
+        return {
+            ok: true,
+            article: {
+                number: String(gr.number),
+                title:  String(gr.short_description),
+                body:   this._stripHtml(String(gr.text || '')),
+                kb_base: String(gr.kb_knowledge_base || '')
+            }
+        };
+    },
+
+    // -------- helpers --------
+    _tokenize: function (s) {
+        return String(s).toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .split(/\s+/)
+            .filter(function (w) { return w.length >= 3 && !STOP_WORDS[w]; });
+    },
+
+    _score: function (text, keywords) {
+        var lc = String(text).toLowerCase();
+        var s = 0;
+        keywords.forEach(function (k) {
+            var m = lc.indexOf(k);
+            if (m >= 0) s += 1 + (m < 60 ? 1 : 0);  // bonus for early hit
+        });
+        return s;
+    },
+
+    _snippet: function (body, keywords, len) {
+        var plain = this._stripHtml(body);
+        var lc = plain.toLowerCase();
+        var pos = -1;
+        for (var i = 0; i < keywords.length && pos < 0; i++) pos = lc.indexOf(keywords[i]);
+        if (pos < 0) pos = 0;
+        var start = Math.max(0, pos - 40);
+        return (start > 0 ? '...' : '') + plain.substring(start, start + len).replace(/\s+/g, ' ').trim() + '...';
+    },
+
+    _stripHtml: function (html) {
+        return String(html || '')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/?p\s*>/gi, '\n')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/\s+/g, ' ')
+            .trim();
+    },
+
+    type: 'NetraKnowledge'
+};
+
+// Tiny stopword list — keep it short to favour recall
+var STOP_WORDS = {
+    'the':1,'and':1,'for':1,'with':1,'this':1,'that':1,'have':1,'from':1,'are':1,
+    'you':1,'your':1,'how':1,'what':1,'when':1,'why':1,'can':1,'will':1,'all':1,
+    'about':1,'has':1,'was':1,'were':1,'they':1,'their':1,'them':1,'into':1
+};

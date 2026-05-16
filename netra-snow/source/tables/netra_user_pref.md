@@ -1,10 +1,10 @@
-# Table: `x_196061_netra_user_pref`
+# Table: `__NETRA_SCOPE___user_pref`
 
 Per-user preferences for Netra. One row per user the first time they load
 the widget. Used by:
 - Server: `NetraScanner` (to iterate users + know last-scanned time + respect pause)
 - Server: `NetraTools.pauseNotifications()` / `resumeNotifications()`
-- Server: `/api/x_196061_netra/voice/notifications` (skips polling while paused)
+- Server: `/api/__NETRA_SCOPE__/voice/notifications` (skips polling while paused)
 
 ## Schema
 

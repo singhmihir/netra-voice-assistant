@@ -56,7 +56,7 @@
     }
 
     function enqueue(userSysId, incidentGR, num, spokenNum, kind, body, author) {
-        var n = new GlideRecord('x_196061_netra_notification');
+        var n = new GlideRecord('__NETRA_SCOPE___notification');
         n.initialize();
         n.user = userSysId;
         n.ticket_sys_id = String(incidentGR.sys_id);

@@ -167,8 +167,30 @@
   <span class="tag">Preview</span>
   <h1>Netra Voice Assistant</h1>
   <span class="pill" id="browser-check"></span>
-  <span class="pill">Web Speech API · no backend</span>
+  <span class="pill" id="mic-check">mic: unknown</span>
+  <span class="pill" id="origin-check"></span>
+  <button class="pill" onclick="testMic()" style="cursor:pointer; border:none; color:white; background:var(--blue)">Test microphone</button>
 </header>
+
+<!-- Voice / pitch / rate controls -->
+<div style="max-width:1000px; margin: 8px auto 0; padding: 8px 24px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; color:var(--muted); font-size:13px;">
+  <label style="display:flex; align-items:center; gap:6px;">
+    Voice
+    <select id="voiceSel" style="background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px; min-width:280px;"></select>
+  </label>
+  <label style="display:flex; align-items:center; gap:6px;">
+    Pitch
+    <input type="range" id="pitchSel" min="0.5" max="1.5" step="0.05" value="0.95" style="width:100px;">
+    <span id="pitchVal">0.95</span>
+  </label>
+  <label style="display:flex; align-items:center; gap:6px;">
+    Rate
+    <input type="range" id="rateSel" min="0.7" max="1.3" step="0.05" value="0.95" style="width:100px;">
+    <span id="rateVal">0.95</span>
+  </label>
+  <button class="pill" style="cursor:pointer; border:none; color:white; background:var(--blue)" onclick="previewVoice()">▶ Preview voice</button>
+  <button class="pill" style="cursor:pointer; border:none; color:white; background:var(--grey)" onclick="listAllVoices()">📋 List all voices</button>
+</div>
 
 <main>
   <!-- Tickets -->
@@ -579,8 +601,53 @@ const hasSR = !!SR, hasTTS = !!TTS;
 let wakeRec = null, cmdRec = null;
 
 document.getElementById('browser-check').textContent =
-  hasSR ? 'Web Speech ✓ (mic enabled)' : 'Web Speech ✗ — use Chrome or Edge';
+  hasSR ? 'Web Speech ✓ (' + (window.SpeechRecognition ? 'standard' : 'webkit') + ')' : 'Web Speech ✗ — use Chrome or Edge';
 if (!hasSR) document.getElementById('browser-check').style.color = '#ff8080';
+
+// Origin check — browsers block mic on file:// — must be http(s) or localhost
+(function () {
+  const o = location.origin;
+  const protocol = location.protocol;
+  const el = document.getElementById('origin-check');
+  if (protocol === 'file:') {
+    el.textContent = 'origin: file:// ✗ (use http://localhost)';
+    el.style.color = '#ff8080';
+    el.style.borderColor = '#ff8080';
+  } else if (protocol === 'http:' && !/localhost|127\.0\.0\.1/.test(location.hostname)) {
+    el.textContent = 'origin: insecure ✗ (use https or localhost)';
+    el.style.color = '#ff8080';
+  } else {
+    el.textContent = 'origin: ' + protocol + '//' + location.host + ' ✓';
+    el.style.color = '#62d99d';
+  }
+})();
+
+async function testMic() {
+  const m = document.getElementById('mic-check');
+  m.textContent = 'mic: requesting...';
+  m.style.color = '#d8a948';
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      m.textContent = 'mic: ✗ no getUserMedia';
+      m.style.color = '#ff8080';
+      return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    m.textContent = 'mic: ✓ permission granted';
+    m.style.color = '#62d99d';
+    stream.getTracks().forEach(t => t.stop());
+    log('system', 'Microphone permission granted. Try saying "Netra" or click the mic.');
+    // Restart wake word now that we have permission
+    setTimeout(startWakeWord, 200);
+  } catch (e) {
+    m.textContent = 'mic: ✗ ' + (e.name || 'denied');
+    m.style.color = '#ff8080';
+    log('system', 'Microphone error: ' + (e.message || e.name));
+    if (e.name === 'NotAllowedError') {
+      log('system', 'Click the lock icon in the address bar -> Site settings -> Microphone -> Allow.');
+    }
+  }
+}
 
 function setStatus(s) {
   state.status = s;
@@ -621,19 +688,134 @@ function log(who, what) {
   convo.scrollTop = convo.scrollHeight;
 }
 
+// ----- Voice / pitch / rate -----
+const VOICE_KEY = 'netra.voiceName';
+const PITCH_KEY = 'netra.pitch';
+const RATE_KEY  = 'netra.rate';
+
+let voicePrefs = {
+  voiceName: localStorage.getItem(VOICE_KEY) || '',
+  pitch: parseFloat(localStorage.getItem(PITCH_KEY) || '0.95'),
+  rate:  parseFloat(localStorage.getItem(RATE_KEY)  || '0.95'),
+};
+
+function pickBestVoice(voices) {
+  if (!voices.length) return null;
+  // 1. Honour the user's saved choice
+  if (voicePrefs.voiceName) {
+    const saved = voices.find(v => v.name === voicePrefs.voiceName);
+    if (saved) return saved;
+  }
+  // 2. Indian English (en-IN) — preferred order:
+  //    a. Google's en-IN voice (Chrome built-in, no install needed)
+  //    b. Microsoft Natural/Neural/Online voices
+  //    c. Known good Microsoft names
+  //    d. Any en-IN voice at all
+  const inVoices = voices.filter(v => /en[-_]IN/i.test(v.lang));
+  const googleIn = inVoices.find(v => /^Google/i.test(v.name));
+  if (googleIn) return googleIn;
+  const msNatural = inVoices.find(v => /Natural|Neural|Online/i.test(v.name));
+  if (msNatural) return msNatural;
+  const preferred = ['Neerja', 'Heera', 'Prabhat', 'Ravi', 'Veena', 'Rishi', 'Lekha'];
+  for (const name of preferred) {
+    const m = inVoices.find(v => v.name.includes(name));
+    if (m) return m;
+  }
+  if (inVoices.length) return inVoices[0];
+
+  // 3. Hindi voice (hi-IN) — Indian accent fallback if no en-IN exists
+  const hiVoices = voices.filter(v => /hi[-_]IN/i.test(v.lang));
+  const googleHi = hiVoices.find(v => /^Google/i.test(v.name));
+  if (googleHi) return googleHi;
+  if (hiVoices.length) return hiVoices[0];
+
+  // 4. Last resort: any en-* natural, then en-US, then anything
+  return voices.find(v => /Natural|Neural|Online/i.test(v.name) && /^en/i.test(v.lang))
+      || voices.find(v => /en[-_]US/i.test(v.lang))
+      || voices.find(v => /^en/i.test(v.lang))
+      || voices[0];
+}
+
+function refreshVoiceList() {
+  const sel = document.getElementById('voiceSel');
+  const voices = TTS.getVoices();
+  if (!voices.length) { sel.innerHTML = '<option>(no voices loaded)</option>'; return; }
+  // Sort: en-IN first, then en-*, then everything else
+  voices.sort((a, b) => {
+    const ai = /en[-_]IN/i.test(a.lang) ? 0 : /^en/i.test(a.lang) ? 1 : 2;
+    const bi = /en[-_]IN/i.test(b.lang) ? 0 : /^en/i.test(b.lang) ? 1 : 2;
+    if (ai !== bi) return ai - bi;
+    return a.name.localeCompare(b.name);
+  });
+  const best = pickBestVoice(voices);
+  sel.innerHTML = voices.map(v => {
+    const flag = /en[-_]IN/i.test(v.lang) ? '🇮🇳 ' : /en[-_]US/i.test(v.lang) ? '🇺🇸 ' : /en[-_]GB/i.test(v.lang) ? '🇬🇧 ' : '';
+    return `<option value="${v.name}" ${best && v.name === best.name ? 'selected' : ''}>${flag}${v.name} — ${v.lang}</option>`;
+  }).join('');
+  if (best) voicePrefs.voiceName = best.name;
+}
+
 function speak(text, done) {
   if (!hasTTS || !text) { done && done(); return; }
   TTS.cancel();
   state.lastSpoken = text;
   const u = new SpeechSynthesisUtterance(text);
-  u.rate = 1.0; u.pitch = 1.0; u.lang = 'en-US';
+  u.pitch = voicePrefs.pitch;
+  u.rate  = voicePrefs.rate;
   const voices = TTS.getVoices();
-  const pick = voices.find(v => /Natural|Online|Google/i.test(v.name)) || voices.find(v => /en-US/i.test(v.lang));
-  if (pick) u.voice = pick;
+  const pick = pickBestVoice(voices);
+  if (pick) {
+    u.voice = pick;
+    u.lang = pick.lang;
+  } else {
+    u.lang = 'en-IN';
+  }
   u.onstart = () => setStatus('speaking');
   u.onend = () => { done && done(); };
   u.onerror = () => { done && done(); };
   TTS.speak(u);
+}
+
+function previewVoice() {
+  speak('Hello, this is Netra speaking. I can help you create and manage your service now tickets, by voice.');
+}
+
+function listAllVoices() {
+  const voices = TTS.getVoices();
+  if (!voices.length) { log('system', 'No voices loaded yet — wait a moment and try again.'); return; }
+  log('system', 'Available voices (' + voices.length + ' total):');
+  const indian = voices.filter(v => /en[-_]IN|hi[-_]IN/i.test(v.lang));
+  const others = voices.filter(v => !/en[-_]IN|hi[-_]IN/i.test(v.lang));
+  if (indian.length) {
+    log('system', 'Indian voices: ' + indian.map(v => `[${v.lang}] ${v.name}`).join(' | '));
+  } else {
+    log('system', '⚠ No en-IN or hi-IN voices on this system. Chrome may need to download Google voices, or install via Windows settings.');
+  }
+  log('system', 'Other voices (first 10): ' + others.slice(0, 10).map(v => `[${v.lang}] ${v.name}`).join(' | '));
+  const best = pickBestVoice(voices);
+  if (best) log('system', '→ Netra is currently using: [' + best.lang + '] ' + best.name);
+}
+
+// Wire up controls + load voices (browsers populate voices async)
+function initVoiceUI() {
+  refreshVoiceList();
+  const vSel = document.getElementById('voiceSel');
+  const pSel = document.getElementById('pitchSel');
+  const rSel = document.getElementById('rateSel');
+  pSel.value = voicePrefs.pitch; document.getElementById('pitchVal').textContent = voicePrefs.pitch;
+  rSel.value = voicePrefs.rate;  document.getElementById('rateVal').textContent  = voicePrefs.rate;
+  vSel.onchange = () => { voicePrefs.voiceName = vSel.value; localStorage.setItem(VOICE_KEY, vSel.value); previewVoice(); };
+  pSel.oninput  = () => { voicePrefs.pitch = parseFloat(pSel.value); document.getElementById('pitchVal').textContent = pSel.value; localStorage.setItem(PITCH_KEY, pSel.value); };
+  pSel.onchange = () => previewVoice();
+  rSel.oninput  = () => { voicePrefs.rate  = parseFloat(rSel.value); document.getElementById('rateVal').textContent  = rSel.value; localStorage.setItem(RATE_KEY,  rSel.value); };
+  rSel.onchange = () => previewVoice();
+}
+if (TTS) {
+  // Voices load asynchronously in Chrome; listen and re-populate.
+  TTS.addEventListener && TTS.addEventListener('voiceschanged', refreshVoiceList);
+  initVoiceUI();
+  setTimeout(refreshVoiceList, 300);
+  setTimeout(refreshVoiceList, 1500);
 }
 
 function startWakeWord() {
@@ -653,7 +835,18 @@ function startWakeWord() {
       }
     }
   };
-  wakeRec.onerror = () => { if (state.wakeOn && state.status === 'idle') setTimeout(startWakeWord, 800); };
+  wakeRec.onerror = (ev) => {
+    // 'no-speech' and 'aborted' are routine; surface anything else
+    if (ev.error && ev.error !== 'no-speech' && ev.error !== 'aborted') {
+      log('system', 'wake-word error: ' + ev.error);
+      const m = document.getElementById('mic-check');
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        m.textContent = 'mic: ✗ ' + ev.error + ' (click Test microphone)';
+        m.style.color = '#ff8080';
+      }
+    }
+    if (state.wakeOn && state.status === 'idle') setTimeout(startWakeWord, 800);
+  };
   wakeRec.onend  = () => { if (state.wakeOn && state.status === 'idle') setTimeout(startWakeWord, 400); };
   try { wakeRec.start(); } catch {}
 }
