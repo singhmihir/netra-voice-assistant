@@ -1,8 +1,8 @@
 /**
- * NetraTools — server-side GlideRecord operations on incidents.
+ * NetraTools — GlideRecord operations.
  *
- * All methods enforce the rule that the user can only touch tickets where
- * they are the caller. ACLs reinforce this on the table level.
+ * v2.0 — adds pause/resume preference management, and helpers used by the
+ * scheduled scanner.
  *
  * Returns plain JS objects ready to be JSON-serialised to the client.
  */
@@ -14,15 +14,16 @@ NetraTools.prototype = {
         '1': 'new', '2': 'in progress', '3': 'on hold',
         '6': 'resolved', '7': 'closed', '8': 'cancelled'
     },
-    PRIORITY_LABEL: {
-        '1': 'critical', '2': 'high', '3': 'moderate', '4': 'low', '5': 'planning'
-    },
+    PRIORITY_LABEL: { '1': 'critical', '2': 'high', '3': 'moderate', '4': 'low', '5': 'planning' },
 
     initialize: function () {
         this.userSysId = gs.getUserID();
         this.userName = gs.getUserName();
     },
 
+    // ============================================================
+    //  Incident CRUD
+    // ============================================================
     createTicket: function (description, urgency) {
         if (!description || description.trim().length < 3) {
             return { ok: false, error: 'Description is too short.' };
@@ -36,18 +37,9 @@ NetraTools.prototype = {
         gr.impact = '3';
         gr.contact_type = 'self-service';
         var sysId = gr.insert();
-        if (!sysId) {
-            return { ok: false, error: 'Could not create the ticket. ' + gr.getLastErrorMessage() };
-        }
+        if (!sysId) return { ok: false, error: 'Could not create the ticket. ' + gr.getLastErrorMessage() };
         gr.get(sysId);
-        return {
-            ok: true,
-            ticket: {
-                number: String(gr.number),
-                sys_id: sysId,
-                short_description: String(gr.short_description)
-            }
-        };
+        return { ok: true, ticket: { number: String(gr.number), sys_id: sysId, short_description: String(gr.short_description) } };
     },
 
     listMyTickets: function (limit) {
@@ -58,9 +50,7 @@ NetraTools.prototype = {
         gr.setLimit(limit || 10);
         gr.query();
         var out = [];
-        while (gr.next()) {
-            out.push(this._shape(gr));
-        }
+        while (gr.next()) out.push(this._shape(gr));
         return { ok: true, tickets: out };
     },
 
@@ -77,12 +67,10 @@ NetraTools.prototype = {
     },
 
     updateTicket: function (number, comment) {
-        if (!comment || comment.trim().length < 1) {
-            return { ok: false, error: 'Comment is empty.' };
-        }
+        if (!comment || comment.trim().length < 1) return { ok: false, error: 'Comment is empty.' };
         var gr = this._findByNumber(number);
         if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found, or you are not the caller.' };
-        gr.comments = comment;  // 'comments' journal = customer-visible additional comments
+        gr.comments = comment;
         gr.update();
         return { ok: true, number: number };
     },
@@ -93,7 +81,65 @@ NetraTools.prototype = {
         return { ok: true, ticket: this._shape(gr) };
     },
 
-    // ---------- helpers ----------
+    // ============================================================
+    //  User preferences (pause / resume)
+    // ============================================================
+
+    /**
+     * Pause Netra notifications for the given duration (in hours).
+     * Stored in x_netra_user_pref.paused_until as an absolute GlideDateTime.
+     */
+    pauseNotifications: function (hours) {
+        if (!hours || hours <= 0) return { ok: false, error: 'Invalid pause duration.' };
+        var pref = this._getOrCreatePref();
+        var until = new GlideDateTime();
+        until.add(Math.round(hours * 3600 * 1000));   // ms
+        pref.paused_until = until;
+        pref.update();
+        return { ok: true, paused_until: String(pref.paused_until), hours: hours };
+    },
+
+    resumeNotifications: function () {
+        var pref = this._getOrCreatePref();
+        pref.paused_until = '';
+        pref.update();
+        return { ok: true };
+    },
+
+    isPaused: function () {
+        var pref = this._getOrCreatePref(/*don't create*/ true);
+        if (!pref) return false;
+        var until = pref.paused_until;
+        if (!until || String(until) === '') return false;
+        var now = new GlideDateTime();
+        return new GlideDateTime(String(until)).compareTo(now) > 0;
+    },
+
+    /**
+     * Look up the pref row for the current user, or create one if missing.
+     * @param {boolean} [readOnly] if true, returns null when no row exists
+     */
+    _getOrCreatePref: function (readOnly) {
+        var gr = new GlideRecord('x_netra_user_pref');
+        gr.addQuery('user', this.userSysId);
+        gr.setLimit(1);
+        gr.query();
+        if (gr.next()) return gr;
+        if (readOnly) return null;
+
+        gr.initialize();
+        gr.user = this.userSysId;
+        gr.watch_assignments = true;
+        gr.watch_comments = true;
+        gr.watch_approvals = true;
+        gr.insert();
+        gr.get(gr.sys_id);
+        return gr;
+    },
+
+    // ============================================================
+    //  Helpers
+    // ============================================================
     _findByNumber: function (number) {
         if (!number) return null;
         var gr = new GlideRecord('incident');

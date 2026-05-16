@@ -1,72 +1,55 @@
-# Netra on ServiceNow 🎙️
+# Netra on ServiceNow 🎙️ v2.0.0
 
-A voice-first, fully accessible ticket-management assistant that runs **natively inside ServiceNow** as a scoped application — no external services, no API keys, zero cost.
-
-Designed for blind and visually-impaired ServiceNow users.
+A voice-first, fully accessible assistant that runs **natively inside ServiceNow** as a scoped application. Zero external services, zero recurring cost. Designed for blind and visually-impaired ServiceNow users.
 
 ---
 
-## What it does
+## v2 — what's new
 
-- **Voice-to-ticket** — say *"create a ticket for my email is broken"*, Netra opens an incident
-- **Voice ticket management** — list, resolve, update, get status, all hands-free
-- **Wake word "Netra"** — running in any Service Portal tab; just say her name
-- **Push-to-talk** — `Alt+N` or click the floating mic button
-- **TTS replies** — Netra speaks back the result of every action
-- **Proactive comment alerts** — the moment a colleague comments on your ticket, a Business Rule queues a notification and your open Service Portal tab announces it within 8 seconds
-- **Screen-reader friendly** — ARIA live regions, labels, roles throughout; full keyboard navigation
-
----
-
-## Why on ServiceNow (vs. a desktop app)?
-
-| Concern | Desktop daemon | ServiceNow-native |
-|---|---|---|
-| Cost | Paid APIs (Whisper, TTS, Claude) | **Free — uses browser Web Speech APIs** |
-| Auth to ServiceNow | API key | Native — runs as the logged-in user |
-| ACLs / row-level security | Bypassed via admin creds | Enforced by the platform |
-| Latency on new comments | Polling every 60s | **Instant — Business Rule fires on insert** |
-| Install effort | Python + 12 libs per machine | One Update Set import |
-| Distribution | DIY | ServiceNow Store-ready |
-
-The trade-off: Netra only listens while a Service Portal tab is open in your browser. She's not a system-wide always-on daemon. For most ServiceNow users this is exactly the right scope.
+- **Conversational dialogue** — greetings, smalltalk, varied phrasing, "thank you" / "repeat that"
+- **Multi-turn flow** — Netra asks follow-up questions (e.g. *"For how many hours should I pause?"*) and remembers context
+- **Pause notifications** — natural duration parsing: *"two hours"*, *"30 minutes"*, *"the rest of the day"*
+- **Scheduled scanner every 3 minutes** — wakes Netra up to announce new things assigned to you:
+  - Incidents newly assigned to you
+  - Change requests newly assigned to you
+  - Service catalog tasks newly assigned to you
+  - Approvals waiting on you
+- **Business Rule still fires instantly** on new ticket comments — no 3-min lag for those
+- **Bigger Update Set** — Script Includes, Business Rule, AND Scheduled Job all bundled
 
 ---
 
-## How it works
+## Voice command reference
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        ServiceNow Scoped App: x_netra                │
-│                                                                       │
-│  ┌────────────────────────────┐                                       │
-│  │  Service Portal Widget     │                                       │
-│  │  "netra-mic"               │                                       │
-│  │                            │                                       │
-│  │  Web Speech STT ──┐        │                                       │
-│  │  Wake word: "Netra"        │                                       │
-│  │  Floating mic + Alt+N      │                                       │
-│  │  SpeechSynthesis TTS ◄─┐   │                                       │
-│  └─────┬──────────────────┼───┘                                       │
-│        │ transcript       │ spoken reply                              │
-│        ▼                  │                                           │
-│  ┌─────────────────────────────────┐    ┌─────────────────────────┐  │
-│  │  POST /api/x_netra/voice/command│───►│  NetraIntent (regex)    │  │
-│  │  (Scripted REST API)            │    │  NetraResponder         │  │
-│  │                                 │◄───│  NetraTools (GlideRecord)│ │
-│  └─────────────────────────────────┘    └─────────────────────────┘  │
-│        ▲                                                              │
-│        │ GET /notifications  (polled every 8s)                        │
-│        │                                                              │
-│  ┌─────┴────────────────────────────┐    ┌─────────────────────────┐ │
-│  │  x_netra_notification (table)    │◄───│  Business Rule:         │ │
-│  │  user, ticket, kind, message     │    │  Netra Notify On Comment│ │
-│  └──────────────────────────────────┘    │  (sys_journal_field, +i)│ │
-│                                           └─────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────┘
-```
+### Tickets
+| You say | Netra does |
+|---|---|
+| *"Create a ticket for my email is broken"* | Opens INC, reads back the number |
+| *"Open a ticket"* | Asks *"Sure, what's the issue?"* — you reply, she opens it |
+| *"List my tickets"* / *"What's on my plate?"* | Reads up to 5 open tickets |
+| *"Resolve INC0001234"* / *"Close INC0001234"* | Marks resolved |
+| *"Resolve a ticket"* | Asks *"Which I N C number?"* |
+| *"Update INC0001234 with I rebooted"* | Adds comment |
+| *"Status of INC0001234"* | Reads state + priority + assignee |
 
-Every piece is plain JavaScript running inside ServiceNow. Zero external dependencies. Zero recurring cost.
+### Pause / resume notifications
+| You say | Netra does |
+|---|---|
+| *"Pause"* | Asks *"For how many hours should I pause?"* |
+| *"Two hours"* (after the question) | Pauses, confirms the resume time |
+| *"Pause for thirty minutes"* | Pauses for 30 min, one-shot |
+| *"Mute for the rest of the day"* | Pauses ~8 hours |
+| *"Resume"* / *"Wake up"* / *"Come back"* | Brings her back |
+
+### Social
+| You say | Netra does |
+|---|---|
+| *"Hi"* / *"Good morning Netra"* | Time-of-day greeting |
+| *"Thanks"* / *"Good job"* | Varied acknowledgment |
+| *"How are you?"* | Smalltalk reply |
+| *"Repeat that"* | Re-speaks her last response |
+| *"Help"* | Lists what she can do |
+| *"Stop"* / *"Quiet"* / *"Cancel"* | Stops her mid-sentence |
 
 ---
 
@@ -74,73 +57,107 @@ Every piece is plain JavaScript running inside ServiceNow. Zero external depende
 
 ```
 netra-snow/
-├── README.md                           ← you are here
-├── INSTALL.md                          ← step-by-step install guide (8 min)
+├── README.md                                ← this file
+├── INSTALL.md                               ← step-by-step setup (~10 min)
 ├── update-set/
-│   └── netra-v1.0.0.xml                ← importable Update Set (Script Includes + Business Rule)
+│   └── netra-v2.0.0.xml                     ← single-file importable bundle
+├── scripts/
+│   └── build-update-set.ps1                 ← regenerates the XML from source/
 └── source/
     ├── script_includes/
-    │   ├── NetraIntent.js              ← regex-based NL intent parser
-    │   ├── NetraTools.js               ← incident CRUD via GlideRecord
-    │   └── NetraResponder.js           ← composes spoken replies
+    │   ├── NetraIntent.js                   ← intent parser (regex, smalltalk, multi-turn)
+    │   ├── NetraTools.js                    ← incident CRUD + user prefs (pause/resume)
+    │   ├── NetraResponder.js                ← composes varied spoken replies
+    │   └── NetraScanner.js                  ← periodic scan: assignments, approvals, tasks
     ├── scripted_rest/
-    │   ├── command.js                  ← POST /api/x_netra/voice/command
-    │   └── notifications.js            ← GET  /api/x_netra/voice/notifications
-    ├── widget/
-    │   ├── template.html               ← floating dock markup
-    │   ├── client.js                   ← STT + wake word + TTS + polling
-    │   ├── server.js                   ← server-side bootstrap
-    │   ├── stylesheet.scss             ← accessible high-contrast styles
-    │   └── option_schema.json
+    │   ├── command.js                       ← POST /api/x_netra/voice/command
+    │   └── notifications.js                 ← GET  /api/x_netra/voice/notifications
+    ├── scheduled_jobs/
+    │   └── netra_watch.js                   ← runs every 3 min, delegates to NetraScanner
     ├── business_rule/
-    │   └── netra_notify_on_comment.js  ← async after-insert on sys_journal_field
+    │   └── netra_notify_on_comment.js       ← instant alert on ticket comments
+    ├── widget/                              ← Service Portal floating-mic widget
+    │   ├── template.html
+    │   ├── client.js
+    │   ├── server.js
+    │   ├── stylesheet.scss
+    │   └── option_schema.json
     └── tables/
-        └── x_netra_notification.md     ← table schema reference
+        ├── x_netra_notification.md
+        └── x_netra_user_pref.md
 ```
+
+---
+
+## Architecture
+
+```
+                      ┌───────────────────────────────────┐
+                      │   Service Portal in Chrome/Edge   │
+                      │                                   │
+                      │   ┌─────────────────────────────┐ │
+                      │   │ Netra Mic widget            │ │
+                      │   │                             │ │
+                      │   │  ▸ wake word "Netra"        │ │
+                      │   │  ▸ Web Speech STT (free)    │ │
+                      │   │  ▸ Web Speech TTS (free)    │ │
+                      │   │  ▸ pause/resume UI          │ │
+                      │   │  ▸ polls /notifications 8s  │ │
+                      │   └─────────────────────────────┘ │
+                      └────────┬──────────────────────────┘
+                               │
+                  POST /command│         GET /notifications
+                               ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │  Scripted REST API                                          │
+   │                                                              │
+   │  /command         /notifications                             │
+   │      │                  │                                    │
+   │      ▼                  ▼                                    │
+   │  NetraIntent     pause check → if paused, return empty       │
+   │      │                                                       │
+   │      ▼                                                       │
+   │  NetraResponder ──► NetraTools (GlideRecord ops, user prefs) │
+   │                                                              │
+   │  ────────────────────────────────────────────────────────    │
+   │                                                              │
+   │  Scheduled Job  "Netra Watch"  ── every 3 minutes ─►         │
+   │                       │                                      │
+   │                       ▼                                      │
+   │                  NetraScanner                                │
+   │                       │                                      │
+   │     ┌─────────────────┴─────────────────┐                    │
+   │     ▼                                   ▼                    │
+   │  Iterates active users         For each user, scans:         │
+   │  in x_netra_user_pref          • incident.assigned_to        │
+   │                                • change_request.assigned_to  │
+   │                                • sc_task.assigned_to         │
+   │                                • sysapproval_approver        │
+   │                                Enqueues into                 │
+   │                                x_netra_notification          │
+   │                                                              │
+   │  Business Rule on sys_journal_field (incident comments)      │
+   │  fires instantly — also enqueues to x_netra_notification     │
+   └─────────────────────────────────────────────────────────────┘
+```
+
+Every notification path lands in `x_netra_notification`. The widget polls and announces. Pause is honored at every layer (widget UI, scanner skips paused users, notifications endpoint returns empty while paused).
 
 ---
 
 ## Install
 
-See [`INSTALL.md`](INSTALL.md) for the step-by-step walkthrough. Total time ~8 minutes:
+See [`INSTALL.md`](INSTALL.md).
 
-1. Create the scoped app `x_netra` in Studio
-2. Create the `x_netra_notification` table
-3. Import the Update Set (`update-set/netra-v1.0.0.xml`)
-4. Paste the Scripted REST API resources
-5. Paste the Service Portal widget pieces
-6. Drop the widget onto your portal page
-7. Test
+## Re-generating the Update Set
 
----
+If you edit any source file in `source/script_includes/`, `source/business_rule/`, or `source/scheduled_jobs/`, regenerate the XML:
 
-## Try Netra without installing
+```powershell
+powershell -ExecutionPolicy Bypass -File netra-snow\scripts\build-update-set.ps1
+```
 
-While Netra is installing, you can also run the [legacy web prototype](../app) at the root of this repo — a Next.js app that simulates Netra's behavior using mock data. Use it to demo the UX before the ServiceNow install.
-
----
-
-## Voice command reference
-
-| You say | Pattern matched | What Netra does |
-|---|---|---|
-| *"Create a ticket for my email is down"* | `create … ticket … for X` | Opens INC, reads back the number |
-| *"Open a ticket about the printer"* | `open … ticket … about X` | Same |
-| *"Report that the wifi is broken"* | `report (that) X` | Same |
-| *"List my tickets"* | `(list\|show) … tickets` | Reads up to 5 open tickets |
-| *"What's on my plate"* | `what's on my plate` | Same |
-| *"Resolve INC0001234"* | `resolve … inc\d+` | Marks resolved |
-| *"Close ticket INC0001234"* | `close … inc\d+` | Same |
-| *"Update INC0001234 with I rebooted"* | `update inc\d+ with X` | Adds comment |
-| *"Comment on INC0001234 — still broken"* | `comment on inc\d+ … X` | Same |
-| *"Status of INC0001234"* | `status of inc\d+` | Reads state + assignee |
-| *"Tell me about INC0001234"* | `tell me about inc\d+` | Same |
-| *"Help"* | — | Lists what Netra can do |
-| *"Stop"* / *"Cancel"* / *"Quiet"* | — | Stops Netra mid-sentence |
-
-Ticket numbers tolerate spaces and informal speech (`"I N C 1234"` → `INC0001234`).
-
----
+The generator validates well-formedness automatically.
 
 ## License
 

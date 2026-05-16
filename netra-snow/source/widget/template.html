@@ -1,14 +1,13 @@
 <!--
-  Service Portal widget template — netra-mic
-  Renders a floating, always-visible mic button plus an accessible status panel.
-  Everything is keyboard-reachable and announced via ARIA live regions.
+  Service Portal widget template — netra-mic v2
+  Floating dock + pending-question banner + paused indicator.
+  Fully accessible: ARIA labels, live regions, keyboard reachable.
 -->
-<div class="netra-root" ng-class="'netra-status-' + c.status" role="region" aria-label="Netra voice assistant">
+<div class="netra-root"
+     ng-class="['netra-status-' + c.status, c.paused ? 'netra-paused' : '']"
+     role="region"
+     aria-label="Netra voice assistant">
 
-  <!-- Skip link target for keyboard users -->
-  <a href="#" ng-click="c.toggle($event)" class="netra-skip" tabindex="0">Skip to Netra</a>
-
-  <!-- Floating dock -->
   <div class="netra-dock" role="toolbar" aria-label="Netra voice controls">
 
     <button type="button"
@@ -34,10 +33,23 @@
             class="netra-toggle-wake"
             ng-click="c.toggleWake()"
             aria-pressed="{{c.wakeOn}}"
-            aria-label="{{c.wakeOn ? 'Wake word listening on — say Netra' : 'Wake word listening off'}}"
             title="{{c.wakeOn ? 'Wake word listening on' : 'Wake word listening off'}}">
       <span aria-hidden="true">{{c.wakeOn ? 'ON' : 'OFF'}}</span>
     </button>
+
+    <button type="button"
+            class="netra-pause"
+            ng-click="c.askPause()"
+            ng-show="!c.paused"
+            aria-label="Pause Netra notifications"
+            title="Pause notifications">⏸</button>
+
+    <button type="button"
+            class="netra-resume"
+            ng-click="c.resume()"
+            ng-show="c.paused"
+            aria-label="Resume Netra notifications"
+            title="Resume notifications">▶</button>
 
     <button type="button"
             class="netra-help"
@@ -45,7 +57,26 @@
             aria-label="What can I say">?</button>
   </div>
 
-  <!-- Conversation panel — last user transcript + Netra response -->
+  <!-- Pending-question banner (e.g. "for how long?") -->
+  <div class="netra-banner netra-banner-pending"
+       ng-show="c.pendingPrompt"
+       role="status"
+       aria-live="polite">
+    <span aria-hidden="true">💬</span>
+    <span>{{c.pendingPrompt}}</span>
+  </div>
+
+  <!-- Paused banner -->
+  <div class="netra-banner netra-banner-paused"
+       ng-show="c.paused"
+       role="status"
+       aria-live="polite">
+    <span aria-hidden="true">🔕</span>
+    <span>Notifications paused{{c.pausedUntilLabel ? ' until ' + c.pausedUntilLabel : ''}}.
+      Say <em>"resume"</em> or click play to bring me back.</span>
+  </div>
+
+  <!-- Conversation panel -->
   <div class="netra-panel" ng-show="c.lastTranscript || c.lastResponse">
     <div class="netra-row" ng-show="c.lastTranscript">
       <div class="netra-row-label">You said</div>
@@ -57,10 +88,8 @@
     </div>
   </div>
 
-  <!-- Hidden ARIA live region for screen-reader announcements -->
   <div role="status" aria-live="assertive" aria-atomic="true" class="sr-only">{{c.announcement}}</div>
 
-  <!-- Press-to-talk hotkey hint -->
   <div class="netra-hotkey" aria-hidden="true">
     Press <kbd>Alt</kbd>+<kbd>N</kbd> to talk
   </div>

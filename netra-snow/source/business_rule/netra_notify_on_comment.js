@@ -1,19 +1,16 @@
 /**
- * Business Rule: "Netra — notify caller on new comment"
+ * Business Rule: "Netra Notify On Comment"
  *
- * Table:       sys_journal_field   (the central journal table behind
- *                                   incident.comments and incident.work_notes)
- * When:        async, after insert
- * Filter:      element IN ('comments', 'work_notes')  AND  name = 'incident'
+ * Table:   sys_journal_field   (covers incident.comments and incident.work_notes)
+ * When:    async, after insert
  *
- * Behaviour: When a journal entry is added to an incident, look up the
- * incident's caller. If the entry was added by someone OTHER than the caller,
- * enqueue a Netra notification so the caller's open Service Portal tab can
- * announce it.
+ * Fires the instant someone other than the caller comments on an incident
+ * where the user is either the caller OR the assigned_to.  We don't gate on
+ * pause here — the queue absorbs everything, and the widget / notifications
+ * endpoint is responsible for honouring pause when delivering.
  */
 (function executeRule(current, previous /*null when inserting*/) {
 
-    // Only act on incident journal entries.
     if (current.name != 'incident') return;
     var element = String(current.element || '');
     if (element != 'comments' && element != 'work_notes') return;
@@ -21,48 +18,54 @@
     var incident = new GlideRecord('incident');
     if (!incident.get(String(current.element_id))) return;
 
-    var callerSysId = String(incident.caller_id);
-    if (!callerSysId) return;
+    var authorUserName = String(current.sys_created_by);
 
-    var authorSysId = String(current.sys_created_by);  // username, not sys_id
-    // Resolve the caller's username to compare with sys_created_by
-    var callerUser = new GlideRecord('sys_user');
-    if (!callerUser.get(callerSysId)) return;
-    if (String(callerUser.user_name) == authorSysId) {
-        // Caller commented on their own ticket — no need to interrupt them.
-        return;
-    }
-
-    // Author display name for nicer spoken output
-    var authorName = authorSysId;
-    var authorUser = new GlideRecord('sys_user');
-    authorUser.addQuery('user_name', authorSysId);
-    authorUser.query();
-    if (authorUser.next()) {
-        authorName = String(authorUser.first_name || '') + ' ' + String(authorUser.last_name || '');
-        authorName = authorName.trim() || authorSysId;
+    // Resolve the author display name once
+    var authorDisplayName = authorUserName;
+    var au = new GlideRecord('sys_user');
+    au.addQuery('user_name', authorUserName);
+    au.query();
+    if (au.next()) {
+        authorDisplayName = (String(au.first_name || '') + ' ' + String(au.last_name || '')).trim() || authorUserName;
     }
 
     var body = String(current.value || '').trim();
     if (!body) return;
 
-    // Pronounceable ticket number ("I N C zero zero zero...")
     var num = String(incident.number);
-    var spoken = num.replace(/([A-Z])/g, '$1 ').trim() +
-                 ' ' + num.replace(/^[A-Z]+/, '').split('').join(' ');
-
+    var spoken = num.replace(/([A-Z])/g, '$1 ').trim() + ' ' +
+                 num.replace(/^[A-Z]+/, '').split('').join(' ');
     var kind = element == 'work_notes' ? 'work note' : 'comment';
 
-    var n = new GlideRecord('x_netra_notification');
-    n.initialize();
-    n.user = callerSysId;
-    n.ticket_sys_id = String(incident.sys_id);
-    n.ticket_number = num;
-    n.kind = element;
-    n.message =
-        'New ' + kind + ' on ' + spoken + ' from ' + authorName + '. ' +
-        body.substring(0, 400) + (body.length > 400 ? '...' : '');
-    n.delivered = false;
-    n.insert();
+    // Notify the caller (if not the author)
+    var callerSysId = String(incident.caller_id);
+    if (callerSysId) {
+        var callerUser = new GlideRecord('sys_user');
+        if (callerUser.get(callerSysId) && String(callerUser.user_name) != authorUserName) {
+            enqueue(callerSysId, incident, num, spoken, kind, body, authorDisplayName);
+        }
+    }
+
+    // Notify the assignee (if different from the caller AND not the author)
+    var assigneeSysId = String(incident.assigned_to);
+    if (assigneeSysId && assigneeSysId != callerSysId) {
+        var assigneeUser = new GlideRecord('sys_user');
+        if (assigneeUser.get(assigneeSysId) && String(assigneeUser.user_name) != authorUserName) {
+            enqueue(assigneeSysId, incident, num, spoken, kind, body, authorDisplayName);
+        }
+    }
+
+    function enqueue(userSysId, incidentGR, num, spokenNum, kind, body, author) {
+        var n = new GlideRecord('x_netra_notification');
+        n.initialize();
+        n.user = userSysId;
+        n.ticket_sys_id = String(incidentGR.sys_id);
+        n.ticket_number = num;
+        n.kind = element == 'work_notes' ? 'work_note' : 'comment';
+        n.message = 'New ' + kind + ' on ' + spokenNum + ' from ' + author + '. ' +
+                    body.substring(0, 400) + (body.length > 400 ? '...' : '');
+        n.delivered = false;
+        n.insert();
+    }
 
 })(current, previous);

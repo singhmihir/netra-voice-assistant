@@ -1,26 +1,25 @@
 /**
- * Service Portal widget client controller — netra-mic.
+ * Service Portal widget client controller — netra-mic v2.
  *
- * Free stack:
- *   - SpeechRecognition (Web Speech API) for STT — built into Chrome/Edge
- *   - SpeechSynthesis for TTS — built into every modern browser
- *
- * State machine:  idle → listening → thinking → speaking → idle
- *
- * Wake word: a separate, low-priority SpeechRecognition instance runs
- * continuously and scans transcripts for "netra". When seen, we flip into
- * full listening mode and treat anything after the wake word as the command.
+ * Adds:
+ *   • pending-state two-turn dialogue (e.g. "pause" → "for how long?" → "2 hours")
+ *   • pause/resume UI synced with server-side x_netra_user_pref
+ *   • last-response memory (for "repeat that")
+ *   • smarter wake-word handling (ignores wake when the user is mid-dialogue)
  */
 api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     var c = this;
 
-    // -------- public state --------
+    // -------- public state (bound to template) --------
     c.status         = 'idle';           // idle | listening | thinking | speaking | error
     c.busy           = false;
     c.wakeOn         = true;
     c.lastTranscript = '';
     c.lastResponse   = '';
     c.announcement   = '';
+    c.paused         = !!c.data.paused;
+    c.pausedUntilLabel = c.data.paused_until ? formatLocalTime(c.data.paused_until) : '';
+    c.pendingPrompt  = '';
 
     // -------- private --------
     var SR  = $window.SpeechRecognition || $window.webkitSpeechRecognition;
@@ -28,14 +27,13 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     var hasSR  = !!SR;
     var hasTTS = !!TTS;
 
-    var cmdRec = null;   // recognition instance for active commands
-    var wakeRec = null;  // recognition instance always-listening for the wake word
+    var cmdRec = null;
+    var wakeRec = null;
     var pollTimer = null;
     var seenNotificationIds = {};
+    var pendingContext = null;            // server-side pending state echo
+    var lastSpoken = '';                  // for "repeat that"
 
-    // ============================================================
-    // boot
-    // ============================================================
     c.$onInit = function () {
         if (!hasSR) {
             c.lastResponse = 'Your browser does not support speech recognition. Use Chrome or Edge.';
@@ -57,7 +55,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     };
 
     // ============================================================
-    // UI handlers
+    //  UI handlers
     // ============================================================
     c.toggleRecording = function () {
         if (c.status === 'listening') {
@@ -74,19 +72,27 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         announce(c.wakeOn ? 'Wake word on.' : 'Wake word off.');
     };
 
+    c.askPause = function () {
+        // Simulate the user saying "pause" so we go through the same flow
+        handleCommand('pause');
+    };
+
+    c.resume = function () {
+        handleCommand('resume');
+    };
+
     c.help = function () {
-        speak("You can say: create a ticket for, list my tickets, " +
-              "resolve I N C followed by the number, update a ticket with a comment, " +
-              "or ask for the status of a ticket. Say stop at any time.");
+        handleCommand('help');
     };
 
     c.micLabel = function () {
-        return c.status === 'listening' ? 'Stop recording' : 'Start recording — say or click';
+        return c.status === 'listening' ? 'Stop recording' : 'Start recording — click or say Netra';
     };
 
     c.statusLabel = function () {
+        if (c.paused) return 'paused';
         return ({
-            idle:      'ready',
+            idle:      pendingContext ? 'waiting for answer' : 'ready',
             listening: 'listening...',
             thinking:  'thinking...',
             speaking:  'speaking...',
@@ -95,7 +101,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     };
 
     // ============================================================
-    // wake word
+    //  Wake word
     // ============================================================
     function startWakeWord() {
         if (!hasSR || !c.wakeOn) return;
@@ -107,15 +113,12 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         wakeRec.lang = 'en-US';
 
         wakeRec.onresult = function (ev) {
-            // Only act on final results to avoid double-firing on interim words
             for (var i = ev.resultIndex; i < ev.results.length; i++) {
                 var transcript = ev.results[i][0].transcript.toLowerCase();
-                if (c.status !== 'idle') return;
+                if (c.status !== 'idle' || c.busy) return;
                 if (/\bnetra\b/.test(transcript) || /\bjarvis\b/.test(transcript)) {
-                    // Maybe the user said "Netra <command>" in one breath
                     var after = transcript.split(/\bnetra\b|\bjarvis\b/i)[1];
                     if (after && after.trim().length > 3) {
-                        // Treat the rest of this utterance as the command, no second mic prompt
                         handleCommand(after.trim());
                     } else {
                         startCommandRecognition();
@@ -124,27 +127,20 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
                 }
             }
         };
-        wakeRec.onerror = function (ev) {
-            // 'no-speech' and 'aborted' are routine — silently restart
-            if (c.wakeOn && c.status === 'idle') {
-                $timeout(startWakeWord, 800);
-            }
+        wakeRec.onerror = function () {
+            if (c.wakeOn && c.status === 'idle') $timeout(startWakeWord, 800);
         };
         wakeRec.onend = function () {
-            // Browsers eventually stop continuous recognition; restart while we're idle
-            if (c.wakeOn && c.status === 'idle') {
-                $timeout(startWakeWord, 400);
-            }
+            if (c.wakeOn && c.status === 'idle') $timeout(startWakeWord, 400);
         };
-        try { wakeRec.start(); } catch (e) { /* already started */ }
+        try { wakeRec.start(); } catch (e) {}
     }
 
     // ============================================================
-    // command recognition (after wake word OR mic-button click)
+    //  Command recognition
     // ============================================================
     function startCommandRecognition() {
         if (c.busy) return;
-        // Stop wake-word listener while we capture the command
         try { wakeRec && wakeRec.stop(); } catch (e) {}
         if (TTS) TTS.cancel();
 
@@ -155,35 +151,18 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         cmdRec.maxAlternatives = 1;
 
         var captured = '';
-        cmdRec.onstart = function () {
-            c.status = 'listening';
-            announce('Listening.');
-            $scope.$applyAsync();
-        };
-        cmdRec.onresult = function (ev) {
-            captured = ev.results[0][0].transcript;
-        };
-        cmdRec.onerror = function (ev) {
-            c.lastResponse = 'I did not catch that. (' + ev.error + ')';
-            announce(c.lastResponse);
-            resetToIdle();
-        };
-        cmdRec.onend = function () {
-            if (captured) {
-                handleCommand(captured);
-            } else {
-                resetToIdle();
-            }
-        };
+        cmdRec.onstart  = function () { c.status = 'listening'; announce('Listening.'); $scope.$applyAsync(); };
+        cmdRec.onresult = function (ev) { captured = ev.results[0][0].transcript; };
+        cmdRec.onerror  = function (ev) { c.lastResponse = 'I did not catch that. (' + ev.error + ')'; announce(c.lastResponse); resetToIdle(); };
+        cmdRec.onend    = function () { captured ? handleCommand(captured) : resetToIdle(); };
 
-        // Small chirp before capture so the user knows we're listening
         speak('Yes?', function () {
             try { cmdRec.start(); } catch (e) { resetToIdle(); }
         });
     }
 
     // ============================================================
-    // server round-trip
+    //  Server round-trip
     // ============================================================
     function handleCommand(transcript) {
         c.lastTranscript = transcript;
@@ -192,75 +171,112 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         announce('Processing.');
         $scope.$applyAsync();
 
-        $http.post('/api/x_netra/voice/command', { transcript: transcript })
-            .then(function (resp) {
-                var d = resp.data || {};
-                c.lastResponse = d.message || '';
-                announce(c.lastResponse);
-                if (d.refresh_tickets) {
-                    // Inform any listening widgets to reload tickets
-                    spUtil.update($scope);
+        $http.post('/api/x_netra/voice/command', {
+            transcript: transcript,
+            pending: pendingContext
+        })
+        .then(function (resp) {
+            var d = resp.data || {};
+
+            // Handle "repeat that"
+            var msg = d.message;
+            if (msg === '__REPEAT__') msg = lastSpoken || "I haven't said anything yet.";
+
+            c.lastResponse = msg;
+            announce(msg);
+
+            // Pending-state bookkeeping
+            if (d.pending) {
+                pendingContext = d.pending;
+                c.pendingPrompt = msg;       // show the question on screen too
+            } else if (d.clear_pending) {
+                pendingContext = null;
+                c.pendingPrompt = '';
+            }
+
+            // Pause state may have changed
+            if (typeof d.paused === 'boolean') {
+                c.paused = d.paused;
+                if (d.paused) {
+                    // Refresh paused-until label from a follow-up GET
+                    refreshPauseStatus();
+                } else {
+                    c.pausedUntilLabel = '';
                 }
-                if (d.stop) {
-                    resetToIdle();
-                    return;
-                }
-                speak(c.lastResponse, resetToIdle);
-            })
-            .catch(function (err) {
-                c.lastResponse = 'Sorry, something went wrong on the server.';
-                announce(c.lastResponse);
-                speak(c.lastResponse, resetToIdle);
+            }
+
+            if (d.refresh_tickets) spUtil.update($scope);
+
+            if (d.stop) { resetToIdle(); return; }
+
+            speak(msg, function () {
+                resetToIdle(/*keepPending=*/ !!d.pending);
             });
+        })
+        .catch(function () {
+            c.lastResponse = 'Sorry, something went wrong on the server.';
+            announce(c.lastResponse);
+            speak(c.lastResponse, function () { resetToIdle(); });
+        });
     }
 
-    function resetToIdle() {
+    function resetToIdle(keepPending) {
         c.status = 'idle';
         c.busy = false;
+        if (!keepPending) {
+            // pendingContext already cleared by caller if needed
+        }
         $scope.$applyAsync();
         if (c.wakeOn) $timeout(startWakeWord, 300);
     }
 
+    function refreshPauseStatus() {
+        // Re-read the pause window from the notifications endpoint
+        $http.get('/api/x_netra/voice/notifications').then(function (resp) {
+            var d = resp.data || {};
+            c.paused = !!d.paused;
+            c.pausedUntilLabel = d.paused_until ? formatLocalTime(d.paused_until) : '';
+        });
+    }
+
     // ============================================================
-    // text-to-speech
+    //  TTS
     // ============================================================
     function speak(text, done) {
         if (!hasTTS || !text) { if (done) done(); return; }
         TTS.cancel();
+        lastSpoken = text;
         var u = new SpeechSynthesisUtterance(text);
         u.rate = 1.0;
         u.pitch = 1.0;
         u.lang = 'en-US';
-        // Prefer a natural-sounding voice when available
         var voices = TTS.getVoices();
         var pick = voices.find(function (v) { return /Natural|Online|Google/i.test(v.name); })
                 || voices.find(function (v) { return /en-US/i.test(v.lang); });
         if (pick) u.voice = pick;
 
         u.onstart = function () { c.status = 'speaking'; $scope.$applyAsync(); };
-        u.onend = function ()   { if (done) done(); };
+        u.onend   = function () { if (done) done(); };
         u.onerror = function () { if (done) done(); };
         TTS.speak(u);
     }
 
     // ============================================================
-    // notification polling — proactive interrupts
+    //  Notification polling — proactive interrupts (respects pause)
     // ============================================================
     function startNotificationPolling() {
         var POLL_MS = 8000;
         var tick = function () {
             $http.get('/api/x_netra/voice/notifications')
                 .then(function (resp) {
-                    var list = (resp.data && resp.data.notifications) || [];
+                    var d = resp.data || {};
+                    c.paused = !!d.paused;
+                    c.pausedUntilLabel = d.paused_until ? formatLocalTime(d.paused_until) : '';
+                    var list = d.notifications || [];
                     list.forEach(function (n) {
                         if (seenNotificationIds[n.id]) return;
+                        if (c.status === 'listening' || c.status === 'speaking') return;
                         seenNotificationIds[n.id] = true;
-                        // Don't interrupt while the user is mid-command
-                        if (c.status === 'listening' || c.status === 'speaking') {
-                            // requeue once: leave for next tick
-                            delete seenNotificationIds[n.id];
-                            return;
-                        }
                         c.lastResponse = n.message;
                         announce(n.message);
                         speak(n.message);
@@ -274,7 +290,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     }
 
     // ============================================================
-    // helpers
+    //  Helpers
     // ============================================================
     function announce(text) {
         c.announcement = '';
@@ -283,17 +299,29 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
 
     function bindHotkey() {
         $window.addEventListener('keydown', function (e) {
-            // Alt+N — push-to-talk
             if (e.altKey && (e.key === 'n' || e.key === 'N')) {
                 e.preventDefault();
                 c.toggleRecording();
                 $scope.$applyAsync();
             }
-            // Escape — stop talking
             if (e.key === 'Escape' && TTS) {
                 TTS.cancel();
+                pendingContext = null;
+                c.pendingPrompt = '';
                 resetToIdle();
             }
         });
+    }
+
+    function formatLocalTime(gdt) {
+        if (!gdt) return '';
+        // Server gives us a UTC "YYYY-MM-DD HH:MM:SS"; convert to local clock time
+        try {
+            var iso = String(gdt).replace(' ', 'T') + 'Z';
+            var dt = new Date(iso);
+            return dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        } catch (e) {
+            return gdt;
+        }
     }
 };
