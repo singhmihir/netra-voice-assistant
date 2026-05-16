@@ -20,7 +20,13 @@
 (function () {
     'use strict';
 
-    var APP_NAME = 'netra';
+    // The scoped app to install Netra into. Resolution order:
+    //   1. Hardcoded sys_id (set this if you know it — most reliable).
+    //   2. Any of APP_NAME_CANDIDATES by sys_app.name (case-insensitive).
+    //   3. Any sys_app whose scope ends with one of SCOPE_SUFFIXES.
+    var APP_SYS_ID_HINT     = 'cbb86f0f93b0cf10936af0a75d03d662';
+    var APP_NAME_CANDIDATES = ['Netra_V1', 'netra_v1', 'Netra', 'netra'];
+    var SCOPE_SUFFIXES      = ['_netra_v1', '_netra'];
 
     var log = [];
     function say(msg) { log.push(msg); gs.print(msg); }
@@ -35,22 +41,43 @@
      *  Resolve the scope
      * ========================================================= */
     function resolveScope() {
-        // Find the scoped application by its name (not scope).
-        // ServiceNow auto-generates scope as x_<companyId>_<appName>.
-        var gr = new GlideRecord('sys_app');
-        gr.addQuery('name', APP_NAME);
-        gr.orderByDesc('sys_updated_on');
-        gr.setLimit(1);
-        gr.query();
-        if (gr.next()) {
-            return { sys_id: String(gr.sys_id), scope: String(gr.scope) };
+        var gr;
+
+        // Strategy 1 — known sys_id
+        if (APP_SYS_ID_HINT) {
+            gr = new GlideRecord('sys_app');
+            if (gr.get(APP_SYS_ID_HINT)) {
+                say('  resolved app by sys_id hint');
+                return { sys_id: String(gr.sys_id), scope: String(gr.scope), name: String(gr.name) };
+            }
         }
-        // Fallback: try by scope ending in _netra
-        gr = new GlideRecord('sys_app');
-        gr.addEncodedQuery('scopeLIKE_netra');
-        gr.setLimit(1);
-        gr.query();
-        if (gr.next()) return { sys_id: String(gr.sys_id), scope: String(gr.scope) };
+
+        // Strategy 2 — name match (case-insensitive against any candidate)
+        for (var i = 0; i < APP_NAME_CANDIDATES.length; i++) {
+            gr = new GlideRecord('sys_app');
+            gr.addQuery('name', APP_NAME_CANDIDATES[i]);
+            gr.orderByDesc('sys_updated_on');
+            gr.setLimit(1);
+            gr.query();
+            if (gr.next()) {
+                say('  resolved app by name: ' + APP_NAME_CANDIDATES[i]);
+                return { sys_id: String(gr.sys_id), scope: String(gr.scope), name: String(gr.name) };
+            }
+        }
+
+        // Strategy 3 — scope ends with one of the suffixes
+        for (var j = 0; j < SCOPE_SUFFIXES.length; j++) {
+            gr = new GlideRecord('sys_app');
+            gr.addEncodedQuery('scopeLIKE' + SCOPE_SUFFIXES[j]);
+            gr.orderByDesc('sys_updated_on');
+            gr.setLimit(1);
+            gr.query();
+            if (gr.next()) {
+                say('  resolved app by scope suffix: ' + SCOPE_SUFFIXES[j]);
+                return { sys_id: String(gr.sys_id), scope: String(gr.scope), name: String(gr.name) };
+            }
+        }
+
         return null;
     }
 
@@ -256,16 +283,19 @@
     var info = resolveScope();
     if (!info) {
         say('');
-        say('ERROR: scoped application "' + APP_NAME + '" not found.');
-        say('Create it first:  System Applications -> My Company Applications -> Create new');
-        say('  Name:  ' + APP_NAME);
-        say('  (ServiceNow will auto-generate the scope as x_<your-company-id>_' + APP_NAME + ')');
-        say('Then re-run this Fix Script.');
+        say('ERROR: could not find the Netra scoped application.');
+        say('Tried:');
+        say('  - sys_id ' + APP_SYS_ID_HINT);
+        say('  - names ' + APP_NAME_CANDIDATES.join(', '));
+        say('  - scope suffixes ' + SCOPE_SUFFIXES.join(', '));
+        say('Create a scoped app named "Netra_V1" (or similar) first, then re-run.');
         return;
     }
     var scope = info.scope;
     var scopeSysId = info.sys_id;
-    say('Scope detected:  ' + scope + '  (app sys_id ' + scopeSysId + ')');
+    say('App:   ' + info.name);
+    say('Scope: ' + scope);
+    say('AppID: ' + scopeSysId);
 
     /* ---- Tables ---- */
     say('');
