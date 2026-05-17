@@ -492,6 +492,12 @@
 '- Use the persons first name naturally. e.g. "Right, Mihir, here is what I have so far."\n' +
 '- BE EMPATHETIC. If the user sounds frustrated, acknowledge before acting.\n' +
 '\n' +
+'R2.6 - READING SERVICENOW CODE:\n' +
+'- You CAN read ServiceNow source code. The read_script tool gets the source of any Script Include, Business Rule, UI Script, Client Script, Scheduled Job, Processor, Scripted REST resource, Email script, UI Action, or Service Portal widget. Use this whenever the user asks "what does X do", "show me the code behind Y", "explain the NetraIntent script include", "open the BR called X".\n' +
+'- Use list_scripts to enumerate all scripts in a table when the user asks "list all script includes" / "show all scheduled jobs".\n' +
+'- After read_script returns, READ THE CODE briefly and EXPLAIN IT in plain English - what it does, key functions, when it fires (for BRs), notable side-effects. DO NOT recite the code verbatim - paraphrase.\n' +
+'- NEVER say "I cannot access scripts" or "my tools only handle records" - that is wrong. You CAN read scripts. Use read_script.\n' +
+'\n' +
 'R2 - WEB SEARCH + IN-TAB CONTROL:\n' +
 '- For general-knowledge questions OUTSIDE ServiceNow (definitions, facts, "what is X", "who is X", "tell me about X"), call search_web. It uses free DuckDuckGo + Wikipedia. Cite the source briefly in your reply: "According to Wikipedia, ..." or "DuckDuckGo says, ...".\n' +
 '- When user says "open INC...", "show me INC...", "take me to INC..." - call navigate_to_record. It navigates the users existing ServiceNow tab to that record. Announce it briefly: "Opening INC zero zero one two now."\n' +
@@ -942,6 +948,22 @@
                     name: 'go_to_servicenow',
                     description: 'Navigate the CURRENT tab back to ServiceNow Service Portal (/sp). Use when the user is on YouTube or another site and says "take me back to ServiceNow", "go back to my work", "return to Netra".',
                     parameters: { type: 'object', properties: {} }
+                },
+                // ------- R2.6 - read ANY ServiceNow code file -------
+                {
+                    name: 'read_script',
+                    description: 'Read the SOURCE CODE of any ServiceNow code artifact - Script Include, Business Rule, UI Script, Client Script, Scheduled Job (sysauto_script), Processor, Scripted REST resource, Email script, UI Action, ACL script, or Service Portal widget. Use whenever the user asks "what does X do", "show me the script behind Y", "explain the business rule called Z", "open the NetraTools script include", "read the NetraIntent code". Pass the name OR the 32-char sys_id. Tries every script table in order and returns the first match. Returns the source code (truncated at 8KB) plus metadata (active, table, description). After receiving, READ IT and EXPLAIN it to the user in plain English.',
+                    parameters: { type: 'object', properties: {
+                        query: { type: 'string', description: 'Script name or sys_id, e.g. "NetraIntent", "NetraTools", "Validate user", or a 32-char sys_id' }
+                    }, required: ['query'] }
+                },
+                {
+                    name: 'list_scripts',
+                    description: 'List all scripts in a specific ServiceNow code table. Use when the user says "list all script includes", "show me all business rules", "what scheduled jobs exist". The table argument must be one of: sys_script_include, sys_script (business rules), sys_ui_script, sys_script_client, sysauto_script (scheduled jobs), sys_processor, sys_ws_operation (scripted rest), sys_script_email, sys_ui_action, sp_widget.',
+                    parameters: { type: 'object', properties: {
+                        table:   { type: 'string', description: 'One of: sys_script_include, sys_script, sys_ui_script, sys_script_client, sysauto_script, sys_processor, sys_ws_operation, sys_script_email, sys_ui_action, sp_widget' },
+                        keyword: { type: 'string', description: 'Optional: filter by name LIKE this string' }
+                    }, required: ['table'] }
                 }
             ]
         }];
@@ -1063,6 +1085,10 @@
                     return _openUrl(String(args.url || ''), String(args.title || ''));
                 case 'go_to_servicenow':
                     return _goToServiceNow();
+                case 'read_script':
+                    return _readScript(String(args.query || ''));
+                case 'list_scripts':
+                    return _listScripts(String(args.table || ''), String(args.keyword || ''));
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
@@ -2353,6 +2379,186 @@
             navigate_url: '/sp',         // existing R2 client handler will follow this
             message:      'Going back to ServiceNow now.'
         };
+    }
+
+    /* ===================================================================
+     *  R2.6 - read_script + list_scripts (any ServiceNow code file)
+     *  Tries each script table in order. Returns source + metadata.
+     * =================================================================== */
+    var SCRIPT_TABLES = [
+        { table: 'sys_script_include', nameField: 'name',         scriptField: 'script',           label: 'Script Include' },
+        { table: 'sys_script',         nameField: 'name',         scriptField: 'script',           label: 'Business Rule' },
+        { table: 'sys_ui_script',      nameField: 'script_name',  scriptField: 'script',           label: 'UI Script' },
+        { table: 'sys_script_client',  nameField: 'name',         scriptField: 'script',           label: 'Client Script' },
+        { table: 'sysauto_script',     nameField: 'name',         scriptField: 'script',           label: 'Scheduled Job' },
+        { table: 'sys_processor',      nameField: 'name',         scriptField: 'script',           label: 'Processor' },
+        { table: 'sys_ws_operation',   nameField: 'name',         scriptField: 'operation_script', label: 'Scripted REST Resource' },
+        { table: 'sys_script_email',   nameField: 'name',         scriptField: 'script',           label: 'Email Script' },
+        { table: 'sys_ui_action',      nameField: 'name',         scriptField: 'script',           label: 'UI Action' }
+    ];
+
+    function _readScript(query) {
+        try {
+            if (!query) return { ok: false, error: 'Query is required.' };
+            var q = String(query || '').trim();
+            if (!q) return { ok: false, error: 'Query is empty.' };
+            var isSysId = q.length === 32 && /^[a-f0-9]+$/i.test(q);
+
+            // Inlined SCRIPT_TABLES (avoids scoped-app var-scoping issues
+            // that caused the previous "length from undefined" failure).
+            var TABLES = [
+                { table: 'sys_script_include', nameField: 'name',         scriptField: 'script',           label: 'Script Include' },
+                { table: 'sys_script',         nameField: 'name',         scriptField: 'script',           label: 'Business Rule' },
+                { table: 'sys_ui_script',      nameField: 'script_name',  scriptField: 'script',           label: 'UI Script' },
+                { table: 'sys_script_client',  nameField: 'name',         scriptField: 'script',           label: 'Client Script' },
+                { table: 'sysauto_script',     nameField: 'name',         scriptField: 'script',           label: 'Scheduled Job' },
+                { table: 'sys_processor',      nameField: 'name',         scriptField: 'script',           label: 'Processor' },
+                { table: 'sys_ws_operation',   nameField: 'name',         scriptField: 'operation_script', label: 'Scripted REST Resource' },
+                { table: 'sys_script_email',   nameField: 'name',         scriptField: 'script',           label: 'Email Script' },
+                { table: 'sys_ui_action',      nameField: 'name',         scriptField: 'script',           label: 'UI Action' }
+            ];
+
+            for (var i = 0; i < TABLES.length; i++) {
+                var t = TABLES[i];
+                var gr;
+                try {
+                    gr = new GlideRecord(t.table);
+                    if (isSysId) {
+                        if (gr.get(q)) return _formatScript(t, gr);
+                        continue;
+                    }
+                    // Try exact name
+                    gr.addQuery(t.nameField, q);
+                    gr.setLimit(1);
+                    gr.query();
+                    if (gr.next()) return _formatScript(t, gr);
+                    // Try LIKE name
+                    var gr2 = new GlideRecord(t.table);
+                    gr2.addEncodedQuery(t.nameField + 'LIKE' + q);
+                    gr2.setLimit(1);
+                    gr2.query();
+                    if (gr2.next()) return _formatScript(t, gr2);
+                } catch (e) {
+                    gs.warn('[NetraScript] could not query ' + t.table + ': ' + (e.message || e));
+                }
+            }
+
+            // Service Portal widget by name OR id
+            try {
+                var w = new GlideRecord('sp_widget');
+                if (isSysId) {
+                    if (w.get(q)) return _formatWidget(w);
+                } else {
+                    w.addEncodedQuery('nameLIKE' + q + '^ORid=' + q.toLowerCase().replace(/\s+/g, '-'));
+                    w.setLimit(1);
+                    w.query();
+                    if (w.next()) return _formatWidget(w);
+                }
+            } catch (eW) {}
+
+            return { ok: false, error: 'No script found matching "' + query + '" in any script table.' };
+        } catch (eOuter) {
+            return { ok: false, error: 'read_script outer error: ' + (eOuter.message || eOuter) };
+        }
+    }
+
+    function _formatScript(t, gr) {
+        try {
+            // Use getValue() defensively - bracket access on GlideRecord
+            // can return GlideElement objects that don't coerce cleanly.
+            var raw    = gr.getValue(t.scriptField);
+            var script = (raw === null || raw === undefined) ? '' : String(raw);
+            var truncated = false;
+            if (script.length > 8000) {
+                script = script.substring(0, 8000) + '\n\n[... truncated, ' + (script.length - 8000) + ' more chars]';
+                truncated = true;
+            }
+            var name = gr.getValue(t.nameField);
+            if (name === null || name === undefined) name = '';
+            var desc = gr.getValue('description') || gr.getValue('short_description') || '';
+            var when = (t.table === 'sys_script') ? (gr.getValue('when') || '') : null;
+            var onTbl = '';
+            try { onTbl = String(gr.getValue('table') || ''); } catch (eT) {}
+
+            return {
+                ok: true,
+                table: t.table,
+                kind:  t.label,
+                name:  String(name),
+                sys_id: gr.getUniqueValue(),
+                active: String(gr.getValue('active') || ''),
+                description: String(desc),
+                extra_when:  when,
+                extra_table: onTbl,
+                script_source: script,
+                truncated:     truncated,
+                line_count:    script ? script.split('\n').length : 0,
+                char_count:    script.length,
+                message: 'Read ' + t.label + ' "' + name + '" (' + script.length + ' chars). Now explain it briefly.'
+            };
+        } catch (e) {
+            return { ok: false, error: 'Formatter error on ' + t.table + ': ' + (e.message || e) };
+        }
+    }
+
+    function _formatWidget(w) {
+        // Widgets have 4 bodies - return them all
+        return {
+            ok: true,
+            table: 'sp_widget',
+            kind:  'Service Portal Widget',
+            name:  String(w.name || ''),
+            sys_id: w.getUniqueValue(),
+            id:    String(w.id || ''),
+            description: String(w.description || ''),
+            client_script_excerpt: String(w.client_script || '').substring(0, 3000),
+            server_script_excerpt: String(w.script || '').substring(0, 3000),
+            template_excerpt:      String(w.template || '').substring(0, 2000),
+            css_excerpt:           String(w.css || '').substring(0, 2000),
+            message: 'Read Service Portal widget. Has template + client + server + css.'
+        };
+    }
+
+    function _listScripts(table, keyword) {
+        if (!table) return { ok: false, error: 'table is required (sys_script_include, sys_script, sys_ui_script, sys_script_client, sysauto_script, sys_processor, sys_ws_operation, sys_script_email, sys_ui_action, sp_widget)' };
+        var TABLES = [
+            { table: 'sys_script_include', nameField: 'name' },
+            { table: 'sys_script',         nameField: 'name' },
+            { table: 'sys_ui_script',      nameField: 'script_name' },
+            { table: 'sys_script_client',  nameField: 'name' },
+            { table: 'sysauto_script',     nameField: 'name' },
+            { table: 'sys_processor',      nameField: 'name' },
+            { table: 'sys_ws_operation',   nameField: 'name' },
+            { table: 'sys_script_email',   nameField: 'name' },
+            { table: 'sys_ui_action',      nameField: 'name' }
+        ];
+        var t = null;
+        for (var i = 0; i < TABLES.length; i++) { if (TABLES[i].table === table) { t = TABLES[i]; break; } }
+        if (!t && table !== 'sp_widget') {
+            return { ok: false, error: 'Unsupported table. Use one of: ' + SCRIPT_TABLES.map(function (x) { return x.table; }).join(', ') + ', sp_widget' };
+        }
+        try {
+            var gr = new GlideRecord(table);
+            if (keyword) gr.addEncodedQuery((t ? t.nameField : 'name') + 'LIKE' + keyword);
+            if (gr.isValid && !gr.isValid()) {} else {
+                if (gr.orderBy) gr.orderBy(t ? t.nameField : 'name');
+            }
+            gr.setLimit(40);
+            gr.query();
+            var out = [];
+            while (gr.next()) {
+                out.push({
+                    name: String(t ? gr[t.nameField] : gr.name) || '',
+                    sys_id: gr.getUniqueValue(),
+                    active: String(gr.active || ''),
+                    description: String(gr.description || gr.short_description || '').substring(0, 80)
+                });
+            }
+            return { ok: true, table: table, count: out.length, scripts: out,
+                     message: 'Found ' + out.length + ' rows in ' + table + (keyword ? ' matching "' + keyword + '"' : '') };
+        } catch (e) {
+            return { ok: false, error: 'Could not list ' + table + ': ' + (e.message || e) };
+        }
     }
 
     function _clickButton(label) {
