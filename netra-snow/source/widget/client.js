@@ -222,9 +222,31 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
                 resetToIdle(/*keepPending=*/ !!d.pending);
             });
         })
-        .catch(function () {
-            c.lastResponse = 'Sorry, something went wrong on the server.';
+        .catch(function (resp) {
+            // Surface the real failure so the user (and we) can see what
+            // ServiceNow returned. Without this we just hear the generic
+            // "something went wrong" and have to dig through logs.
+            var detail = '';
+            if (resp && resp.data) {
+                if (typeof resp.data === 'string') {
+                    detail = resp.data.substring(0, 240);
+                } else if (resp.data.message) {
+                    detail = String(resp.data.message);
+                } else if (resp.data.error) {
+                    detail = (resp.data.error.message || resp.data.error.detail || JSON.stringify(resp.data.error)).substring(0, 240);
+                } else {
+                    detail = JSON.stringify(resp.data).substring(0, 240);
+                }
+            }
+            if (!detail && resp) detail = 'HTTP ' + (resp.status || '?') + ' ' + (resp.statusText || '');
+            if (!detail) detail = 'unknown network error';
+
+            c.lastResponse = 'Server error: ' + detail;
             announce(c.lastResponse);
+            if ($window.console && $window.console.error) {
+                $window.console.error('[Netra] /command failed:',
+                                       resp && resp.status, resp && resp.data, resp);
+            }
             speak(c.lastResponse, function () { resetToIdle(); });
         });
     }
@@ -275,9 +297,11 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     // ============================================================
     function startNotificationPolling() {
         var POLL_MS = 8000;
+        var consecutiveFailures = 0;
         var tick = function () {
             $http.get('/api/__NETRA_SCOPE__/voice/notifications')
                 .then(function (resp) {
+                    consecutiveFailures = 0;
                     var d = resp.data || {};
                     c.paused = !!d.paused;
                     c.pausedUntilLabel = d.paused_until ? formatLocalTime(d.paused_until) : '';
@@ -290,6 +314,20 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
                         announce(n.message);
                         speak(n.message);
                     });
+                })
+                .catch(function (resp) {
+                    consecutiveFailures++;
+                    // Surface the FIRST failure prominently so the user
+                    // notices, then back off so we don't spam the console
+                    if ($window.console && $window.console.warn && consecutiveFailures <= 3) {
+                        $window.console.warn('[Netra] /notifications failed (#' + consecutiveFailures + '):',
+                                              resp && resp.status, resp && resp.data, resp);
+                    }
+                    if (consecutiveFailures === 1) {
+                        var detail = (resp && resp.data && resp.data.message) || 'HTTP ' + (resp && resp.status);
+                        c.lastResponse = 'Cannot reach Netra server: ' + detail;
+                        announce(c.lastResponse);
+                    }
                 })
                 .finally(function () {
                     pollTimer = $timeout(tick, POLL_MS);
