@@ -1,38 +1,41 @@
 /**
- * Service Portal widget client controller — netra-mic v2.
+ * Service Portal widget client controller - netra-mic (v4 - self-contained)
  *
- * Adds:
- *   • pending-state two-turn dialogue (e.g. "pause" → "for how long?" → "2 hours")
- *   • pause/resume UI synced with server-side __NETRA_SCOPE___user_pref
- *   • last-response memory (for "repeat that")
- *   • smarter wake-word handling (ignores wake when the user is mid-dialogue)
+ * Replaces every $http call with c.server.update(). The widget no longer
+ * touches /api/<scope>/voice/* at all - the Scripted REST API can be
+ * deleted (or left as a diagnostic tool, your call).
+ *
+ * Standard SP server round-trip pattern:
+ *   1. set c.data.action = '<command|poll>' and other inputs
+ *   2. call c.server.update()
+ *   3. read c.data.response or c.data.notifications in the .then()
  */
-api.controller = function ($scope, $http, $timeout, $window, spUtil) {
+api.controller = function ($scope, $timeout, $window, spUtil) {
     var c = this;
 
-    // -------- public state (bound to template) --------
-    c.status         = 'idle';           // idle | listening | thinking | speaking | error
-    c.busy           = false;
-    c.wakeOn         = true;
-    c.lastTranscript = '';
-    c.lastResponse   = '';
-    c.announcement   = '';
-    c.paused         = !!c.data.paused;
+    // -------- state bound to the template --------
+    c.status           = 'idle';
+    c.busy             = false;
+    c.wakeOn           = true;
+    c.lastTranscript   = '';
+    c.lastResponse     = '';
+    c.announcement     = '';
+    c.paused           = !!c.data.paused;
     c.pausedUntilLabel = c.data.paused_until ? formatLocalTime(c.data.paused_until) : '';
-    c.pendingPrompt  = '';
+    c.pendingPrompt    = '';
 
     // -------- private --------
-    var SR  = $window.SpeechRecognition || $window.webkitSpeechRecognition;
-    var TTS = $window.speechSynthesis;
+    var SR     = $window.SpeechRecognition || $window.webkitSpeechRecognition;
+    var TTS    = $window.speechSynthesis;
     var hasSR  = !!SR;
     var hasTTS = !!TTS;
 
-    var cmdRec = null;
-    var wakeRec = null;
+    var cmdRec    = null;
+    var wakeRec   = null;
     var pollTimer = null;
     var seenNotificationIds = {};
-    var pendingContext = null;            // server-side pending state echo
-    var lastSpoken = '';                  // for "repeat that"
+    var pendingContext = null;
+    var lastSpoken     = '';
 
     c.$onInit = function () {
         if (!hasSR) {
@@ -72,32 +75,24 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         announce(c.wakeOn ? 'Wake word on.' : 'Wake word off.');
     };
 
-    c.askPause = function () {
-        // Simulate the user saying "pause" so we go through the same flow
-        handleCommand('pause');
-    };
-
-    c.resume = function () {
-        handleCommand('resume');
-    };
-
-    c.help = function () {
-        handleCommand('help');
-    };
+    c.askPause = function () { handleCommand('pause'); };
+    c.resume   = function () { handleCommand('resume'); };
+    c.help     = function () { handleCommand('help'); };
 
     c.micLabel = function () {
-        return c.status === 'listening' ? 'Stop recording' : 'Start recording — click or say Netra';
+        return c.status === 'listening' ? 'Stop recording' : 'Start recording - click or say Netra';
     };
 
     c.statusLabel = function () {
         if (c.paused) return 'paused';
-        return ({
+        var labels = {
             idle:      pendingContext ? 'waiting for answer' : 'ready',
             listening: 'listening...',
             thinking:  'thinking...',
             speaking:  'speaking...',
             error:     'error'
-        })[c.status] || c.status;
+        };
+        return labels[c.status] || c.status;
     };
 
     // ============================================================
@@ -108,9 +103,9 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         try { if (wakeRec) wakeRec.stop(); } catch (e) {}
 
         wakeRec = new SR();
-        wakeRec.continuous = true;
+        wakeRec.continuous     = true;
         wakeRec.interimResults = true;
-        wakeRec.lang = 'en-US';
+        wakeRec.lang           = 'en-US';
 
         wakeRec.onresult = function (ev) {
             for (var i = ev.resultIndex; i < ev.results.length; i++) {
@@ -145,9 +140,9 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         if (TTS) TTS.cancel();
 
         cmdRec = new SR();
-        cmdRec.continuous = false;
-        cmdRec.interimResults = false;
-        cmdRec.lang = 'en-US';
+        cmdRec.continuous      = false;
+        cmdRec.interimResults  = false;
+        cmdRec.lang            = 'en-US';
         cmdRec.maxAlternatives = 1;
 
         var captured = '';
@@ -162,7 +157,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     }
 
     // ============================================================
-    //  Server round-trip
+    //  Server round-trip via c.server.update() - PROVEN SP PATTERN
     // ============================================================
     function handleCommand(transcript) {
         c.lastTranscript = transcript;
@@ -171,103 +166,67 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         announce('Processing.');
         $scope.$applyAsync();
 
-        $http.post('/api/__NETRA_SCOPE__/voice/command', {
-            transcript: transcript,
-            pending: pendingContext
-        })
-        .then(function (resp) {
-            var d = resp.data || {};
+        c.data.action     = 'command';
+        c.data.transcript = transcript;
+        c.data.pending    = pendingContext;
 
-            // Handle "repeat that"
-            var msg = d.message;
-            if (msg === '__REPEAT__') msg = lastSpoken || "I haven't said anything yet.";
+        c.server.update().then(
+            function () {
+                var d = c.data.response || {};
+                var msg = d.message;
+                if (msg === '__REPEAT__') msg = lastSpoken || "I haven't said anything yet.";
 
-            c.lastResponse = msg;
-            announce(msg);
+                c.lastResponse = msg;
+                announce(msg);
 
-            // Pending-state bookkeeping
-            if (d.pending) {
-                pendingContext = d.pending;
-                c.pendingPrompt = msg;       // show the question on screen too
-            } else if (d.clear_pending) {
-                pendingContext = null;
-                c.pendingPrompt = '';
-            }
-
-            // Pause state may have changed
-            if (typeof d.paused === 'boolean') {
-                c.paused = d.paused;
-                if (d.paused) {
-                    // Refresh paused-until label from a follow-up GET
-                    refreshPauseStatus();
-                } else {
-                    c.pausedUntilLabel = '';
+                if (d.pending) {
+                    pendingContext = d.pending;
+                    c.pendingPrompt = msg;
+                } else if (d.clear_pending) {
+                    pendingContext = null;
+                    c.pendingPrompt = '';
                 }
-            }
 
-            if (d.refresh_tickets) spUtil.update($scope);
+                if (typeof d.paused === 'boolean') {
+                    c.paused = d.paused;
+                    c.pausedUntilLabel = c.data.paused_until ? formatLocalTime(c.data.paused_until) : '';
+                }
 
-            if (d.stop) { resetToIdle(); return; }
+                if (d.refresh_tickets && spUtil && spUtil.update) {
+                    try { spUtil.update($scope); } catch (e) {}
+                }
 
-            // Navigate after speaking, if requested
-            if (d.navigate) {
+                if (d.stop) { resetToIdle(); return; }
+
+                if (d.navigate) {
+                    speak(msg, function () {
+                        resetToIdle();
+                        $window.location.href = d.navigate;
+                    });
+                    return;
+                }
+
                 speak(msg, function () {
-                    resetToIdle();
-                    $window.location.href = d.navigate;
+                    resetToIdle(!!d.pending);
                 });
-                return;
-            }
-
-            speak(msg, function () {
-                resetToIdle(/*keepPending=*/ !!d.pending);
-            });
-        })
-        .catch(function (resp) {
-            // Surface the real failure so the user (and we) can see what
-            // ServiceNow returned. Without this we just hear the generic
-            // "something went wrong" and have to dig through logs.
-            var detail = '';
-            if (resp && resp.data) {
-                if (typeof resp.data === 'string') {
-                    detail = resp.data.substring(0, 240);
-                } else if (resp.data.message) {
-                    detail = String(resp.data.message);
-                } else if (resp.data.error) {
-                    detail = (resp.data.error.message || resp.data.error.detail || JSON.stringify(resp.data.error)).substring(0, 240);
-                } else {
-                    detail = JSON.stringify(resp.data).substring(0, 240);
+            },
+            function (err) {
+                var detail = (err && err.message) ? err.message : 'unknown';
+                if ($window.console && $window.console.error) {
+                    $window.console.error('[Netra] c.server.update(command) failed:', err);
                 }
+                c.lastResponse = 'Server call failed: ' + detail;
+                announce(c.lastResponse);
+                speak(c.lastResponse, function () { resetToIdle(); });
             }
-            if (!detail && resp) detail = 'HTTP ' + (resp.status || '?') + ' ' + (resp.statusText || '');
-            if (!detail) detail = 'unknown network error';
-
-            c.lastResponse = 'Server error: ' + detail;
-            announce(c.lastResponse);
-            if ($window.console && $window.console.error) {
-                $window.console.error('[Netra] /command failed:',
-                                       resp && resp.status, resp && resp.data, resp);
-            }
-            speak(c.lastResponse, function () { resetToIdle(); });
-        });
+        );
     }
 
     function resetToIdle(keepPending) {
         c.status = 'idle';
         c.busy = false;
-        if (!keepPending) {
-            // pendingContext already cleared by caller if needed
-        }
         $scope.$applyAsync();
         if (c.wakeOn) $timeout(startWakeWord, 300);
-    }
-
-    function refreshPauseStatus() {
-        // Re-read the pause window from the notifications endpoint
-        $http.get('/api/__NETRA_SCOPE__/voice/notifications').then(function (resp) {
-            var d = resp.data || {};
-            c.paused = !!d.paused;
-            c.pausedUntilLabel = d.paused_until ? formatLocalTime(d.paused_until) : '';
-        });
     }
 
     // ============================================================
@@ -278,14 +237,13 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         TTS.cancel();
         lastSpoken = text;
         var u = new SpeechSynthesisUtterance(text);
-        u.rate = 1.0;
+        u.rate  = 1.0;
         u.pitch = 1.0;
-        u.lang = 'en-US';
+        u.lang  = 'en-US';
         var voices = TTS.getVoices();
-        var pick = voices.find(function (v) { return /Natural|Online|Google/i.test(v.name); })
-                || voices.find(function (v) { return /en-US/i.test(v.lang); });
+        var pick = voices.find(function (v) { return /Natural|Online|Google/i.test(v.name); }) ||
+                   voices.find(function (v) { return /en-US/i.test(v.lang); });
         if (pick) u.voice = pick;
-
         u.onstart = function () { c.status = 'speaking'; $scope.$applyAsync(); };
         u.onend   = function () { if (done) done(); };
         u.onerror = function () { if (done) done(); };
@@ -293,19 +251,17 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     }
 
     // ============================================================
-    //  Notification polling — proactive interrupts (respects pause)
+    //  Notification polling - via c.server.update({action:'poll'})
     // ============================================================
     function startNotificationPolling() {
         var POLL_MS = 8000;
-        var consecutiveFailures = 0;
         var tick = function () {
-            $http.get('/api/__NETRA_SCOPE__/voice/notifications')
-                .then(function (resp) {
-                    consecutiveFailures = 0;
-                    var d = resp.data || {};
-                    c.paused = !!d.paused;
-                    c.pausedUntilLabel = d.paused_until ? formatLocalTime(d.paused_until) : '';
-                    var list = d.notifications || [];
+            c.data.action = 'poll';
+            c.server.update().then(
+                function () {
+                    c.paused = !!c.data.paused;
+                    c.pausedUntilLabel = c.data.paused_until ? formatLocalTime(c.data.paused_until) : '';
+                    var list = c.data.notifications || [];
                     list.forEach(function (n) {
                         if (seenNotificationIds[n.id]) return;
                         if (c.status === 'listening' || c.status === 'speaking') return;
@@ -314,24 +270,15 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
                         announce(n.message);
                         speak(n.message);
                     });
-                })
-                .catch(function (resp) {
-                    consecutiveFailures++;
-                    // Surface the FIRST failure prominently so the user
-                    // notices, then back off so we don't spam the console
-                    if ($window.console && $window.console.warn && consecutiveFailures <= 3) {
-                        $window.console.warn('[Netra] /notifications failed (#' + consecutiveFailures + '):',
-                                              resp && resp.status, resp && resp.data, resp);
+                },
+                function (err) {
+                    if ($window.console && $window.console.warn) {
+                        $window.console.warn('[Netra] poll failed:', err);
                     }
-                    if (consecutiveFailures === 1) {
-                        var detail = (resp && resp.data && resp.data.message) || 'HTTP ' + (resp && resp.status);
-                        c.lastResponse = 'Cannot reach Netra server: ' + detail;
-                        announce(c.lastResponse);
-                    }
-                })
-                .finally(function () {
-                    pollTimer = $timeout(tick, POLL_MS);
-                });
+                }
+            ).finally(function () {
+                pollTimer = $timeout(tick, POLL_MS);
+            });
         };
         pollTimer = $timeout(tick, 2000);
     }
@@ -362,10 +309,9 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
 
     function formatLocalTime(gdt) {
         if (!gdt) return '';
-        // Server gives us a UTC "YYYY-MM-DD HH:MM:SS"; convert to local clock time
         try {
             var iso = String(gdt).replace(' ', 'T') + 'Z';
-            var dt = new Date(iso);
+            var dt  = new Date(iso);
             return dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         } catch (e) {
             return gdt;
