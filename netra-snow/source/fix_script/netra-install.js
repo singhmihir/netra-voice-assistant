@@ -29,7 +29,14 @@
     var SCOPE_SUFFIXES      = ['_netra_v1', '_netra'];
 
     var log = [];
-    function say(msg) { log.push(msg); gs.print(msg); }
+    function say(msg) {
+        log.push(msg);
+        // gs.print is fenced in scoped apps; gs.info works cross-scope
+        if (typeof gs.print === 'function') {
+            try { gs.print(msg); return; } catch (e) {}
+        }
+        gs.info(msg);
+    }
 
     /* =========================================================
      *  EMBEDDED SOURCE  (populated by the generator)

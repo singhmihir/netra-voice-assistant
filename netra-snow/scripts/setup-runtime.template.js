@@ -28,7 +28,14 @@
     var APP_LABEL    = 'Netra Voice Assistant';
 
     var log = [];
-    function say(msg) { log.push(msg); gs.print(msg); }
+    function say(msg) {
+        log.push(msg);
+        // gs.print is fenced in scoped apps; gs.info works cross-scope
+        if (typeof gs.print === 'function') {
+            try { gs.print(msg); return; } catch (e) {}
+        }
+        gs.info(msg);
+    }
 
     /* =========================================================
      *  EMBEDDED SOURCE  (populated by the generator)
