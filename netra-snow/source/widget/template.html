@@ -1,97 +1,158 @@
 <!--
-  Service Portal widget template — netra-mic v2
-  Floating dock + pending-question banner + paused indicator.
-  Fully accessible: ARIA labels, live regions, keyboard reachable.
+  Netra Mic widget template - v5
+  Modern Gemini-style chat panel with collapsed FAB + expanded conversation.
 -->
-<div class="netra-root"
-     ng-class="['netra-status-' + c.status, c.paused ? 'netra-paused' : '']"
-     role="region"
-     aria-label="Netra voice assistant">
+<div class="netra-root" ng-class="{'netra-expanded': c.expanded, 'netra-listening': c.listening, 'netra-paused': c.paused}">
 
-  <div class="netra-dock" role="toolbar" aria-label="Netra voice controls">
+  <!-- ====================================================== -->
+  <!--  Collapsed floating action button                       -->
+  <!-- ====================================================== -->
+  <button class="netra-fab"
+          ng-hide="c.expanded"
+          ng-click="c.expand()"
+          aria-label="Open Netra AI assistant"
+          title="Ask Netra (Alt+N)">
+    <span class="netra-fab-sparkle" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20">
+        <path fill="currentColor" d="M12 2l1.6 5.6L19 9l-5.4 1.4L12 16l-1.6-5.6L5 9l5.4-1.4L12 2zm6 12l.7 2.3L21 17l-2.3.7L18 20l-.7-2.3L15 17l2.3-.7L18 14zM6 14l.7 2.3L9 17l-2.3.7L6 20l-.7-2.3L3 17l2.3-.7L6 14z"/>
+      </svg>
+    </span>
+    <span class="netra-fab-text">Ask Netra</span>
+  </button>
 
-    <button type="button"
-            class="netra-mic"
-            ng-click="c.toggleRecording()"
-            ng-disabled="c.busy"
-            aria-pressed="{{c.status === 'listening'}}"
-            aria-label="{{c.micLabel()}}">
-      <span class="netra-mic-dot" aria-hidden="true"></span>
-      <span class="netra-mic-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="28" height="28" focusable="false">
-          <path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/>
-        </svg>
-      </span>
-    </button>
+  <!-- ====================================================== -->
+  <!--  Expanded chat panel                                    -->
+  <!-- ====================================================== -->
+  <section class="netra-panel" ng-show="c.expanded" role="dialog" aria-label="Netra AI assistant">
 
-    <div class="netra-meta">
-      <strong class="netra-name">Netra</strong>
-      <span class="netra-status" aria-live="polite">{{c.statusLabel()}}</span>
+    <header class="netra-header">
+      <div class="netra-brand">
+        <div class="netra-avatar" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M12 2l1.6 5.6L19 9l-5.4 1.4L12 16l-1.6-5.6L5 9l5.4-1.4L12 2z"/>
+          </svg>
+        </div>
+        <div class="netra-brand-text">
+          <strong>Netra</strong>
+          <span class="netra-tag" ng-hide="c.paused">AI agent for ServiceNow</span>
+          <span class="netra-tag netra-tag-paused" ng-show="c.paused">Notifications paused</span>
+        </div>
+      </div>
+      <div class="netra-header-actions">
+        <button class="netra-icon-btn"
+                ng-click="c.newChat()"
+                ng-hide="c.messages.length === 0"
+                title="New chat"
+                aria-label="Start new chat">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+        </button>
+        <button class="netra-icon-btn"
+                ng-click="c.toggleWake()"
+                title="{{c.wakeOn ? 'Wake word on — say Netra' : 'Wake word off'}}"
+                aria-label="Toggle wake word">
+          <svg viewBox="0 0 24 24" width="18" height="18" ng-show="c.wakeOn"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a.998.998 0 0 0-.99-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.92 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.03-.43 5.43-2.78 5.92-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
+          <svg viewBox="0 0 24 24" width="18" height="18" ng-hide="c.wakeOn"><path fill="currentColor" d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.54 0-4.93-1.93-4.93-4.85v-.21c0-.55-.45-1-1-1s-1 .45-1 1c0 3.03 2.39 5.45 5.42 5.91V20c0 .55.45 1 1 1s1-.45 1-1v-2.05c.85-.11 1.65-.36 2.39-.74L19.73 21 21 19.73 4.27 3z"/></svg>
+        </button>
+        <button class="netra-icon-btn netra-close"
+                ng-click="c.collapse()"
+                title="Close"
+                aria-label="Close Netra">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Setup banner (only when no API key configured) -->
+    <div class="netra-setup" ng-show="c.needSetup">
+      <h3>One-time setup needed</h3>
+      <p>To enable AI replies, kindly set the system property
+        <code>x_196061_netra_v1.gemini_api_key</code> with a free key from
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
+      </p>
+      <p>Then reload this page.</p>
     </div>
 
-    <button type="button"
-            class="netra-toggle-wake"
-            ng-click="c.toggleWake()"
-            aria-pressed="{{c.wakeOn}}"
-            title="{{c.wakeOn ? 'Wake word listening on' : 'Wake word listening off'}}">
-      <span aria-hidden="true">{{c.wakeOn ? 'ON' : 'OFF'}}</span>
-    </button>
+    <!-- Conversation area -->
+    <div class="netra-body" ng-hide="c.needSetup">
 
-    <button type="button"
-            class="netra-pause"
-            ng-click="c.askPause()"
-            ng-show="!c.paused"
-            aria-label="Pause Netra notifications"
-            title="Pause notifications">⏸</button>
+      <!-- Empty state with welcome + quick actions -->
+      <div class="netra-welcome" ng-show="!c.messages.length">
+        <div class="netra-welcome-grad">
+          <svg viewBox="0 0 24 24" width="42" height="42"><path fill="currentColor" d="M12 2l1.6 5.6L19 9l-5.4 1.4L12 16l-1.6-5.6L5 9l5.4-1.4L12 2zm6 12l.7 2.3L21 17l-2.3.7L18 20l-.7-2.3L15 17l2.3-.7L18 14zM6 14l.7 2.3L9 17l-2.3.7L6 20l-.7-2.3L3 17l2.3-.7L6 14z"/></svg>
+        </div>
+        <h1>Namaste, {{c.data.user_name}}</h1>
+        <p>How can I help you today?</p>
 
-    <button type="button"
-            class="netra-resume"
-            ng-click="c.resume()"
-            ng-show="c.paused"
-            aria-label="Resume Netra notifications"
-            title="Resume notifications">▶</button>
+        <div class="netra-quick-grid">
+          <button class="netra-quick" ng-click="c.quick('Open a ticket for')">
+            <span class="netra-quick-icon">📝</span>
+            <span class="netra-quick-label">Open a ticket</span>
+          </button>
+          <button class="netra-quick" ng-click="c.quick('What are my open tickets?')">
+            <span class="netra-quick-icon">📋</span>
+            <span class="netra-quick-label">My tickets</span>
+          </button>
+          <button class="netra-quick" ng-click="c.quick('Any approvals waiting on me?')">
+            <span class="netra-quick-icon">✅</span>
+            <span class="netra-quick-label">Pending approvals</span>
+          </button>
+          <button class="netra-quick" ng-click="c.quick('Search knowledge for password reset')">
+            <span class="netra-quick-icon">🔍</span>
+            <span class="netra-quick-label">Knowledge search</span>
+          </button>
+        </div>
+      </div>
 
-    <button type="button"
-            class="netra-help"
-            ng-click="c.help()"
-            aria-label="What can I say">?</button>
-  </div>
+      <!-- Chat messages -->
+      <div class="netra-messages" ng-show="c.messages.length">
+        <div class="netra-msg netra-msg-{{m.role}}" ng-repeat="m in c.messages track by $index">
+          <div class="netra-msg-avatar" ng-if="m.role === 'assistant'" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2l1.6 5.6L19 9l-5.4 1.4L12 16l-1.6-5.6L5 9l5.4-1.4L12 2z"/></svg>
+          </div>
+          <div class="netra-msg-content">
+            <div class="netra-msg-bubble" ng-bind-html="m.html"></div>
+            <div class="netra-msg-time">{{m.time}}</div>
+          </div>
+        </div>
+        <div class="netra-msg netra-msg-assistant" ng-show="c.thinking">
+          <div class="netra-msg-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2l1.6 5.6L19 9l-5.4 1.4L12 16l-1.6-5.6L5 9l5.4-1.4L12 2z"/></svg>
+          </div>
+          <div class="netra-msg-content">
+            <div class="netra-msg-bubble netra-thinking-bubble">
+              <span class="netra-dots"><span></span><span></span><span></span></span>
+            </div>
+          </div>
+        </div>
+      </div>
 
-  <!-- Pending-question banner (e.g. "for how long?") -->
-  <div class="netra-banner netra-banner-pending"
-       ng-show="c.pendingPrompt"
-       role="status"
-       aria-live="polite">
-    <span aria-hidden="true">💬</span>
-    <span>{{c.pendingPrompt}}</span>
-  </div>
-
-  <!-- Paused banner -->
-  <div class="netra-banner netra-banner-paused"
-       ng-show="c.paused"
-       role="status"
-       aria-live="polite">
-    <span aria-hidden="true">🔕</span>
-    <span>Notifications paused{{c.pausedUntilLabel ? ' until ' + c.pausedUntilLabel : ''}}.
-      Say <em>"resume"</em> or click play to bring me back.</span>
-  </div>
-
-  <!-- Conversation panel -->
-  <div class="netra-panel" ng-show="c.lastTranscript || c.lastResponse">
-    <div class="netra-row" ng-show="c.lastTranscript">
-      <div class="netra-row-label">You said</div>
-      <div class="netra-row-text">{{c.lastTranscript}}</div>
     </div>
-    <div class="netra-row netra-row-reply" ng-show="c.lastResponse">
-      <div class="netra-row-label">Netra</div>
-      <div class="netra-row-text">{{c.lastResponse}}</div>
-    </div>
-  </div>
 
-  <div role="status" aria-live="assertive" aria-atomic="true" class="sr-only">{{c.announcement}}</div>
+    <!-- Input bar -->
+    <footer class="netra-input-bar" ng-hide="c.needSetup">
+      <button class="netra-mic-btn"
+              ng-click="c.toggleMic()"
+              ng-class="{listening: c.listening}"
+              title="{{c.listening ? 'Stop listening' : 'Speak (Alt+N)'}}"
+              aria-label="Toggle microphone">
+        <svg viewBox="0 0 24 24" width="20" height="20" ng-hide="c.listening"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a.998.998 0 0 0-.99-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.92 5.78V21h2v-3.08c3.03-.43 5.43-2.78 5.92-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" ng-show="c.listening"><rect fill="currentColor" x="6" y="6" width="12" height="12" rx="2"/></svg>
+      </button>
+      <input type="text"
+             class="netra-input"
+             ng-model="c.draft"
+             ng-keypress="c.onKeyPress($event)"
+             placeholder="Ask Netra anything..."
+             aria-label="Message Netra">
+      <button class="netra-send-btn"
+              ng-click="c.send()"
+              ng-disabled="!c.draft.trim()"
+              title="Send"
+              aria-label="Send message">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+      </button>
+    </footer>
 
-  <div class="netra-hotkey" aria-hidden="true">
-    Press <kbd>Alt</kbd>+<kbd>N</kbd> to talk
-  </div>
+  </section>
 
 </div>

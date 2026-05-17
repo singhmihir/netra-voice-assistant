@@ -1,28 +1,25 @@
 /**
- * Service Portal widget client controller - netra-mic (v4 - self-contained)
+ * Netra Mic widget - CLIENT CONTROLLER  (v5 - Gemini agent)
  *
- * Replaces every $http call with c.server.update(). The widget no longer
- * touches /api/<scope>/voice/* at all - the Scripted REST API can be
- * deleted (or left as a diagnostic tool, your call).
+ * Modern Gemini-style chat with Indian English voice (en-IN), wake word,
+ * push-to-talk, and full tool-use conversation history.
  *
- * Standard SP server round-trip pattern:
- *   1. set c.data.action = '<command|poll>' and other inputs
- *   2. call c.server.update()
- *   3. read c.data.response or c.data.notifications in the .then()
+ * All round-trips go through c.server.update() - no Scripted REST,
+ * no $http.post, no 400-prone cross-scope calls.
  */
-api.controller = function ($scope, $timeout, $window, spUtil) {
+api.controller = function ($scope, $timeout, $window, $sce, spUtil) {
     var c = this;
 
-    // -------- state bound to the template --------
-    c.status           = 'idle';
-    c.busy             = false;
-    c.wakeOn           = true;
-    c.lastTranscript   = '';
-    c.lastResponse     = '';
-    c.announcement     = '';
-    c.paused           = !!c.data.paused;
-    c.pausedUntilLabel = c.data.paused_until ? formatLocalTime(c.data.paused_until) : '';
-    c.pendingPrompt    = '';
+    // -------- UI state bound to template --------
+    c.expanded   = false;
+    c.messages   = [];          // { role, html, text, time }
+    c.thinking   = false;
+    c.draft      = '';
+    c.listening  = false;
+    c.wakeOn     = true;
+    c.needSetup  = !c.data.has_api_key;
+    c.paused     = !!c.data.paused;
+    c.pendingNotify = '';
 
     // -------- private --------
     var SR     = $window.SpeechRecognition || $window.webkitSpeechRecognition;
@@ -33,37 +30,87 @@ api.controller = function ($scope, $timeout, $window, spUtil) {
     var cmdRec    = null;
     var wakeRec   = null;
     var pollTimer = null;
-    var seenNotificationIds = {};
-    var pendingContext = null;
-    var lastSpoken     = '';
+    var seenIds   = {};
+    var geminiHistory = [];     // model-side conversation
+    var voicesReady   = false;
 
     c.$onInit = function () {
-        if (!hasSR) {
-            c.lastResponse = 'Your browser does not support speech recognition. Use Chrome or Edge.';
-            c.status = 'error';
-            announce(c.lastResponse);
-            return;
+        // Pre-warm voice list (browsers populate async)
+        if (hasTTS) {
+            TTS.getVoices();
+            try { TTS.addEventListener('voiceschanged', function(){ voicesReady = true; }); } catch (e) {}
         }
-        startWakeWord();
+        if (hasSR && !c.needSetup) startWakeWord();
         bindHotkey();
         startNotificationPolling();
-        speak('Netra ready.');
     };
 
     c.$onDestroy = function () {
         try { if (wakeRec) wakeRec.stop(); } catch (e) {}
-        try { if (cmdRec) cmdRec.stop(); } catch (e) {}
+        try { if (cmdRec)  cmdRec.stop();  } catch (e) {}
         if (pollTimer) $timeout.cancel(pollTimer);
         if (TTS) TTS.cancel();
     };
 
     // ============================================================
-    //  UI handlers
+    //  UI bindings
     // ============================================================
-    c.toggleRecording = function () {
-        if (c.status === 'listening') {
+    c.expand   = function () { c.expanded = true; };
+    c.collapse = function () { c.expanded = false; };
+
+    c.send = function (text) {
+        var msg = (text != null ? text : c.draft || '').trim();
+        if (!msg) return;
+        c.draft = '';
+        c.expanded = true;
+        pushMessage('user', msg);
+        c.thinking = true;
+        scrollSoon();
+
+        c.data.action  = 'chat';
+        c.data.message = msg;
+        c.data.history = geminiHistory;
+
+        c.server.update().then(
+            function () {
+                c.thinking = false;
+                var r = c.data.response || {};
+                if (r.ok) {
+                    pushMessage('assistant', r.message);
+                    if (Array.isArray(r.history)) geminiHistory = r.history;
+                    if (typeof r.paused === 'boolean') c.paused = r.paused;
+                    speak(r.message);
+                } else {
+                    pushMessage('assistant', '⚠️ ' + (r.message || 'Something went wrong.'));
+                    speak(r.message || 'Sorry, something went wrong.');
+                }
+                scrollSoon();
+            },
+            function (err) {
+                c.thinking = false;
+                var detail = (err && err.message) ? err.message : 'Could not reach server.';
+                pushMessage('assistant', '⚠️ Server call failed: ' + detail);
+                if ($window.console && $window.console.error) $window.console.error('[Netra]', err);
+                scrollSoon();
+            }
+        );
+    };
+
+    c.onKeyPress = function (ev) {
+        if ((ev.which || ev.keyCode) === 13 && !ev.shiftKey) {
+            ev.preventDefault();
+            c.send();
+        }
+    };
+
+    c.toggleMic = function () {
+        if (!hasSR) {
+            pushMessage('assistant', 'Voice input is not supported in this browser. Kindly use Chrome or Edge, or just type below.');
+            return;
+        }
+        if (c.listening) {
             try { if (cmdRec) cmdRec.stop(); } catch (e) {}
-        } else if (!c.busy) {
+        } else {
             startCommandRecognition();
         }
     };
@@ -72,31 +119,95 @@ api.controller = function ($scope, $timeout, $window, spUtil) {
         c.wakeOn = !c.wakeOn;
         if (c.wakeOn) startWakeWord();
         else { try { if (wakeRec) wakeRec.stop(); } catch (e) {} }
-        announce(c.wakeOn ? 'Wake word on.' : 'Wake word off.');
     };
 
-    c.askPause = function () { handleCommand('pause'); };
-    c.resume   = function () { handleCommand('resume'); };
-    c.help     = function () { handleCommand('help'); };
-
-    c.micLabel = function () {
-        return c.status === 'listening' ? 'Stop recording' : 'Start recording - click or say Netra';
+    c.newChat = function () {
+        c.messages = [];
+        geminiHistory = [];
+        c.draft = '';
+        if (TTS) TTS.cancel();
     };
 
-    c.statusLabel = function () {
-        if (c.paused) return 'paused';
-        var labels = {
-            idle:      pendingContext ? 'waiting for answer' : 'ready',
-            listening: 'listening...',
-            thinking:  'thinking...',
-            speaking:  'speaking...',
-            error:     'error'
-        };
-        return labels[c.status] || c.status;
-    };
+    c.quick = function (text) { c.send(text); };
+
+    c.dismissNotify = function () { c.pendingNotify = ''; };
 
     // ============================================================
-    //  Wake word
+    //  Markdown -> safe HTML for chat bubbles
+    // ============================================================
+    function pushMessage(role, text) {
+        c.messages.push({
+            role: role,
+            text: text,
+            html: $sce.trustAsHtml(formatMarkdown(text)),
+            time: nowHM()
+        });
+    }
+
+    function formatMarkdown(s) {
+        s = String(s == null ? '' : s);
+        // Escape first
+        s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // Code blocks ``` ... ```
+        s = s.replace(/```([\s\S]*?)```/g, function (_, code) {
+            return '<pre><code>' + code.trim() + '</code></pre>';
+        });
+        // Inline code
+        s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // Bold / italic
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        // Ticket numbers as visible chips
+        s = s.replace(/\b(INC|CHG|RITM|REQ|SCTASK|KB|PRB)\d{6,}\b/g, function (n) {
+            return '<span class="netra-num">' + n + '</span>';
+        });
+        // Line breaks
+        s = s.replace(/\n/g, '<br>');
+        return s;
+    }
+
+    function nowHM() {
+        var d = new Date();
+        return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+
+    function scrollSoon() {
+        $timeout(function () {
+            var el = document.querySelector('.netra-messages');
+            if (el) el.scrollTop = el.scrollHeight;
+        }, 30);
+    }
+
+    // ============================================================
+    //  Indian English TTS (en-IN preferred)
+    // ============================================================
+    function speak(text) {
+        if (!hasTTS || !text) return;
+        // Strip markdown leftovers for clean speech
+        var clean = String(text)
+            .replace(/```[\s\S]*?```/g, ' ')
+            .replace(/[*_`#>]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        TTS.cancel();
+        var u = new SpeechSynthesisUtterance(clean);
+        u.lang  = 'en-IN';
+        u.rate  = 0.95;
+        u.pitch = 1.0;
+        var voices = TTS.getVoices() || [];
+        var pick =
+            voices.find(function (v) { return /en[-_]IN/i.test(v.lang) && /Natural|Neural|Online/i.test(v.name); }) ||
+            voices.find(function (v) { return /Neerja|Heera|Prabhat|Ravi|Veena|Rishi|Lekha/i.test(v.name); }) ||
+            voices.find(function (v) { return /en[-_]IN/i.test(v.lang); }) ||
+            voices.find(function (v) { return /^Google.*हिन्दी|Hindi/i.test(v.name); }) ||
+            voices.find(function (v) { return /en[-_]GB/i.test(v.lang); }) ||
+            voices.find(function (v) { return /en[-_]US/i.test(v.lang); });
+        if (pick) u.voice = pick;
+        TTS.speak(u);
+    }
+
+    // ============================================================
+    //  Wake word ("Netra")
     // ============================================================
     function startWakeWord() {
         if (!hasSR || !c.wakeOn) return;
@@ -105,153 +216,76 @@ api.controller = function ($scope, $timeout, $window, spUtil) {
         wakeRec = new SR();
         wakeRec.continuous     = true;
         wakeRec.interimResults = true;
-        wakeRec.lang           = 'en-US';
+        wakeRec.lang           = 'en-IN';
 
         wakeRec.onresult = function (ev) {
             for (var i = ev.resultIndex; i < ev.results.length; i++) {
-                var transcript = ev.results[i][0].transcript.toLowerCase();
-                if (c.status !== 'idle' || c.busy) return;
-                if (/\bnetra\b/.test(transcript) || /\bjarvis\b/.test(transcript)) {
-                    var after = transcript.split(/\bnetra\b|\bjarvis\b/i)[1];
+                var t = ev.results[i][0].transcript.toLowerCase();
+                if (c.listening || c.thinking) return;
+                if (/\bnetra\b/.test(t) || /\bhello netra\b/.test(t)) {
+                    c.expanded = true;
+                    var after = t.split(/\bnetra\b|\bhello netra\b/i)[1];
                     if (after && after.trim().length > 3) {
-                        handleCommand(after.trim());
+                        c.send(after.trim());
                     } else {
                         startCommandRecognition();
                     }
+                    $scope.$applyAsync();
                     return;
                 }
             }
         };
         wakeRec.onerror = function () {
-            if (c.wakeOn && c.status === 'idle') $timeout(startWakeWord, 800);
+            if (c.wakeOn && !c.listening) $timeout(startWakeWord, 800);
         };
         wakeRec.onend = function () {
-            if (c.wakeOn && c.status === 'idle') $timeout(startWakeWord, 400);
+            if (c.wakeOn && !c.listening) $timeout(startWakeWord, 400);
         };
         try { wakeRec.start(); } catch (e) {}
     }
 
-    // ============================================================
-    //  Command recognition
-    // ============================================================
     function startCommandRecognition() {
-        if (c.busy) return;
+        if (!hasSR) return;
         try { if (wakeRec) wakeRec.stop(); } catch (e) {}
         if (TTS) TTS.cancel();
 
         cmdRec = new SR();
         cmdRec.continuous      = false;
         cmdRec.interimResults  = false;
-        cmdRec.lang            = 'en-US';
+        cmdRec.lang            = 'en-IN';
         cmdRec.maxAlternatives = 1;
 
         var captured = '';
-        cmdRec.onstart  = function () { c.status = 'listening'; announce('Listening.'); $scope.$applyAsync(); };
+        cmdRec.onstart  = function () { c.listening = true;  $scope.$applyAsync(); };
         cmdRec.onresult = function (ev) { captured = ev.results[0][0].transcript; };
-        cmdRec.onerror  = function (ev) { c.lastResponse = 'I did not catch that. (' + ev.error + ')'; announce(c.lastResponse); resetToIdle(); };
-        cmdRec.onend    = function () { if (captured) { handleCommand(captured); } else { resetToIdle(); } };
+        cmdRec.onerror  = function ()    { c.listening = false; $scope.$applyAsync(); };
+        cmdRec.onend    = function ()    {
+            c.listening = false;
+            $scope.$applyAsync();
+            if (captured) c.send(captured);
+            else if (c.wakeOn) $timeout(startWakeWord, 300);
+        };
+        try { cmdRec.start(); } catch (e) {}
+    }
 
-        speak('Yes?', function () {
-            try { cmdRec.start(); } catch (e) { resetToIdle(); }
+    function bindHotkey() {
+        $window.addEventListener('keydown', function (e) {
+            if (e.altKey && (e.key === 'n' || e.key === 'N')) {
+                e.preventDefault();
+                c.expanded = true;
+                if (!c.listening) c.toggleMic();
+                $scope.$applyAsync();
+            }
+            if (e.key === 'Escape') {
+                if (TTS) TTS.cancel();
+                c.listening = false;
+                $scope.$applyAsync();
+            }
         });
     }
 
     // ============================================================
-    //  Server round-trip via c.server.update() - PROVEN SP PATTERN
-    // ============================================================
-    function handleCommand(transcript) {
-        c.lastTranscript = transcript;
-        c.status = 'thinking';
-        c.busy = true;
-        announce('Processing.');
-        $scope.$applyAsync();
-
-        c.data.action     = 'command';
-        c.data.transcript = transcript;
-        c.data.pending    = pendingContext;
-
-        c.server.update().then(
-            function () {
-                var d = c.data.response || {};
-                var msg = d.message;
-                if (msg === '__REPEAT__') msg = lastSpoken || "I haven't said anything yet.";
-
-                c.lastResponse = msg;
-                announce(msg);
-
-                if (d.pending) {
-                    pendingContext = d.pending;
-                    c.pendingPrompt = msg;
-                } else if (d.clear_pending) {
-                    pendingContext = null;
-                    c.pendingPrompt = '';
-                }
-
-                if (typeof d.paused === 'boolean') {
-                    c.paused = d.paused;
-                    c.pausedUntilLabel = c.data.paused_until ? formatLocalTime(c.data.paused_until) : '';
-                }
-
-                if (d.refresh_tickets && spUtil && spUtil.update) {
-                    try { spUtil.update($scope); } catch (e) {}
-                }
-
-                if (d.stop) { resetToIdle(); return; }
-
-                if (d.navigate) {
-                    speak(msg, function () {
-                        resetToIdle();
-                        $window.location.href = d.navigate;
-                    });
-                    return;
-                }
-
-                speak(msg, function () {
-                    resetToIdle(!!d.pending);
-                });
-            },
-            function (err) {
-                var detail = (err && err.message) ? err.message : 'unknown';
-                if ($window.console && $window.console.error) {
-                    $window.console.error('[Netra] c.server.update(command) failed:', err);
-                }
-                c.lastResponse = 'Server call failed: ' + detail;
-                announce(c.lastResponse);
-                speak(c.lastResponse, function () { resetToIdle(); });
-            }
-        );
-    }
-
-    function resetToIdle(keepPending) {
-        c.status = 'idle';
-        c.busy = false;
-        $scope.$applyAsync();
-        if (c.wakeOn) $timeout(startWakeWord, 300);
-    }
-
-    // ============================================================
-    //  TTS
-    // ============================================================
-    function speak(text, done) {
-        if (!hasTTS || !text) { if (done) done(); return; }
-        TTS.cancel();
-        lastSpoken = text;
-        var u = new SpeechSynthesisUtterance(text);
-        u.rate  = 1.0;
-        u.pitch = 1.0;
-        u.lang  = 'en-US';
-        var voices = TTS.getVoices();
-        var pick = voices.find(function (v) { return /Natural|Online|Google/i.test(v.name); }) ||
-                   voices.find(function (v) { return /en-US/i.test(v.lang); });
-        if (pick) u.voice = pick;
-        u.onstart = function () { c.status = 'speaking'; $scope.$applyAsync(); };
-        u.onend   = function () { if (done) done(); };
-        u.onerror = function () { if (done) done(); };
-        TTS.speak(u);
-    }
-
-    // ============================================================
-    //  Notification polling - via c.server.update({action:'poll'})
+    //  Notification polling (proactive interrupts)
     // ============================================================
     function startNotificationPolling() {
         var POLL_MS = 8000;
@@ -259,62 +293,23 @@ api.controller = function ($scope, $timeout, $window, spUtil) {
             c.data.action = 'poll';
             c.server.update().then(
                 function () {
-                    c.paused = !!c.data.paused;
-                    c.pausedUntilLabel = c.data.paused_until ? formatLocalTime(c.data.paused_until) : '';
+                    if (typeof c.data.paused === 'boolean') c.paused = c.data.paused;
                     var list = c.data.notifications || [];
                     list.forEach(function (n) {
-                        if (seenNotificationIds[n.id]) return;
-                        if (c.status === 'listening' || c.status === 'speaking') return;
-                        seenNotificationIds[n.id] = true;
-                        c.lastResponse = n.message;
-                        announce(n.message);
+                        if (seenIds[n.id]) return;
+                        seenIds[n.id] = true;
+                        if (c.listening || c.thinking) return;
+                        c.pendingNotify = n.message;
+                        pushMessage('assistant', '🔔 ' + n.message);
                         speak(n.message);
+                        scrollSoon();
                     });
                 },
-                function (err) {
-                    if ($window.console && $window.console.warn) {
-                        $window.console.warn('[Netra] poll failed:', err);
-                    }
-                }
+                function () { /* silent - polling */ }
             ).finally(function () {
                 pollTimer = $timeout(tick, POLL_MS);
             });
         };
-        pollTimer = $timeout(tick, 2000);
-    }
-
-    // ============================================================
-    //  Helpers
-    // ============================================================
-    function announce(text) {
-        c.announcement = '';
-        $timeout(function () { c.announcement = text; }, 30);
-    }
-
-    function bindHotkey() {
-        $window.addEventListener('keydown', function (e) {
-            if (e.altKey && (e.key === 'n' || e.key === 'N')) {
-                e.preventDefault();
-                c.toggleRecording();
-                $scope.$applyAsync();
-            }
-            if (e.key === 'Escape' && TTS) {
-                TTS.cancel();
-                pendingContext = null;
-                c.pendingPrompt = '';
-                resetToIdle();
-            }
-        });
-    }
-
-    function formatLocalTime(gdt) {
-        if (!gdt) return '';
-        try {
-            var iso = String(gdt).replace(' ', 'T') + 'Z';
-            var dt  = new Date(iso);
-            return dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-        } catch (e) {
-            return gdt;
-        }
+        pollTimer = $timeout(tick, 2500);
     }
 };

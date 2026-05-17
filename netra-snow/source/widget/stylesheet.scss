@@ -1,147 +1,432 @@
 /* ============================================================
- *  Netra mic widget v2 — accessible, high-contrast, fixed dock
+ *  Netra Mic widget styles  -  v5 (Gemini-inspired)
+ *  Modern light theme, gradient accents, smooth motion.
  * ============================================================ */
 
-$netra-blue:   #1a56db;
-$netra-dark:   #0e2e7a;
-$netra-red:    #c81e1e;
-$netra-green:  #057a55;
-$netra-amber:  #b54708;
-$netra-grey:   #475569;
-$netra-purple: #5b21b6;
+$netra-grad-blue:   #4285F4;
+$netra-grad-purple: #9B72CB;
+$netra-grad-rose:   #D96570;
+$netra-text:        #202124;
+$netra-text-soft:   #5F6368;
+$netra-stroke:      #E8EAED;
+$netra-stroke-soft: #F1F3F4;
+$netra-bg:          #FFFFFF;
+$netra-bubble-bot:  #F1F3F4;
+$netra-blue:        #1A73E8;
+$netra-blue-dark:   #1557B0;
+$netra-red:         #EA4335;
+
+@mixin netra-grad-text {
+    background: linear-gradient(135deg, $netra-grad-blue 0%, $netra-grad-purple 50%, $netra-grad-rose 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
 
 .netra-root {
     position: fixed;
     right: 24px;
     bottom: 24px;
     z-index: 9999;
-    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-    color: #111;
+    font-family: 'Google Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: $netra-text;
 
-    .sr-only {
-        position: absolute !important;
-        width: 1px; height: 1px;
-        padding: 0; margin: -1px;
-        overflow: hidden;
-        clip: rect(0,0,0,0); white-space: nowrap; border: 0;
-    }
-
-    .netra-dock {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        background: #ffffff;
-        border: 2px solid $netra-blue;
-        border-radius: 999px;
-        padding: 10px 14px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.18);
-    }
-
-    .netra-mic {
-        position: relative;
-        width: 56px; height: 56px;
-        border-radius: 50%;
-        border: 0;
-        background: $netra-blue;
-        color: white;
-        display: flex; align-items: center; justify-content: center;
-        cursor: pointer;
-        transition: background 0.2s, transform 0.2s;
-        &:hover:not(:disabled) { background: $netra-dark; }
-        &:focus-visible      { outline: 4px solid #fff; box-shadow: 0 0 0 6px $netra-blue; }
-        &:disabled           { opacity: 0.6; cursor: not-allowed; }
-    }
-
-    .netra-mic-dot {
-        position: absolute; top: 6px; right: 6px;
-        width: 12px; height: 12px;
-        background: #94a3b8;
-        border: 2px solid #fff;
-        border-radius: 50%;
-    }
-
-    .netra-meta { display: flex; flex-direction: column; line-height: 1.2; }
-    .netra-name   { font-size: 16px; color: $netra-dark; font-weight: 700; }
-    .netra-status { font-size: 13px; color: $netra-grey; }
-
-    .netra-toggle-wake,
-    .netra-pause,
-    .netra-resume,
-    .netra-help {
-        border: 2px solid $netra-blue;
-        background: white;
-        color: $netra-blue;
-        border-radius: 999px;
-        padding: 4px 10px;
-        font-weight: 700;
-        font-size: 13px;
-        cursor: pointer;
-        &:hover { background: $netra-blue; color: white; }
-        &:focus-visible { outline: 3px solid $netra-amber; }
-    }
-    .netra-pause, .netra-resume, .netra-help {
-        width: 32px; height: 32px; padding: 0; font-size: 16px;
-    }
-
-    .netra-banner {
-        margin-top: 10px;
-        background: white;
-        border-radius: 14px;
-        padding: 10px 14px;
-        font-size: 14px;
-        max-width: 440px;
-        box-shadow: 0 6px 20px rgba(0,0,0,0.10);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        em { color: $netra-blue; font-style: normal; font-weight: 600; }
-    }
-    .netra-banner-pending { border: 2px solid $netra-amber; }
-    .netra-banner-paused  { border: 2px solid $netra-purple; background: #faf5ff; }
-
-    .netra-panel {
-        margin-top: 10px;
-        background: #ffffff;
-        border: 1px solid #cbd5e1;
-        border-radius: 14px;
-        padding: 14px 16px;
-        max-width: 440px;
-        box-shadow: 0 6px 20px rgba(0,0,0,0.10);
-    }
-    .netra-row { padding: 6px 0; & + .netra-row { border-top: 1px solid #e2e8f0; } }
-    .netra-row-label {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        font-weight: 700;
-        color: $netra-grey;
-    }
-    .netra-row-text { font-size: 15px; margin-top: 2px; }
-    .netra-row-reply .netra-row-label { color: $netra-blue; }
-
-    .netra-hotkey {
-        margin-top: 8px;
-        text-align: right;
-        font-size: 11px;
-        color: $netra-grey;
-        kbd {
-            background: #fff; border: 1px solid #cbd5e1;
-            border-bottom-width: 2px;
-            padding: 1px 5px; border-radius: 4px;
-            font-family: ui-monospace, "Cascadia Mono", monospace;
-        }
-    }
-
-    /* ---- status colors ---- */
-    &.netra-status-listening .netra-mic        { background: $netra-red; }
-    &.netra-status-listening .netra-mic-dot    { background: $netra-red; animation: netra-pulse 1.2s infinite; }
-    &.netra-status-thinking  .netra-mic        { background: $netra-amber; }
-    &.netra-status-speaking  .netra-mic        { background: $netra-green; }
-    &.netra-status-error     .netra-mic        { background: $netra-grey; }
-    &.netra-paused           .netra-mic        { background: $netra-purple; }
+    * { box-sizing: border-box; }
+    button { font-family: inherit; }
 }
 
+/* ===========================================================
+ *  Collapsed floating action button
+ * =========================================================== */
+.netra-fab {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: linear-gradient(135deg, $netra-grad-blue 0%, $netra-grad-purple 50%, $netra-grad-rose 100%);
+    color: white;
+    border: 0;
+    border-radius: 999px;
+    padding: 12px 22px 12px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    box-shadow:
+        0 6px 24px rgba(66, 133, 244, 0.32),
+        0 2px 8px rgba(155, 114, 203, 0.25);
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    line-height: 1;
+
+    &:hover {
+        transform: translateY(-2px);
+        box-shadow:
+            0 10px 30px rgba(66, 133, 244, 0.4),
+            0 4px 12px rgba(155, 114, 203, 0.3);
+    }
+    &:focus-visible {
+        outline: 3px solid #fff;
+        outline-offset: 3px;
+    }
+
+    .netra-fab-sparkle {
+        display: inline-flex;
+        filter: drop-shadow(0 0 6px rgba(255,255,255,0.7));
+    }
+}
+
+/* ===========================================================
+ *  Expanded chat panel
+ * =========================================================== */
+.netra-panel {
+    width: 420px;
+    max-width: calc(100vw - 32px);
+    height: 640px;
+    max-height: calc(100vh - 48px);
+    background: $netra-bg;
+    border-radius: 24px;
+    box-shadow:
+        0 24px 80px rgba(0, 0, 0, 0.18),
+        0 4px 16px rgba(0, 0, 0, 0.06);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: netra-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes netra-pop {
+    from { opacity: 0; transform: translateY(12px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Header */
+.netra-header {
+    flex: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid $netra-stroke;
+}
+.netra-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.netra-avatar {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, $netra-grad-blue 0%, $netra-grad-purple 50%, $netra-grad-rose 100%);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(66, 133, 244, 0.35);
+}
+.netra-brand-text {
+    line-height: 1.2;
+    strong { display: block; font-size: 15px; font-weight: 600; color: $netra-text; }
+    .netra-tag { font-size: 11.5px; color: $netra-text-soft; }
+    .netra-tag-paused { color: $netra-grad-purple; font-weight: 500; }
+}
+.netra-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.netra-icon-btn {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 0;
+    background: transparent;
+    color: $netra-text-soft;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+    &:hover  { background: $netra-stroke-soft; color: $netra-text; }
+    &:focus-visible { outline: 2px solid $netra-blue; outline-offset: 2px; }
+}
+
+/* Setup banner */
+.netra-setup {
+    flex: 1;
+    padding: 28px 24px;
+    background:
+        radial-gradient(circle at top right, rgba(155,114,203,0.06), transparent 60%),
+        radial-gradient(circle at bottom left, rgba(66,133,244,0.06), transparent 60%);
+
+    h3 { font-size: 16px; margin: 0 0 10px; color: $netra-text; }
+    p  { font-size: 13.5px; color: $netra-text-soft; line-height: 1.55; margin: 0 0 12px; }
+    a  { color: $netra-blue; text-decoration: underline; }
+    code {
+        background: $netra-stroke-soft;
+        padding: 2px 6px;
+        border-radius: 6px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 12.5px;
+    }
+}
+
+/* Body */
+.netra-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* Welcome / empty state */
+.netra-welcome {
+    flex: 1;
+    padding: 32px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+.netra-welcome-grad {
+    @include netra-grad-text;
+    margin-bottom: 12px;
+    filter: drop-shadow(0 0 14px rgba(66,133,244,0.25));
+}
+.netra-welcome h1 {
+    @include netra-grad-text;
+    font-size: 28px;
+    font-weight: 500;
+    margin: 0 0 6px;
+    letter-spacing: -0.02em;
+}
+.netra-welcome p {
+    margin: 0 0 24px;
+    color: $netra-text-soft;
+    font-size: 14px;
+}
+.netra-quick-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    width: 100%;
+    max-width: 340px;
+}
+.netra-quick {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid $netra-stroke;
+    border-radius: 14px;
+    background: $netra-bg;
+    color: $netra-text;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+    &:hover {
+        border-color: $netra-blue;
+        background: rgba(26, 115, 232, 0.04);
+    }
+    &:active { transform: scale(0.98); }
+}
+.netra-quick-icon { font-size: 16px; }
+.netra-quick-label { font-weight: 500; }
+
+/* Messages */
+.netra-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 16px 16px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    scrollbar-width: thin;
+    &::-webkit-scrollbar { width: 6px; }
+    &::-webkit-scrollbar-thumb { background: $netra-stroke; border-radius: 3px; }
+}
+.netra-msg {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    animation: netra-msg-in 0.22s ease;
+}
+@keyframes netra-msg-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.netra-msg-user {
+    justify-content: flex-end;
+    .netra-msg-bubble {
+        background: $netra-blue;
+        color: #fff;
+        border-bottom-right-radius: 4px;
+    }
+    .netra-msg-time { text-align: right; }
+}
+.netra-msg-assistant {
+    justify-content: flex-start;
+    .netra-msg-bubble {
+        background: $netra-bubble-bot;
+        color: $netra-text;
+        border-bottom-left-radius: 4px;
+    }
+}
+.netra-msg-avatar {
+    width: 28px; height: 28px;
+    flex: none;
+    border-radius: 50%;
+    background: linear-gradient(135deg, $netra-grad-blue 0%, $netra-grad-purple 50%, $netra-grad-rose 100%);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+}
+.netra-msg-content {
+    max-width: 78%;
+    min-width: 0;
+}
+.netra-msg-bubble {
+    padding: 10px 14px;
+    border-radius: 18px;
+    font-size: 14px;
+    line-height: 1.55;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+
+    strong { font-weight: 600; }
+    em     { font-style: italic; }
+    code   {
+        background: rgba(0,0,0,0.08);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 12.5px;
+    }
+    pre {
+        margin: 8px 0;
+        padding: 10px 12px;
+        background: rgba(0,0,0,0.06);
+        border-radius: 8px;
+        overflow-x: auto;
+        code {
+            background: transparent;
+            padding: 0;
+        }
+    }
+    .netra-num {
+        font-family: ui-monospace, Menlo, monospace;
+        background: rgba(255,255,255,0.18);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 12.5px;
+        font-weight: 500;
+    }
+}
+.netra-msg-user .netra-msg-bubble .netra-num {
+    background: rgba(255,255,255,0.22);
+}
+.netra-msg-assistant .netra-msg-bubble .netra-num {
+    background: $netra-blue;
+    color: #fff;
+}
+.netra-msg-time {
+    font-size: 10.5px;
+    color: $netra-text-soft;
+    margin-top: 3px;
+    padding: 0 4px;
+}
+
+/* Thinking dots */
+.netra-thinking-bubble {
+    padding: 14px 18px;
+}
+.netra-dots {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+    span {
+        width: 7px; height: 7px;
+        background: $netra-text-soft;
+        border-radius: 50%;
+        animation: netra-dot 1.4s infinite ease-in-out both;
+    }
+    span:nth-child(2) { animation-delay: 0.15s; }
+    span:nth-child(3) { animation-delay: 0.3s; }
+}
+@keyframes netra-dot {
+    0%, 80%, 100% { transform: scale(0.55); opacity: 0.5; }
+    40%           { transform: scale(1);    opacity: 1;   }
+}
+
+/* Input bar */
+.netra-input-bar {
+    flex: none;
+    border-top: 1px solid $netra-stroke;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: $netra-bg;
+}
+.netra-input {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 14px;
+    border: 1px solid $netra-stroke;
+    border-radius: 22px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    background: $netra-bg;
+    color: $netra-text;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    &::placeholder { color: $netra-text-soft; }
+    &:focus {
+        border-color: $netra-blue;
+        box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.16);
+    }
+}
+.netra-mic-btn, .netra-send-btn {
+    width: 40px; height: 40px;
+    flex: none;
+    border-radius: 50%;
+    border: 0;
+    background: $netra-blue;
+    color: #fff;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, transform 0.1s;
+    &:hover:not(:disabled)  { background: $netra-blue-dark; }
+    &:active                { transform: scale(0.96); }
+    &:disabled              { opacity: 0.45; cursor: not-allowed; }
+    &:focus-visible         { outline: 3px solid rgba(26,115,232,0.4); outline-offset: 2px; }
+}
+.netra-mic-btn.listening {
+    background: $netra-red;
+    animation: netra-pulse 1.3s infinite;
+}
 @keyframes netra-pulse {
-    0%,100% { transform: scale(1);   box-shadow: 0 0 0 0    rgba(200,30,30,0.7); }
-    50%     { transform: scale(1.2); box-shadow: 0 0 0 12px rgba(200,30,30,0);   }
+    0%, 100% { box-shadow: 0 0 0 0     rgba(234, 67, 53, 0.6); }
+    50%      { box-shadow: 0 0 0 12px  rgba(234, 67, 53, 0); }
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+    .netra-root {
+        right: 12px;
+        bottom: 12px;
+        left: 12px;
+    }
+    .netra-panel {
+        width: 100%;
+        height: calc(100vh - 24px);
+    }
+    .netra-fab {
+        margin-left: auto;
+    }
 }
