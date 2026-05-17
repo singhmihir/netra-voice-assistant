@@ -8,18 +8,18 @@
  * ============================================================ */
 
 /* ============================================================
- *  Root
+ *  Root - R1.3 small Claude-style mark, default top-left
  * ============================================================ */
 .netra-root {
     position: fixed;
-    right: 28px;
-    bottom: 28px;
+    left: 18px;
+    top: 18px;
     z-index: 9999;
     font-family: 'Google Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     display: flex;
     flex-direction: column;
-    align-items: flex-end;
-    gap: 14px;
+    align-items: flex-start;
+    gap: 12px;
 }
 .netra-root * { box-sizing: border-box; }
 .netra-root button { font-family: 'Google Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
@@ -42,31 +42,27 @@
  * ============================================================ */
 .netra-orb {
     position: relative;
-    width: 200px;
-    height: 130px;
+    width: 64px;
+    height: 64px;
     border: 0;
     cursor: grab;
     background: transparent;
     padding: 0;
     transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), filter 0.35s ease, width 0.3s ease, height 0.3s ease;
     overflow: visible;
-    /* Apple-serene palette: warm cyan iris, soft backlit halo */
-    --iris-bright: #aedcff;
-    --iris-mid:    #5292d0;
-    --iris-dark:   #1f4f80;
-    --iris-deep:   #0a2a4a;
-    --eye-glow:    rgba(127, 200, 255, 0.55);
+    /* R1.3 - simple green palette */
+    --iris-bright: #7fffb0;
+    --iris-mid:    #2eb858;
+    --iris-deep:   #021a0d;
+    --eye-glow:    rgba(127, 255, 176, 0.55);
 }
-.netra-orb:active { cursor: grabbing; }
+.netra-orb:hover  { transform: scale(1.08); }
+.netra-orb:active { cursor: grabbing; transform: scale(0.96); }
 
-/* Shrunk mode - tiny floating dot Apple AssistiveTouch style */
+/* Shrunk mode - even smaller (Apple AssistiveTouch dot) */
 .netra-shrunk .netra-orb {
-    width: 56px;
-    height: 56px;
-}
-.netra-shrunk .netra-eye-svg {
-    transform: scale(1);
-    transform-origin: center;
+    width: 40px;
+    height: 40px;
 }
 .netra-orb:hover  { transform: scale(1.05); }
 .netra-orb:active { transform: scale(0.98); }
@@ -80,51 +76,38 @@
     height: 100%;
     display: block;
     overflow: visible;
-    filter: drop-shadow(0 6px 22px rgba(127, 200, 255, 0.3));
+    filter: drop-shadow(0 0 12px var(--eye-glow, rgba(127, 255, 176, 0.5)));
 }
 
-/* Backlit halo - gentle breathing glow behind the eye */
-.netra-eye-backlight {
-    animation: backlight-breathe 5s ease-in-out infinite;
-    transform-origin: 100px 65px;
+/* Soft halo pulses (Claude-style glow) */
+.netra-eye-halo {
+    transform-origin: 50px 50px;
     transform-box: view-box;
+    animation: netra-halo-pulse 3.6s ease-in-out infinite;
 }
-@keyframes backlight-breathe {
-    0%, 100% { opacity: 0.75; transform: scale(1);    }
-    50%      { opacity: 1;    transform: scale(1.06); }
+@keyframes netra-halo-pulse {
+    0%, 100% { opacity: 0.7; transform: scale(0.95); }
+    50%      { opacity: 1;   transform: scale(1.08); }
 }
 
-/* Pupil gentle dilation breath */
+/* Pupil gentle breathe */
 .netra-eye-pupil {
-    transform-origin: 100px 65px;
+    transform-origin: 50px 50px;
     transform-box: view-box;
-    animation: pupil-breath 4.5s ease-in-out infinite;
+    animation: netra-pupil-breath 3.6s ease-in-out infinite;
 }
-@keyframes pupil-breath {
-    0%, 100% { transform: scale(1);     }
-    50%      { transform: scale(1.06);  }
+@keyframes netra-pupil-breath {
+    0%, 100% { transform: scale(1);    }
+    50%      { transform: scale(1.08); }
 }
 
-/* Catchlight shimmer (very subtle) */
+/* Catchlight subtle shimmer */
 .netra-eye-glint {
-    animation: glint-shimmer 7s ease-in-out infinite;
+    animation: netra-glint-shimmer 5s ease-in-out infinite;
 }
-@keyframes glint-shimmer {
-    0%, 100% { opacity: 0.95; }
-    50%      { opacity: 0.75; }
-}
-
-/* Iris extremely subtle rotation (you barely notice it, but adds life) */
-.netra-eye-iris-group {
-    transform-origin: 100px 65px;
-    transform-box: view-box;
-    animation: iris-drift 32s ease-in-out infinite;
-}
-@keyframes iris-drift {
-    0%, 100% { transform: translate(0px, 0px);     }
-    25%      { transform: translate(1px, -0.5px);  }
-    50%      { transform: translate(0.5px, 1px);   }
-    75%      { transform: translate(-0.5px, 0px);  }
+@keyframes netra-glint-shimmer {
+    0%, 100% { opacity: 0.9; }
+    50%      { opacity: 0.6; }
 }
 
 .netra-eye-glow {
@@ -156,14 +139,15 @@
 }
 
 /* ============================================================
- *  State - IDLE (warm cyan, gentle backlit halo)
+ *  State - IDLE (neon green HUD - default)
  * ============================================================ */
 .netra-state-idle .netra-orb {
-    --iris-bright: #aedcff;
-    --iris-mid:    #5292d0;
-    --iris-dark:   #1f4f80;
-    --iris-deep:   #0a2a4a;
-    --eye-glow:    rgba(127, 200, 255, 0.55);
+    --iris-bright: #7fffb0;
+    --iris-dark:   #0a6633;
+    --iris-deep:   #021a0d;
+    --eye-glow:    rgba(127, 255, 176, 0.55);
+    --accent:      #aef0d0;
+    --core-mid:    #7fffb0;
 }
 .netra-state-idle .netra-eye-glow {
     animation: eye-glow-pulse 3s ease-in-out infinite;
@@ -268,10 +252,10 @@
     --eye-glow:    rgba(80, 90, 105, 0.25);
     filter: brightness(0.65) saturate(0.6);
 }
-.netra-state-dormant .netra-eye-lid-top    { transform: translateY(75px); }
-.netra-state-dormant .netra-eye-lid-bottom { transform: translateY(-75px); }
-.netra-state-dormant .netra-eye-glint,
-.netra-state-dormant .netra-eye-glint-small { opacity: 0; }
+.netra-state-dormant .netra-eye-lid-top   { opacity: 0.85; }
+.netra-state-dormant .netra-eye-glint     { opacity: 0;    }
+.netra-state-dormant .netra-eye-iris      { opacity: 0.35; }
+.netra-state-dormant .netra-eye-pupil     { opacity: 0.4;  }
 
 /* ============================================================
  *  State - PAUSED
@@ -337,14 +321,14 @@
 @keyframes eye-blink-top {
     0%   { transform: translateY(0); }
     94%  { transform: translateY(0); }
-    97%  { transform: translateY(75px); }
+    97%  { transform: translateY(60px); }
     100% { transform: translateY(0); }
 }
 
 @keyframes eye-blink-bottom {
     0%   { transform: translateY(0); }
     94%  { transform: translateY(0); }
-    97%  { transform: translateY(-75px); }
+    97%  { transform: translateY(-60px); }
     100% { transform: translateY(0); }
 }
 
@@ -442,16 +426,16 @@
  * ============================================================ */
 .netra-dev {
     position: fixed;
-    top: 14px;
-    left: 14px;
+    top: 18px;
+    left: 100px;      /* R1.3 - to the right of the small orb */
     z-index: 100000;
-    width: 392px;
+    width: 380px;
     max-width: 92vw;
-    max-height: 90vh;
+    max-height: 88vh;
     overflow: auto;
     color: #ebedf2;
     border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 16px;
+    border-radius: 14px;
     padding: 12px 14px 14px;
     font-size: 12px;
     line-height: 1.5;
@@ -493,7 +477,10 @@
     padding-bottom: 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     margin-bottom: 0;
+    cursor: grab;   /* R1.3 - draggable header */
+    user-select: none;
 }
+.netra-dev-head:active { cursor: grabbing; }
 .netra-dev-head strong {
     color: #ebedf2;
     font-size: 12.5px;
@@ -651,6 +638,84 @@
     gap: 6px;
 }
 .netra-dev-actions button { white-space: nowrap; }
+
+/* R1.2 - LIVE MIC LEVEL METER */
+.netra-mic-meter {
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+.netra-mic-meter-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #9aa0a6;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.netra-mic-meter-status {
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 8.5px;
+    background: rgba(255,255,255,0.06);
+    color: #c4c7c5;
+}
+.netra-mic-meter-status.on {
+    background: rgba(129, 201, 149, 0.25);
+    color: #a5d6a7;
+    box-shadow: 0 0 10px rgba(129, 201, 149, 0.4);
+}
+.netra-mic-meter-status.l-err {
+    background: rgba(255, 118, 118, 0.2);
+    color: #ff9b9b;
+}
+.netra-mic-meter-peak {
+    margin-left: auto;
+    color: #6b7178;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+}
+.netra-mic-meter-track {
+    height: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 5px;
+    overflow: hidden;
+    position: relative;
+}
+.netra-mic-meter-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6dd882 0%, #ffe082 60%, #ff7676 95%);
+    border-radius: 5px;
+    transition: width 0.08s linear;
+    box-shadow: 0 0 8px rgba(129, 201, 149, 0.5);
+}
+.netra-mic-meter-test {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.netra-mic-meter-test button {
+    background: linear-gradient(180deg, #3a3d49 0%, #2c2f3a 100%);
+    color: #ebedf2;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 10.5px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.netra-mic-meter-test button:disabled { opacity: 0.45; cursor: not-allowed; }
+.netra-mic-meter-test em {
+    color: #aecbfa;
+    font-size: 10px;
+    font-style: italic;
+}
 
 /* R1 - Real-time graphs */
 .netra-dev-graphs {

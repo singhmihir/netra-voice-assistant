@@ -1,10 +1,11 @@
 <!--
-  Netra Mic widget template - R1 (Apple-serene backlit eye)
+  Netra Mic widget template - R1.3 (Claude-of-ServiceNow)
 
-  Calm almond eye with detailed iris, soft pupil, and a
-  subtle backlit halo. No HUD lines, no scanner. The eye
-  itself is the entire visual identity - clean, serene,
-  draggable, shrinkable.
+  Minimal industry-standard icon. Simple circular eye with
+  pulsing halo glow. Default position top-left. Multi-turn
+  conversational record drafting with confirmation flow.
+  Real Sidebar Discussions for "send message to X".
+  Dev console is draggable from its header.
 -->
 <div class="netra-root"
      ng-class="['netra-state-' + c.state]"
@@ -23,14 +24,30 @@
         DEV PANEL  (visible when c.devOn === true)
         ==================================================== -->
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
-    <header class="netra-dev-head">
+    <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
       <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <strong>NETRA <span class="netra-dev-ver">R1</span></strong>
+      <strong>NETRA <span class="netra-dev-ver">R1.3</span></strong>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
       <button class="netra-dev-x" ng-click="c.toggleDev()" title="Hide (Alt+D)">hide</button>
     </header>
+
+    <!-- R1.2 - LIVE MIC LEVEL METER (visual confirmation audio is reaching the browser) -->
+    <section class="netra-mic-meter">
+      <div class="netra-mic-meter-label">
+        MIC LEVEL
+        <span class="netra-mic-meter-status" ng-class="{'l-err': !c.micStreamActive, 'on': c.micStreamActive}">{{c.micStreamActive ? 'LIVE' : 'no stream'}}</span>
+        <span class="netra-mic-meter-peak">peak {{c.micLevelPeak || 0}}</span>
+      </div>
+      <div class="netra-mic-meter-track">
+        <div class="netra-mic-meter-fill" ng-style="{width: (c.micLevel || 0) + '%'}"></div>
+      </div>
+      <div class="netra-mic-meter-test">
+        <button ng-click="c.devTestMic()" ng-disabled="c.micRecording || !c.micStreamActive">Test Mic (3s record + playback)</button>
+        <em ng-show="c.micTestResult">{{c.micTestResult}}</em>
+      </div>
+    </section>
 
     <section class="netra-dev-status">
       <div><span>state</span><b>{{c.stateLabel}}</b></div>
@@ -133,168 +150,63 @@
           title="Alt+D to toggle">DEV</button>
 
   <!-- ====================================================
-        ORB - inline SVG eye (R1 - Apple-serene backlit)
+        ORB - inline SVG (R1.3 - simple Claude-style mark)
 
-        Calm, beautiful eye:
-          - Soft warm-white sclera with gentle gradient
-          - Layered iris with realistic striations + pupil
-          - Bright catchlight + secondary highlight
-          - Backlit halo glow from behind the eye
-          - No scan beam, no HUD lines - serene & focused
-          - Two thin natural eyelashes top + bottom
-          - Lids dip down for blink + close for dormant
+        Minimal industry-standard icon:
+          - One circular iris with depth gradient
+          - One pupil dot
+          - One subtle catchlight
+          - Soft pulsing glow halo (Claude-style)
+          - No lashes, no HUD lines, no aperture blades
+          - No telemetry ticks, no corner brackets
+          - Tiny - 64px default - sits in the top-left corner
         ==================================================== -->
   <button class="netra-orb"
           ng-mousedown="c.dragStart($event)"
           ng-click="c.tap()"
-          aria-label="Netra is {{c.stateLabel}}. Drag to move, double-click to shrink, single-click to sleep/wake."
+          aria-label="Netra is {{c.stateLabel}}. Drag to move, double-click to shrink."
           title="Drag to reposition - double-click to shrink - single-click to sleep or wake">
-    <svg class="netra-eye-svg" viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <svg class="netra-eye-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>
-        <!-- Backlit halo (largest, behind everything) -->
-        <radialGradient id="netra-backlight" cx="50%" cy="50%" r="50%">
-          <stop offset="0%"   stop-color="var(--eye-glow, rgba(127,200,255,0.55))"/>
-          <stop offset="40%"  stop-color="var(--eye-glow, rgba(127,200,255,0.18))"/>
-          <stop offset="100%" stop-color="rgba(127,200,255,0)"/>
+        <!-- Iris radial gradient (light to dark, edge-darkening) -->
+        <radialGradient id="netra-iris-grad" cx="40%" cy="38%" r="60%">
+          <stop offset="0%"   stop-color="var(--iris-bright, #7fffb0)"/>
+          <stop offset="55%"  stop-color="var(--iris-mid, #2eb858)"/>
+          <stop offset="100%" stop-color="var(--iris-deep, #021a0d)"/>
         </radialGradient>
 
-        <!-- Sclera warm gradient (Apple-like soft white -> cream) -->
-        <radialGradient id="netra-sclera-grad" cx="50%" cy="45%" r="60%">
-          <stop offset="0%"   stop-color="#ffffff"/>
-          <stop offset="65%"  stop-color="#f7f4ef"/>
-          <stop offset="100%" stop-color="#eae3d6"/>
-        </radialGradient>
-
-        <!-- Iris layered gradient -->
-        <radialGradient id="netra-iris-grad" cx="42%" cy="40%" r="60%">
-          <stop offset="0%"   stop-color="var(--iris-bright, #aedcff)"/>
-          <stop offset="35%"  stop-color="var(--iris-mid, #5292d0)"/>
-          <stop offset="75%"  stop-color="var(--iris-dark, #1f4f80)"/>
-          <stop offset="100%" stop-color="var(--iris-deep, #0a2a4a)"/>
-        </radialGradient>
-
-        <!-- Iris ring darker outer (limbal ring) -->
-        <radialGradient id="netra-iris-limbal" cx="50%" cy="50%" r="50%">
-          <stop offset="80%"  stop-color="rgba(0,0,0,0)"/>
-          <stop offset="92%"  stop-color="rgba(0,20,40,0.35)"/>
-          <stop offset="100%" stop-color="rgba(0,20,40,0.65)"/>
-        </radialGradient>
-
-        <!-- Pupil pure dark with subtle inner glow -->
+        <!-- Pupil deep core -->
         <radialGradient id="netra-pupil-grad" cx="50%" cy="50%" r="55%">
-          <stop offset="0%"   stop-color="#1a1a26"/>
-          <stop offset="60%"  stop-color="#080812"/>
+          <stop offset="0%"   stop-color="#0a0f12"/>
           <stop offset="100%" stop-color="#000000"/>
         </radialGradient>
 
-        <!-- Soft skin-tone eyelid gradient -->
-        <linearGradient id="netra-lid-grad" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stop-color="#f3d9c0"/>
-          <stop offset="55%"  stop-color="#e6c2a3"/>
-          <stop offset="100%" stop-color="#cda081"/>
-        </linearGradient>
-
-        <clipPath id="netra-eye-clip">
-          <path d="M 16 65 Q 100 5 184 65 Q 100 125 16 65 Z"/>
-        </clipPath>
-
-        <!-- Drop shadow filter for the eyeball -->
-        <filter id="netra-eye-shadow" x="-25%" y="-25%" width="150%" height="150%">
-          <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
-          <feOffset dx="0" dy="5"/>
-          <feComponentTransfer><feFuncA type="linear" slope="0.3"/></feComponentTransfer>
-          <feMerge>
-            <feMergeNode/>
-            <feMergeNode in="SourceGraphic"/>
-          </feMerge>
-        </filter>
+        <!-- Outer halo (pulses) -->
+        <radialGradient id="netra-halo-grad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stop-color="var(--eye-glow, rgba(127,255,176,0.55))"/>
+          <stop offset="55%"  stop-color="var(--eye-glow, rgba(127,255,176,0.18))"/>
+          <stop offset="100%" stop-color="rgba(127,255,176,0)"/>
+        </radialGradient>
       </defs>
 
-      <!-- Backlit halo - large soft glow BEHIND the eye -->
-      <ellipse class="netra-eye-backlight" cx="100" cy="65" rx="95" ry="55"
-               fill="url(#netra-backlight)"/>
+      <!-- Soft pulsing halo (Claude-style glow) -->
+      <circle class="netra-eye-halo" cx="50" cy="50" r="48" fill="url(#netra-halo-grad)"/>
 
-      <!-- Sclera (the white) -->
-      <path class="netra-eye-sclera"
-            d="M 16 65 Q 100 5 184 65 Q 100 125 16 65 Z"
-            fill="url(#netra-sclera-grad)"
-            filter="url(#netra-eye-shadow)"/>
+      <!-- Iris -->
+      <circle class="netra-eye-iris" cx="50" cy="50" r="28" fill="url(#netra-iris-grad)"/>
 
-      <!-- Iris + pupil clipped to eye shape -->
-      <g clip-path="url(#netra-eye-clip)">
-        <g class="netra-eye-iris-group">
-          <!-- Main iris -->
-          <circle class="netra-eye-iris" cx="100" cy="65" r="34" fill="url(#netra-iris-grad)"/>
+      <!-- Pupil -->
+      <circle class="netra-eye-pupil" cx="50" cy="50" r="10" fill="url(#netra-pupil-grad)"/>
 
-          <!-- Realistic iris striations (radial detail) -->
-          <g class="netra-eye-striations" opacity="0.45">
-            <line x1="100" y1="38" x2="100" y2="48" stroke="rgba(255,255,255,0.5)" stroke-width="0.5"/>
-            <line x1="100" y1="82" x2="100" y2="92" stroke="rgba(0,30,60,0.5)"   stroke-width="0.5"/>
-            <line x1="74"  y1="65" x2="84"  y2="65" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/>
-            <line x1="116" y1="65" x2="126" y2="65" stroke="rgba(0,30,60,0.4)"     stroke-width="0.5"/>
-            <line x1="80"  y1="45" x2="88"  y2="52" stroke="rgba(255,255,255,0.35)" stroke-width="0.4"/>
-            <line x1="120" y1="45" x2="112" y2="52" stroke="rgba(0,30,60,0.35)"     stroke-width="0.4"/>
-            <line x1="80"  y1="85" x2="88"  y2="78" stroke="rgba(255,255,255,0.35)" stroke-width="0.4"/>
-            <line x1="120" y1="85" x2="112" y2="78" stroke="rgba(0,30,60,0.35)"     stroke-width="0.4"/>
-            <line x1="90"  y1="40" x2="92"  y2="48" stroke="rgba(255,255,255,0.3)" stroke-width="0.4"/>
-            <line x1="110" y1="40" x2="108" y2="48" stroke="rgba(0,30,60,0.3)"     stroke-width="0.4"/>
-          </g>
+      <!-- Single subtle catchlight -->
+      <circle class="netra-eye-glint" cx="44" cy="44" r="2.6" fill="rgba(255,255,255,0.9)"/>
 
-          <!-- Limbal ring (darker outer iris edge - makes eye look healthier) -->
-          <circle class="netra-eye-iris-limbal" cx="100" cy="65" r="34" fill="url(#netra-iris-limbal)"/>
-        </g>
+      <!-- Iris outline (subtle) -->
+      <circle class="netra-eye-outline" cx="50" cy="50" r="28" fill="none"
+              stroke="var(--iris-bright, #7fffb0)" stroke-width="0.6" opacity="0.5"/>
 
-        <!-- Pupil (slightly responsive to state via transform) -->
-        <circle class="netra-eye-pupil" cx="100" cy="65" r="14" fill="url(#netra-pupil-grad)"/>
-
-        <!-- Primary catchlight (upper-left) -->
-        <ellipse class="netra-eye-glint" cx="88" cy="54" rx="6" ry="4.5" fill="rgba(255,255,255,0.95)"/>
-
-        <!-- Secondary smaller catchlight (lower-right) -->
-        <ellipse class="netra-eye-glint-small" cx="108" cy="74" rx="2.4" ry="1.8" fill="rgba(255,255,255,0.65)"/>
-
-        <!-- Upper eyelid (closes when dormant + blinks naturally) -->
-        <path class="netra-eye-lid-top"
-              d="M -20 65 Q 100 5 220 65 L 220 -240 L -20 -240 Z"
-              fill="url(#netra-lid-grad)"
-              stroke="rgba(80,55,32,0.35)"
-              stroke-width="0.8"/>
-
-        <!-- Lower eyelid -->
-        <path class="netra-eye-lid-bottom"
-              d="M -20 65 Q 100 125 220 65 L 220 320 L -20 320 Z"
-              fill="url(#netra-lid-grad)"
-              stroke="rgba(80,55,32,0.35)"
-              stroke-width="0.8"/>
-      </g>
-
-      <!-- Soft outer outline -->
-      <path class="netra-eye-outline"
-            d="M 16 65 Q 100 5 184 65 Q 100 125 16 65 Z"
-            fill="none"
-            stroke="rgba(70,50,30,0.45)"
-            stroke-width="1.2"
-            stroke-linejoin="round"/>
-
-      <!-- Top eyelashes (natural, subtle) -->
-      <g class="netra-eye-lashes-top" opacity="0.7">
-        <line x1="46"  y1="22" x2="44"  y2="12" stroke="#3a2a18" stroke-width="1.3" stroke-linecap="round"/>
-        <line x1="64"  y1="14" x2="63"  y2="4"  stroke="#3a2a18" stroke-width="1.3" stroke-linecap="round"/>
-        <line x1="82"  y1="9"  x2="82"  y2="-2" stroke="#3a2a18" stroke-width="1.3" stroke-linecap="round"/>
-        <line x1="100" y1="7"  x2="100" y2="-4" stroke="#3a2a18" stroke-width="1.3" stroke-linecap="round"/>
-        <line x1="118" y1="9"  x2="118" y2="-2" stroke="#3a2a18" stroke-width="1.3" stroke-linecap="round"/>
-        <line x1="136" y1="14" x2="137" y2="4"  stroke="#3a2a18" stroke-width="1.3" stroke-linecap="round"/>
-        <line x1="154" y1="22" x2="156" y2="12" stroke="#3a2a18" stroke-width="1.3" stroke-linecap="round"/>
-      </g>
-
-      <!-- Bottom eyelashes (subtle) -->
-      <g class="netra-eye-lashes-bot" opacity="0.55">
-        <line x1="64"  y1="116" x2="63"  y2="124" stroke="#3a2a18" stroke-width="1.0" stroke-linecap="round"/>
-        <line x1="82"  y1="121" x2="82"  y2="129" stroke="#3a2a18" stroke-width="1.0" stroke-linecap="round"/>
-        <line x1="100" y1="123" x2="100" y2="131" stroke="#3a2a18" stroke-width="1.0" stroke-linecap="round"/>
-        <line x1="118" y1="121" x2="118" y2="129" stroke="#3a2a18" stroke-width="1.0" stroke-linecap="round"/>
-        <line x1="136" y1="116" x2="137" y2="124" stroke="#3a2a18" stroke-width="1.0" stroke-linecap="round"/>
-      </g>
+      <!-- Eyelid (only used in dormant state - covers iris when closed) -->
+      <circle class="netra-eye-lid-top" cx="50" cy="50" r="28" fill="#0a1a14" opacity="0"/>
     </svg>
   </button>
 

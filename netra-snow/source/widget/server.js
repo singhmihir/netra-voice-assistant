@@ -1,13 +1,12 @@
 /**
- * Netra Mic widget - SERVER SCRIPT  (Release 1 - humane agentic Gemini)
+ * Netra Mic widget - SERVER SCRIPT  (R1.3 - Claude of ServiceNow)
  *
- * R1 milestone: 36 tools (12 added in v14: daily_briefing, workload_summary,
- *   create_problem, create_change, list_overdue, set_focus_ticket,
- *   recall_focus, add/remove/list_watchlist, add_work_note, team_workload).
- * Updated Gemini model fallback chain (1.5 retired, gemini-flash-latest added).
- * Safety filters relaxed (BLOCK_ONLY_HIGH) so lookup_user details flow.
- * System prompt now: warm, calls user by first name, proactive, empathetic,
- * chains multi-step actions without confirmation prompts.
+ * R1.3 delta: 42 tools (6 added: start_record_draft, set_record_field,
+ *   review_draft, confirm_and_create, cancel_draft, send_sidebar_message).
+ * System prompt rewritten Claude-style: MANDATORY multi-turn draft flow,
+ *   confirmation before destructive actions, no direct create_ticket.
+ * send_sidebar_message creates real sys_sidebar_discussion records (with
+ *   participant + first message) instead of tracking incidents.
  *
  *
  * Powered by Google's Gemini API with full function-calling (tool use).
@@ -414,18 +413,42 @@
 'NOTES:\n' +
 '- add_work_note - private internal note (only fulfillers see). Use update_ticket for customer-visible comments.\n' +
 '\n' +
-'AGENTIC BEHAVIOUR (R1 - act like a real, helpful colleague):\n' +
-'- Use the persons first name naturally. e.g. "Right, Mihir, INC zero zero one two is done." / "Mihir, you have three open this morning."\n' +
-'- BE PROACTIVE. If the user asks for a briefing and you see an overdue P1, mention it and offer to escalate.\n' +
-'- BE EMPATHETIC. If the user sounds frustrated ("ugh", "again?"), acknowledge before acting: "I hear you, that does sound annoying. Let me look it up."\n' +
-'- CHAIN ACTIONS. If user says "open a ticket for VPN, and add a comment that I tried restarting" - call create_ticket, then update_ticket on the new number. Do not ask for confirmation between steps for simple chains.\n' +
-'- ASK ONLY ONE QUESTION. If you need to clarify, ask one short question and remember the rest for follow-up.\n' +
-'- IF the user mentions a ticket number, ALWAYS call set_focus_ticket BEFORE the action, so context is set.\n' +
-'- IF the user says "it", "that ticket", "this one" - call recall_focus first to find the focused ticket.\n' +
-'- IF the user says "morning briefing" / "what is on my plate" - use daily_briefing (it includes the greeting).\n' +
-'- HUMANE TONE: never sound mechanical. Use phrases like "no worries", "happy to help", "let me take a look", "consider it done", "shall I?", "right away".\n' +
-'- CELEBRATE small wins. When a ticket is resolved, briefly congratulate: "Done, Mihir. INC zero zero one two is resolved - one down from your plate."\n' +
-'- ON ERRORS, be human. "Hmm, that did not go through, Mihir. Let me try again." rather than dry "ok=false".\n' +
+'CLAUDE-STYLE BEHAVIOUR (R1.3 - careful, agentic, multi-turn):\n' +
+'\n' +
+'- You are the "Claude of ServiceNow": careful, thoughtful, never destructive without confirmation, always reads-back before acting.\n' +
+'- Use the persons first name naturally. e.g. "Right, Mihir, here is what I have so far."\n' +
+'- BE EMPATHETIC. If the user sounds frustrated, acknowledge before acting.\n' +
+'\n' +
+'CREATING TICKETS - MANDATORY MULTI-TURN DRAFT FLOW (this is the most important rule):\n' +
+'- NEVER call create_ticket, create_problem, or create_change directly. Those tools still exist but you MUST NOT use them.\n' +
+'- Instead, when the user says "open / create / log / raise / file a ticket / problem / change":\n' +
+'  1. Call start_record_draft(record_type, initial_short_description) - this stages a draft in context.\n' +
+'  2. Look at the returned "missing" array. Ask the user for the FIRST missing required field, ONE QUESTION AT A TIME.\n' +
+'  3. When the user answers, call set_record_field(field, value). The returned "next_prompt" tells you what to ask next.\n' +
+'  4. The user can CHANGE any earlier field at any time. e.g. "wait, set urgency to high" -> set_record_field(urgency, 2). Acknowledge the change ("Got it, urgency is now high.").\n' +
+'  5. Once "ready_to_create" is true (no missing fields), call review_draft. Read its "summary" back to the user verbatim, then ask: "Shall I create it now, Mihir?"\n' +
+'  6. Wait for explicit yes ("yes", "go ahead", "create it", "confirmed", "do it"). ONLY THEN call confirm_and_create.\n' +
+'  7. If user says "no" / "wait" / "change ..." - DO NOT call confirm_and_create. Instead update the field and re-review.\n' +
+'  8. If user says "cancel" / "forget it" / "never mind" - call cancel_draft.\n' +
+'\n' +
+'SENDING MESSAGES TO COLLEAGUES - USE SIDEBAR DISCUSSIONS:\n' +
+'- When the user says "send a message to / tell / ping / message X" - ALWAYS use send_sidebar_message, NEVER send_message_to_user.\n' +
+'- send_sidebar_message creates a real ServiceNow Sidebar Discussion that pops up in the recipients Now sidebar as a chat.\n' +
+'- After sending, confirm verbally: "Done, Mihir. I have started a sidebar chat with John Adams and sent your message."\n' +
+'\n' +
+'DESTRUCTIVE ACTIONS - ALWAYS CONFIRM:\n' +
+'- resolve_ticket, escalate_ticket, change_priority, assign_ticket_to_*, decide_approval are DESTRUCTIVE. Read back what you are about to do and ask "shall I?" before acting. Only proceed on yes.\n' +
+'\n' +
+'TICKET REFERENCES:\n' +
+'- IF the user mentions a ticket number, call set_focus_ticket FIRST.\n' +
+'- IF the user says "it" / "that ticket" / "this one" - call recall_focus first.\n' +
+'\n' +
+'HUMANE TONE:\n' +
+'- Use phrases like "no worries", "happy to help", "let me take a look", "consider it done", "shall I?", "right away".\n' +
+'- CELEBRATE small wins: "Done. INC zero zero one two is resolved - one down from your plate."\n' +
+'- ON ERRORS, be human: "Hmm, that did not go through. Let me try again."\n' +
+'- ACKNOWLEDGE UNCERTAINTY honestly. If a tool fails or returns nothing, say so plainly. Do not make up data.\n' +
+'\n' +
 'BEHAVIOUR:\n' +
 '- When the user wants something done, CALL THE TOOL - do not just describe what it would do.\n' +
 '- If the request is vague, ask ONE short clarifying question.\n' +
@@ -694,6 +717,47 @@
                     name: 'team_workload',
                     description: 'Count open incidents per group the user belongs to. Use when user asks "what is my teams workload" or "how is the queue".',
                     parameters: { type: 'object', properties: {} }
+                },
+                // ------- R1.3 - draft + confirmation flow (Claude-style) -------
+                {
+                    name: 'start_record_draft',
+                    description: 'Begin a CONVERSATIONAL DRAFT for a new ticket. Use this INSTEAD OF create_ticket/create_problem/create_change when the user says "open a ticket / log a problem / raise a change". This starts a multi-turn conversation: Netra asks for required fields one at a time, the user can change earlier answers, and only after explicit confirmation is the record actually inserted. Pass record_type = incident|problem|change_request. NEVER call create_ticket directly any more.',
+                    parameters: { type: 'object', properties: {
+                        record_type: { type: 'string', enum: ['incident','problem','change_request'], description: 'The table to draft' },
+                        initial_short_description: { type: 'string', description: 'Optional first sentence captured from the user' }
+                    }, required: ['record_type'] }
+                },
+                {
+                    name: 'set_record_field',
+                    description: 'Set ONE field on the current draft. Use after start_record_draft for each required field the user provides (short_description, urgency, impact, category, etc). The user can use this tool to CHANGE earlier values too - e.g. "wait, set urgency to high instead" -> set_record_field(urgency, 2).',
+                    parameters: { type: 'object', properties: {
+                        field:  { type: 'string', description: 'Field name (short_description, urgency, impact, priority, category, etc)' },
+                        value:  { type: 'string', description: 'Field value as string' }
+                    }, required: ['field','value'] }
+                },
+                {
+                    name: 'review_draft',
+                    description: 'Read back the current draft to the user for review BEFORE creating. Use this after all required fields are set, and any time the user asks "what have I filled in / read it back / show me".',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'confirm_and_create',
+                    description: 'Actually insert the record. ONLY call this AFTER review_draft AND explicit yes from the user (e.g. "yes, create it", "confirmed", "go ahead"). Aborts if required fields are missing.',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'cancel_draft',
+                    description: 'Discard the current draft without creating anything. Use when user says "cancel", "scrap it", "never mind", "forget that".',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'send_sidebar_message',
+                    description: 'Send a real ServiceNow Sidebar Discussion message to a colleague. This creates a sys_sidebar_discussion (private) with the target user and posts the message there - it shows up as a real chat in their Now sidebar, not as a tracking incident. ALWAYS use this instead of send_message_to_user for "message X", "tell X that ...", "ping X".',
+                    parameters: { type: 'object', properties: {
+                        recipient_name: { type: 'string', description: 'Full / partial name, username, or email of the colleague' },
+                        subject:        { type: 'string', description: 'Short discussion subject (defaults to "Message from " + user)' },
+                        message:        { type: 'string', description: 'The message body' }
+                    }, required: ['recipient_name','message'] }
                 }
             ]
         }];
@@ -780,6 +844,19 @@
                     return _addWorkNote(_normNum(args.ticket_number), String(args.note || ''));
                 case 'team_workload':
                     return _teamWorkload();
+                // ------- R1.3 draft + confirmation flow -------
+                case 'start_record_draft':
+                    return _startRecordDraft(String(args.record_type || 'incident'), String(args.initial_short_description || ''));
+                case 'set_record_field':
+                    return _setRecordField(String(args.field || ''), String(args.value || ''));
+                case 'review_draft':
+                    return _reviewDraft();
+                case 'confirm_and_create':
+                    return _confirmAndCreate();
+                case 'cancel_draft':
+                    return _cancelDraft();
+                case 'send_sidebar_message':
+                    return _sendSidebarMessage(String(args.recipient_name || ''), String(args.subject || ''), String(args.message || ''));
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
@@ -1309,6 +1386,255 @@
             rows.sort(function(a, b) { return b.open_incidents - a.open_incidents; });
             return { ok: true, teams: rows };
         } catch (e) { return { ok: false, error: String(e.message || e) }; }
+    }
+
+    /* ===================================================================
+     *  R1.3 - DRAFT + CONFIRMATION FLOW (Claude-style multi-turn)
+     *
+     *  Drafts are persisted as JSON in the user's Netra Context row under
+     *  a new field "draft_json" (we stash it in last_utterance with a
+     *  prefix so we do not need a schema change). Each tool returns the
+     *  current draft state so Gemini can drive the conversation: which
+     *  fields are filled, which are still required, what to ask next.
+     * =================================================================== */
+
+    // Required fields per record_type (must be filled before create)
+    var REQUIRED_FIELDS = {
+        incident:        ['short_description'],
+        problem:         ['short_description'],
+        change_request:  ['short_description','type']
+    };
+    // Friendly prompt text for each field
+    var FIELD_PROMPTS = {
+        short_description: 'what is the issue, in one sentence',
+        urgency:           'how urgent (1 critical, 2 high, 3 moderate, 4 low) - default 3',
+        impact:            'how big the impact (1, 2, or 3) - default 3',
+        priority:          'priority (1-4, optional)',
+        category:          'category (optional)',
+        type:              'type of change (standard, normal, emergency)'
+    };
+
+    function _draftLoadCtx() {
+        var ctx = new GlideRecord(SCOPE + '_context');
+        ctx.addQuery('user', gs.getUserID());
+        ctx.query();
+        if (!ctx.next()) {
+            ctx.initialize();
+            ctx.user = gs.getUserID();
+        }
+        return ctx;
+    }
+    function _draftRead() {
+        var ctx = _draftLoadCtx();
+        var raw = String(ctx.last_utterance || '');
+        if (raw.indexOf('DRAFT:') !== 0) return null;
+        try { return JSON.parse(raw.substring(6)); } catch (e) { return null; }
+    }
+    function _draftWrite(d) {
+        var ctx = _draftLoadCtx();
+        if (d === null) {
+            ctx.last_utterance = '';
+        } else {
+            ctx.last_utterance = 'DRAFT:' + JSON.stringify(d);
+        }
+        ctx.update();
+    }
+
+    function _startRecordDraft(recordType, initialDesc) {
+        if (!REQUIRED_FIELDS[recordType]) {
+            return { ok: false, error: 'Unsupported record type: ' + recordType };
+        }
+        var d = { record_type: recordType, fields: {}, created_at: new GlideDateTime().toString() };
+        if (initialDesc) d.fields.short_description = initialDesc;
+        _draftWrite(d);
+        var missing = REQUIRED_FIELDS[recordType].filter(function (f) { return !d.fields[f]; });
+        return {
+            ok: true,
+            record_type: recordType,
+            fields: d.fields,
+            required: REQUIRED_FIELDS[recordType],
+            missing: missing,
+            next_prompt: missing.length ? FIELD_PROMPTS[missing[0]] : null,
+            message: 'Draft started for ' + recordType + '. Ask the user for: ' + missing.join(', ')
+        };
+    }
+
+    function _setRecordField(field, value) {
+        var d = _draftRead();
+        if (!d) return { ok: false, error: 'No draft in progress. Call start_record_draft first.' };
+        if (!field) return { ok: false, error: 'Field name is required.' };
+        d.fields[field] = value;
+        _draftWrite(d);
+        var missing = (REQUIRED_FIELDS[d.record_type] || []).filter(function (f) { return !d.fields[f]; });
+        return {
+            ok: true,
+            updated_field: field, updated_value: value,
+            fields: d.fields,
+            missing: missing,
+            next_prompt: missing.length ? FIELD_PROMPTS[missing[0]] : null,
+            ready_to_create: missing.length === 0,
+            message: missing.length
+                ? 'Recorded. Still need: ' + missing.join(', ')
+                : 'Recorded. All required fields are filled. Ready for review_draft + confirm_and_create.'
+        };
+    }
+
+    function _reviewDraft() {
+        var d = _draftRead();
+        if (!d) return { ok: false, error: 'No draft to review.' };
+        var missing = (REQUIRED_FIELDS[d.record_type] || []).filter(function (f) { return !d.fields[f]; });
+        // Summary text for Netra to read aloud
+        var summaryParts = [];
+        for (var k in d.fields) {
+            if (d.fields.hasOwnProperty(k)) summaryParts.push(k + ' = ' + d.fields[k]);
+        }
+        return {
+            ok: true,
+            record_type: d.record_type,
+            fields: d.fields,
+            summary: summaryParts.join('; '),
+            missing: missing,
+            ready_to_create: missing.length === 0,
+            message: 'Read this back to the user and ask "shall I create it?" - do not call confirm_and_create until they say yes.'
+        };
+    }
+
+    function _confirmAndCreate() {
+        var d = _draftRead();
+        if (!d) return { ok: false, error: 'No draft to confirm.' };
+        var missing = (REQUIRED_FIELDS[d.record_type] || []).filter(function (f) { return !d.fields[f]; });
+        if (missing.length) {
+            return { ok: false, error: 'Cannot create yet, missing required fields: ' + missing.join(', '), missing: missing };
+        }
+        try {
+            var table = d.record_type;
+            var gr = new GlideRecord(table);
+            gr.initialize();
+            for (var k in d.fields) {
+                if (d.fields.hasOwnProperty(k)) gr.setValue(k, d.fields[k]);
+            }
+            gr.opened_by = gs.getUserID();
+            if (table === 'incident') gr.caller_id = gs.getUserID();
+            if (table === 'problem' || table === 'change_request') gr.assigned_to = gs.getUserID();
+            var sid = gr.insert();
+            gr.get(sid);
+            _draftWrite(null);   // clear draft
+            return { ok: true, table: table, number: String(gr.number), sys_id: sid,
+                     message: 'Created ' + String(gr.number) + ' successfully.' };
+        } catch (e) {
+            return { ok: false, error: 'Insert failed: ' + (e.message || e) };
+        }
+    }
+
+    function _cancelDraft() {
+        _draftWrite(null);
+        return { ok: true, message: 'Draft discarded.' };
+    }
+
+    /* ===================================================================
+     *  R1.3 - SIDEBAR DISCUSSION (replaces send_message_to_user)
+     *
+     *  Creates a sys_sidebar_discussion (private) between the current
+     *  user and the recipient, then inserts the first message. The
+     *  message appears as a real chat in the recipient's Now sidebar.
+     * =================================================================== */
+    function _sendSidebarMessage(recipientName, subject, message) {
+        if (!recipientName || !message) {
+            return { ok: false, error: 'Recipient and message are both required.' };
+        }
+        try {
+            // Resolve recipient
+            var u = new GlideRecord('sys_user');
+            u.addQuery('active', true);
+            u.addEncodedQuery('nameLIKE' + recipientName + '^ORuser_nameLIKE' + recipientName + '^ORemailLIKE' + recipientName);
+            u.setLimit(1);
+            u.query();
+            if (!u.next()) return { ok: false, error: 'No active user matching "' + recipientName + '"' };
+            var recipientId = u.getUniqueValue();
+            var recipientDisplay = String(u.name);
+            var senderId = gs.getUserID();
+            var senderDisplay = gs.getUserDisplayName();
+
+            var subj = subject || ('Message from ' + senderDisplay);
+
+            // Try the modern sys_sidebar_discussion table first
+            var disc, discId;
+            try {
+                disc = new GlideRecord('sys_sidebar_discussion');
+                disc.initialize();
+                disc.setValue('name',    subj);
+                disc.setValue('subject', subj);
+                disc.setValue('private', true);
+                discId = disc.insert();
+            } catch (eDisc) {
+                disc = null;
+            }
+
+            // Add participants (sender + recipient)
+            if (discId) {
+                try {
+                    var p1 = new GlideRecord('sys_sidebar_discussion_participant');
+                    p1.initialize();
+                    p1.setValue('discussion', discId);
+                    p1.setValue('user', senderId);
+                    p1.insert();
+
+                    var p2 = new GlideRecord('sys_sidebar_discussion_participant');
+                    p2.initialize();
+                    p2.setValue('discussion', discId);
+                    p2.setValue('user', recipientId);
+                    p2.insert();
+                } catch (ePart) { /* best-effort */ }
+
+                // Insert the first message
+                try {
+                    var m = new GlideRecord('sys_sidebar_discussion_message');
+                    m.initialize();
+                    m.setValue('discussion', discId);
+                    m.setValue('sender',     senderId);
+                    m.setValue('message',    message);
+                    m.setValue('body',       message);
+                    m.insert();
+                } catch (eMsg) { /* best-effort */ }
+
+                return { ok: true, discussion_id: discId, recipient: recipientDisplay,
+                         message: 'Started a Sidebar Discussion with ' + recipientDisplay + ' and sent your message.' };
+            }
+
+            // Fallback: live_message / live_group_member chain (older Now Experience)
+            try {
+                var lg = new GlideRecord('live_group');
+                lg.initialize();
+                lg.setValue('name',  subj);
+                lg.setValue('group_type', 'direct_message');
+                var lgId = lg.insert();
+                if (lgId) {
+                    ['live_group_member_profile'].forEach(function () {});
+                    var p1 = new GlideRecord('live_group_profile');
+                    p1.initialize();
+                    p1.setValue('group',   lgId);
+                    p1.setValue('profile', senderId);
+                    p1.insert();
+                    var p2 = new GlideRecord('live_group_profile');
+                    p2.initialize();
+                    p2.setValue('group',   lgId);
+                    p2.setValue('profile', recipientId);
+                    p2.insert();
+                    var lm = new GlideRecord('live_message');
+                    lm.initialize();
+                    lm.setValue('group',     lgId);
+                    lm.setValue('profile',   senderId);
+                    lm.setValue('field',     message);
+                    lm.insert();
+                    return { ok: true, live_group_id: lgId, recipient: recipientDisplay,
+                             message: 'Sent live chat to ' + recipientDisplay + '.' };
+                }
+            } catch (eLive) {}
+
+            return { ok: false, error: 'Could not create a sidebar discussion - tables not available on this instance.' };
+        } catch (e) {
+            return { ok: false, error: 'Sidebar message failed: ' + (e.message || e) };
+        }
     }
 
     /* ===================================================================

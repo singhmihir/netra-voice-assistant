@@ -1,10 +1,10 @@
 /**
- * Netra Mic widget - CLIENT CONTROLLER (Release 1 - Apple-serene eye, draggable, agentic)
+ * Netra Mic widget - CLIENT CONTROLLER (R1.3 - Claude of ServiceNow)
  *
- * R1 milestone: state-machine reset bug fixed (speak() always restores idle),
- *   watchdog + visibility-recovery for the mic, draggable+shrinkable eye,
- *   real-time dev panel graphs, humane Indian-English persona that calls the
- *   user by their first name.
+ * R1.3 delta: removed aggressive silent-rec heartbeat that caused
+ *   Chrome's mic indicator to blink. Added draggable dev console.
+ *   Simpler Claude-style icon (default top-left, 64px). Multi-turn
+ *   record-draft confirmation flow on the server side.
  *
  * Architecture:
  *   ONE continuous speech-recognition session that NEVER stops. The
@@ -448,6 +448,7 @@ api.controller = function ($scope, $timeout, $window) {
         $timeout(populateVoices, 400);
         $timeout(populateVoices, 1500);
         $timeout(tryBoot, 600);
+        $timeout(startMicLevelMeter, 1000);   // R1.2 - mic-level live VU
     };
 
     c.$onDestroy = function () {
@@ -482,6 +483,122 @@ api.controller = function ($scope, $timeout, $window) {
         }
     }
 
+    /* ============================================================
+     *  R1.2 - LIVE MIC LEVEL METER + TEST MIC RECORDER
+     *
+     *  Uses getUserMedia + Web Audio API to compute a real-time
+     *  RMS level (0-100) shown in the dev panel. This DEFINITIVELY
+     *  tells the user if audio is reaching the browser.
+     *
+     *  Separate from SpeechRecognition - so even if SpeechRec is
+     *  silently dead, the level meter still works.
+     * ============================================================ */
+    c.micLevel = 0;         // 0-100, smoothed
+    c.micLevelPeak = 0;     // session peak
+    c.micStreamActive = false;
+    var _micStream = null;
+    var _micAnalyser = null;
+    var _micCtx = null;
+    var _micRafId = null;
+
+    function startMicLevelMeter() {
+        if (_micStream) return;   // already running
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            logEvent('warn', 'mic-meter: getUserMedia not supported');
+            return;
+        }
+        navigator.mediaDevices.getUserMedia({ audio: {
+            echoCancellation: true, noiseSuppression: true, autoGainControl: true
+        } }).then(function (stream) {
+            _micStream = stream;
+            c.micStreamActive = true;
+            $scope.$applyAsync();
+            _micCtx = new (window.AudioContext || window.webkitAudioContext)();
+            var source = _micCtx.createMediaStreamSource(stream);
+            _micAnalyser = _micCtx.createAnalyser();
+            _micAnalyser.fftSize = 1024;
+            _micAnalyser.smoothingTimeConstant = 0.5;
+            source.connect(_micAnalyser);
+            var data = new Uint8Array(_micAnalyser.frequencyBinCount);
+
+            var loop = function () {
+                _micAnalyser.getByteTimeDomainData(data);
+                // RMS over the waveform
+                var sum = 0;
+                for (var i = 0; i < data.length; i++) {
+                    var v = (data[i] - 128) / 128;
+                    sum += v * v;
+                }
+                var rms = Math.sqrt(sum / data.length);
+                var level = Math.min(100, Math.round(rms * 300));   // scale up
+                c.micLevel = level;
+                if (level > c.micLevelPeak) c.micLevelPeak = level;
+                $scope.$applyAsync();
+                _micRafId = requestAnimationFrame(loop);
+            };
+            loop();
+            logEvent('mic', 'live level meter started (audio is flowing)');
+        }, function (err) {
+            logEvent('err', 'mic-meter getUserMedia failed: ' + (err && err.name) + ' ' + (err && err.message));
+            c.micStreamActive = false;
+            $scope.$applyAsync();
+        });
+    }
+
+    function stopMicLevelMeter() {
+        if (_micRafId) cancelAnimationFrame(_micRafId);
+        if (_micStream) _micStream.getTracks().forEach(function (t) { t.stop(); });
+        if (_micCtx) try { _micCtx.close(); } catch (e) {}
+        _micStream = null;
+        _micCtx = null;
+        _micAnalyser = null;
+        c.micStreamActive = false;
+    }
+
+    // Test Mic: records 3 sec via MediaRecorder, plays it back via <audio>.
+    // This proves to the user beyond any doubt that the mic is reaching the
+    // browser. If they can hear themselves, the mic works. The problem (if
+    // any) is then in SpeechRecognition transcription, not audio capture.
+    c.micRecording = false;
+    c.micTestResult = '';
+    c.devTestMic = function () {
+        if (c.micRecording) return;
+        if (!_micStream) {
+            c.micTestResult = 'level meter not running - check mic permission';
+            return;
+        }
+        try {
+            var rec = new MediaRecorder(_micStream);
+            var chunks = [];
+            rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+            rec.onstop = function () {
+                var blob = new Blob(chunks, { type: 'audio/webm' });
+                var url = URL.createObjectURL(blob);
+                var a = new Audio(url);
+                a.onended = function () {
+                    URL.revokeObjectURL(url);
+                    c.micRecording = false;
+                    c.micTestResult = 'playback finished (heard yourself? mic is working)';
+                    $scope.$applyAsync();
+                };
+                a.play();
+                c.micTestResult = 'playing back... (peak level was ' + c.micLevelPeak + ')';
+                $scope.$applyAsync();
+            };
+            c.micRecording = true;
+            c.micLevelPeak = 0;
+            c.micTestResult = 'recording for 3 seconds - speak now...';
+            $scope.$applyAsync();
+            rec.start();
+            logEvent('mic', 'test-mic: recording 3s');
+            $timeout(function () { rec.stop(); }, 3000);
+        } catch (e) {
+            c.micTestResult = 'recorder failed: ' + e.message;
+            c.micRecording = false;
+            $scope.$applyAsync();
+        }
+    };
+
     c.tap = function () {
         if (!booted) { tryBoot(true); return; }
         // If the user just finished dragging, swallow the click.
@@ -495,6 +612,15 @@ api.controller = function ($scope, $timeout, $window) {
             c.alert = true;
             setState('idle');
             cue('resume');
+            // R1.1 - ALSO force a recognition restart on wake, in case mic
+            // silently died while sleeping. Clears any stale TTS guard too.
+            ignoreFinalsUntil = Date.now();
+            if (!c.recRunning || (Date.now() - recLastActivityAt) > 15000) {
+                logEvent('rec', 'wake: forcing recognition restart');
+                recRestartCount = 0;
+                try { if (contRec) contRec.stop(); } catch (e) {}
+                $timeout(startContinuous, 150);
+            }
             speak('Yes, I am back.');
         }
     };
@@ -634,6 +760,71 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     /* ============================================================
+     *  R1.3 - DRAGGABLE DEV CONSOLE
+     *  Drag the header bar to reposition. Persists in localStorage.
+     * ============================================================ */
+    var devDrag = null;
+
+    try {
+        var devSaved = JSON.parse(localStorage.getItem('netra.dev.pos') || 'null');
+        if (devSaved && typeof devSaved.x === 'number') {
+            $timeout(function () {
+                var devEl = document.querySelector('.netra-dev');
+                if (devEl) {
+                    devEl.style.left = devSaved.x + 'px';
+                    devEl.style.top  = devSaved.y + 'px';
+                    devEl.style.right = 'auto';
+                    devEl.style.bottom = 'auto';
+                }
+            }, 300);
+        }
+    } catch (e) {}
+
+    c.devDragStart = function (ev) {
+        if (!ev || (ev.button !== undefined && ev.button !== 0)) return;
+        if (ev.target && ev.target.classList && ev.target.classList.contains('netra-dev-x')) return;
+        var devEl = document.querySelector('.netra-dev');
+        if (!devEl) return;
+        var rect = devEl.getBoundingClientRect();
+        devDrag = { startX: ev.clientX, startY: ev.clientY, origX: rect.left, origY: rect.top, moved: false };
+        document.addEventListener('mousemove', _onDevDragMove);
+        document.addEventListener('mouseup',   _onDevDragEnd);
+        ev.preventDefault();
+    };
+
+    function _onDevDragMove(ev) {
+        if (!devDrag) return;
+        var dx = ev.clientX - devDrag.startX;
+        var dy = ev.clientY - devDrag.startY;
+        if (!devDrag.moved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+            devDrag.moved = true;
+            document.body.style.userSelect = 'none';
+        }
+        if (devDrag.moved) {
+            var devEl = document.querySelector('.netra-dev');
+            var vw = window.innerWidth, vh = window.innerHeight;
+            var newX = Math.max(0, Math.min(vw - 50, devDrag.origX + dx));
+            var newY = Math.max(0, Math.min(vh - 30, devDrag.origY + dy));
+            devEl.style.left = newX + 'px';
+            devEl.style.top  = newY + 'px';
+            devEl.style.right = 'auto';
+            devEl.style.bottom = 'auto';
+        }
+    }
+
+    function _onDevDragEnd() {
+        document.removeEventListener('mousemove', _onDevDragMove);
+        document.removeEventListener('mouseup',   _onDevDragEnd);
+        document.body.style.userSelect = '';
+        if (!devDrag || !devDrag.moved) { devDrag = null; return; }
+        var devEl = document.querySelector('.netra-dev');
+        var rect = devEl.getBoundingClientRect();
+        try { localStorage.setItem('netra.dev.pos', JSON.stringify({ x: rect.left, y: rect.top })); } catch (e) {}
+        logEvent('dev', 'dev panel moved to (' + Math.round(rect.left) + ', ' + Math.round(rect.top) + ')');
+        devDrag = null;
+    }
+
+    /* ============================================================
      *  BOOT
      * ============================================================ */
     function tryBoot(fromTap) {
@@ -698,6 +889,7 @@ api.controller = function ($scope, $timeout, $window) {
      * ============================================================ */
     var recRestartCount  = 0;   // consecutive rapid-end count for backoff
     var recLastStartTime = 0;   // track session start time
+    var recLastActivityAt = 0;  // R1.1 - last interim or final result timestamp
 
     function startContinuous() {
         if (!c.hasSR) return;
@@ -718,6 +910,7 @@ api.controller = function ($scope, $timeout, $window) {
         };
 
         contRec.onresult = function (ev) {
+            recLastActivityAt = Date.now();   // R1.1 - silent-rec heartbeat
             for (var i = ev.resultIndex; i < ev.results.length; i++) {
                 var res = ev.results[i];
                 var t = (res[0] && res[0].transcript) || '';
@@ -789,35 +982,53 @@ api.controller = function ($scope, $timeout, $window) {
     var watchdogLastSpeakingStart = 0;
     function startListeningWatchdog() {
         var tick = function () {
+            var now = Date.now();
             // Stuck-in-speaking detection: if state has been "speaking"
             // for more than 30s without progress, force back to idle.
             if (c.state === 'speaking') {
                 if (!watchdogLastSpeakingStart) {
-                    watchdogLastSpeakingStart = Date.now();
-                } else if (Date.now() - watchdogLastSpeakingStart > 30000) {
+                    watchdogLastSpeakingStart = now;
+                } else if (now - watchdogLastSpeakingStart > 30000) {
                     logEvent('warn', 'watchdog: stuck in speaking >30s - forcing idle');
                     setState(c.alert ? 'idle' : 'dormant');
                     watchdogLastSpeakingStart = 0;
+                    // Reset ignoreFinalsUntil so mic isn't locked
+                    ignoreFinalsUntil = now;
                 }
             } else {
                 watchdogLastSpeakingStart = 0;
             }
 
             // Recognition health: if mic permission is granted but recognition
-            // is not running for 3 consecutive checks (~30s), force a restart.
+            // is not running for 3 consecutive checks (~15s), force a restart.
             if (c.permission === 'granted' && !c.recRunning) {
                 watchdogStrikes++;
                 if (watchdogStrikes >= 3) {
-                    logEvent('warn', 'watchdog: recognition down for ~30s - force restart');
+                    logEvent('warn', 'watchdog: recognition down for ~15s - force restart');
                     watchdogStrikes = 0;
-                    recRestartCount = 0;  // reset backoff so restart is immediate
+                    recRestartCount = 0;
                     startContinuous();
                 }
             } else {
                 watchdogStrikes = 0;
             }
 
-            $timeout(tick, 10000);
+            // R1.3 - SILENT-REC HEARTBEAT REMOVED
+            // The previous "if quiet for 25s, force restart" logic was firing
+            // every time the user was naturally silent, which made Chrome
+            // re-acquire the mic stream constantly and caused the tab's red
+            // recording dot to blink rapidly. We now TRUST c.recRunning: if
+            // Chrome fires onend or onerror, we restart. Otherwise we leave
+            // the session alone, even during long quiet stretches.
+
+            // Stale ignoreFinalsUntil guard - if it is more than 5s in the
+            // future and we are not actually speaking, clear it.
+            if (ignoreFinalsUntil > now + 5000 && c.state !== 'speaking') {
+                logEvent('warn', 'watchdog: stale TTS guard cleared');
+                ignoreFinalsUntil = now;
+            }
+
+            $timeout(tick, 10000);   // R1.3 - back to 10s (was 5s, too noisy)
         };
         $timeout(tick, 10000);
     }
@@ -1234,7 +1445,9 @@ api.controller = function ($scope, $timeout, $window) {
                   encodeURIComponent(voice) + '&text=' + encodeURIComponent(text);
         logEvent('tts', 'remote: ' + voice + ' (' + text.length + ' chars)');
 
-        ignoreFinalsUntil = Date.now() + 60000;
+        // R1.1 - cap to 15s. If TTS hangs, mic stays blocked for at most 15s
+        // instead of a full minute. onended/onerror normally fires <10s.
+        ignoreFinalsUntil = Date.now() + 15000;
 
         var audio = new Audio();
         audio.src = url;
@@ -1294,8 +1507,8 @@ api.controller = function ($scope, $timeout, $window) {
         }
         if (!text) { if (done) done(); return; }
 
-        // Echo guard - ignore mic finals during AND just after speech
-        ignoreFinalsUntil = Date.now() + 60000;
+        // R1.1 - 15s cap (was 60s). Watchdog also clears stale guards.
+        ignoreFinalsUntil = Date.now() + 15000;
 
         if (TTS.speaking || TTS.pending) {
             TTS.cancel();
@@ -1462,6 +1675,16 @@ api.controller = function ($scope, $timeout, $window) {
             if (e.altKey && (e.key === 'n' || e.key === 'N')) {
                 e.preventDefault();
                 c.tap();
+                $scope.$applyAsync();
+            }
+            if (e.altKey && (e.key === 'r' || e.key === 'R')) {
+                // R1.1 - Alt+R = force restart recognition (escape hatch)
+                e.preventDefault();
+                logEvent('dev', 'Alt+R: force restart recognition');
+                recRestartCount = 0;
+                ignoreFinalsUntil = Date.now();
+                try { if (contRec) contRec.stop(); } catch (er) {}
+                $timeout(startContinuous, 200);
                 $scope.$applyAsync();
             }
             if (e.altKey && (e.key === 'd' || e.key === 'D')) {
