@@ -1,8 +1,13 @@
 /**
- * Service Portal widget server script — netra-mic.
+ * Service Portal widget server script - netra-mic.
  *
  * Ensures the current user has an __NETRA_SCOPE___user_pref row so the
- * scheduled scanner picks them up. Returns initial state to the client.
+ * scheduled scanner picks them up, and returns initial state to the client.
+ *
+ * Scope notes:
+ *   - gs.getUser().isPublic() is NOT available in scoped apps (the scoped
+ *     GlideUser API does not expose it). We don't need it - removed.
+ *   - gs.getUserID() and gs.getUserDisplayName() ARE allowed in scope.
  */
 (function () {
 
@@ -15,14 +20,15 @@
     pref.query();
     if (!pref.next()) {
         pref.initialize();
-        pref.user = user;
-        pref.active = true;
+        pref.user              = user;
+        pref.active            = true;
         pref.watch_assignments = true;
-        pref.watch_comments = true;
-        pref.watch_approvals = true;
+        pref.watch_comments    = true;
+        pref.watch_approvals   = true;
         pref.insert();
     }
 
+    // Compute paused state from the (possibly newly created) pref row
     var paused = false;
     var pausedUntil = '';
     if (pref.paused_until && String(pref.paused_until) !== '') {
@@ -33,10 +39,10 @@
         }
     }
 
-    data.user_name = gs.getUserDisplayName();
-    data.api_base = '/api/__NETRA_SCOPE__/voice';
-    data.is_guest = gs.getUser().isPublic();
-    data.paused = paused;
+    data.user_name    = gs.getUserDisplayName();
+    data.user_sys_id  = user;
+    data.api_base     = '/api/__NETRA_SCOPE__/voice';
+    data.paused       = paused;
     data.paused_until = pausedUntil;
 
 })();

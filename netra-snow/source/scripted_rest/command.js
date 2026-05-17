@@ -8,40 +8,80 @@
  *                   "kb_query" | "chat_reply_body" | "confirm_destructive" | null
  *   }
  *
- * Response:
+ * Response (always HTTP 200 - errors are returned in the body as ok=false
+ * so the widget can speak them):
  *   {
  *     ok, intent, message, data, refresh_tickets, stop, navigate,
- *     pending: <next pending state or null>,
- *     clear_pending: true/false,
- *     paused: true/false   (only on pause/resume actions)
+ *     pending, clear_pending, paused
  *   }
  */
 (function process(request, response) {
 
-    var body = request.body && request.body.data ? request.body.data : {};
-    var transcript = String(body.transcript || '').trim();
-    var pendingContext = body.pending ? String(body.pending) : null;
+    try {
+        var body = (request.body && request.body.data) ? request.body.data : {};
+        var transcript     = String(body.transcript || '').trim();
+        var pendingContext = body.pending ? String(body.pending) : null;
 
-    if (!transcript) {
-        response.setStatus(400);
-        return { ok: false, message: 'No transcript provided.' };
+        if (!transcript) {
+            return {
+                ok: false,
+                message: 'No transcript provided. Say something or click the mic again.'
+            };
+        }
+
+        var intent;
+        try {
+            intent = new NetraIntent().parse(transcript, pendingContext);
+        } catch (eIntent) {
+            gs.error('[NetraCommand] NetraIntent failed: ' + eIntent);
+            return {
+                ok: false,
+                message: 'Intent parser is not loaded. Please paste the latest NetraIntent script.'
+            };
+        }
+
+        var responder;
+        try {
+            responder = new NetraResponder();
+        } catch (eResp) {
+            gs.error('[NetraCommand] NetraResponder construct failed: ' + eResp);
+            return {
+                ok: false,
+                message: 'Responder failed to initialise: ' + String(eResp.message || eResp)
+            };
+        }
+
+        var result;
+        try {
+            result = responder.handle(intent);
+        } catch (eHandle) {
+            gs.error('[NetraCommand] handle() threw on action ' + intent.action + ': ' + eHandle);
+            return {
+                ok: false,
+                intent: intent,
+                message: 'I tried, but the ' + intent.action + ' action errored: ' + String(eHandle.message || eHandle)
+            };
+        }
+
+        return {
+            ok:              !!result.ok,
+            intent:          intent,
+            message:         result.message,
+            data:            result.data || null,
+            refresh_tickets: !!result.refresh_tickets,
+            stop:            !!result.stop,
+            navigate:        result.navigate || null,
+            pending:         result.pending || null,
+            clear_pending:   !!result.clear_pending,
+            paused:          (typeof result.paused === 'boolean') ? result.paused : null
+        };
+
+    } catch (e) {
+        gs.error('[NetraCommand] unexpected: ' + e + (e.stack ? ' | ' + String(e.stack).split('\n')[0] : ''));
+        return {
+            ok: false,
+            message: 'Server error: ' + String(e.message || e)
+        };
     }
-
-    var intent = new NetraIntent().parse(transcript, pendingContext);
-    var responder = new NetraResponder();
-    var result = responder.handle(intent);
-
-    return {
-        ok: !!result.ok,
-        intent: intent,
-        message: result.message,
-        data: result.data || null,
-        refresh_tickets: !!result.refresh_tickets,
-        stop: !!result.stop,
-        navigate: result.navigate || null,
-        pending: result.pending || null,
-        clear_pending: !!result.clear_pending,
-        paused: typeof result.paused === 'boolean' ? result.paused : null
-    };
 
 })(request, response);
