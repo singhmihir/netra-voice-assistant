@@ -104,6 +104,30 @@ api.controller = function ($scope, $timeout, $window) {
     // R2.8 - unified audio level (0-100) for the voice bars around the orb.
     // Driven by mic input when listening; driven by playback amplitude when speaking.
     c.audioLevel = 0;
+    c.voiceRingPoints = '';
+
+    // R2.8.2 - per-bar multiplier (doubled from R2.8; small jitter for life)
+    var VOICE_RING_MULTIPLIERS = [
+        0.40, 0.44, 0.38, 0.48, 0.36, 0.42, 0.40, 0.46,
+        0.38, 0.50, 0.36, 0.42, 0.40, 0.44, 0.38, 0.48,
+        0.36, 0.42, 0.40, 0.46, 0.38, 0.50, 0.36, 0.44
+    ];
+    var VOICE_RING_BASE = 58;   // radius at audioLevel=0 (sphere edge is 50)
+    var TWO_PI = Math.PI * 2;
+    function _recomputeVoiceRing() {
+        var lvl = c.audioLevel || 0;
+        var pts = '';
+        for (var i = 0; i < 24; i++) {
+            var angle = (i * 15) * Math.PI / 180;
+            var dist = VOICE_RING_BASE + lvl * VOICE_RING_MULTIPLIERS[i];
+            var x = 60 + dist * Math.sin(angle);
+            var y = 60 - dist * Math.cos(angle);
+            if (pts) pts += ' ';
+            pts += x.toFixed(2) + ',' + y.toFixed(2);
+        }
+        c.voiceRingPoints = pts;
+    }
+    _recomputeVoiceRing();
 
     /* ============================================================
      *  R2.2 - VOICE TRAINING (personal vocab + aliases)
@@ -823,6 +847,7 @@ api.controller = function ($scope, $timeout, $window) {
                 // R2.8 - feed the orb's voice bars from mic when NOT speaking
                 if (c.state !== 'speaking') {
                     c.audioLevel = level;
+                    _recomputeVoiceRing();   // R2.8.2 polygon ring
                 }
                 $scope.$applyAsync();
                 _micRafId = requestAnimationFrame(loop);
@@ -1998,6 +2023,7 @@ api.controller = function ($scope, $timeout, $window) {
                 }
                 var rms = Math.sqrt(sum / data.length);
                 c.audioLevel = Math.min(100, Math.round(rms * 320));
+                _recomputeVoiceRing();   // R2.8.2 polygon ring
                 $scope.$applyAsync();
                 _outRafId = requestAnimationFrame(tick);
             };

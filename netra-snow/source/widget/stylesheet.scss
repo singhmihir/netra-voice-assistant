@@ -118,24 +118,55 @@
     50%      { opacity: 0.65; }
 }
 
-/* R2.8 - audio-reactive voice bars wrapping the orb.
-   Each bar is a thin line; y2 animates via Angular binding to audioLevel.
-   Stroke fades in slightly when active so the bars feel alive. */
-.netra-voice-bars {
+/* R2.8.2 - audio-reactive voice ring (connected polygon waveform).
+   Single polygon whose 24 vertices recompute from c.audioLevel.
+   Stroke is the bright neon outline; fill is a translucent radial
+   gradient that brightens just outside the sphere edge. */
+.netra-voice-ring-group {
     pointer-events: none;
-    opacity: 0;
-    animation: voice-bars-fade-in 0.4s ease-out forwards;
+    opacity: 0.95;
+    animation: voice-ring-fade-in 0.4s ease-out forwards;
 }
-.netra-voice-bar {
-    stroke: var(--iris-bright, #aef0d0);
-    stroke-width: 1.8;
-    stroke-linecap: round;
-    transition: y 0.07s ease-out;
-    filter: drop-shadow(0 0 2px var(--iris-bright, rgba(127, 255, 176, 0.6)));
+.netra-voice-ring-fill {
+    transition: opacity 0.3s ease;
+    opacity: 0.45;
 }
-@keyframes voice-bars-fade-in {
+.netra-voice-ring-stroke {
+    transition: stroke-width 0.18s ease, filter 0.3s ease;
+    filter: drop-shadow(0 0 4px var(--iris-bright, rgba(127, 255, 176, 0.7)))
+            drop-shadow(0 0 10px var(--iris-bright, rgba(127, 255, 176, 0.3)));
+}
+@keyframes voice-ring-fade-in {
     from { opacity: 0; }
-    to   { opacity: 0.85; }
+    to   { opacity: 0.95; }
+}
+
+/* When Netra is speaking, the entire aura should EXPAND and brighten.
+   Halo scales 1.4x; voice-ring fill is more opaque; stroke is thicker
+   with a wider glow. This is the "she is really talking" feel. */
+.netra-state-speaking .netra-eye-halo {
+    transform: scale(1.42);
+    transform-origin: 60px 60px;
+    transform-box: view-box;
+    animation: halo-pulse-speaking 1.2s ease-in-out infinite;
+}
+.netra-state-speaking .netra-voice-ring-fill   { opacity: 0.75; }
+.netra-state-speaking .netra-voice-ring-stroke {
+    stroke-width: 2.2;
+    filter: drop-shadow(0 0 6px var(--iris-bright, rgba(127, 255, 176, 0.85)))
+            drop-shadow(0 0 16px var(--iris-bright, rgba(127, 255, 176, 0.5)))
+            drop-shadow(0 0 26px var(--iris-bright, rgba(127, 255, 176, 0.25)));
+}
+@keyframes halo-pulse-speaking {
+    0%, 100% { transform: scale(1.32); opacity: 0.85; }
+    50%      { transform: scale(1.52); opacity: 1;    }
+}
+
+/* While listening the halo is only slightly larger - subtle activity. */
+.netra-state-idle .netra-eye-halo {
+    transform: scale(1.05);
+    transform-origin: 60px 60px;
+    transform-box: view-box;
 }
 
 /* The inscribed pentagram rotates SLOWLY - one full turn every 21 sec
