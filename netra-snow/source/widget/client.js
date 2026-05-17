@@ -123,23 +123,90 @@ api.controller = function ($scope, $timeout, $window) {
     c.vocabCount     = 0;
     c.aliasCount     = 0;
 
+    // R2.3 - voice training lives in ServiceNow (Netra Context row).
+    // The widget's initial data load (c.data.training) populates these
+    // on boot from server truth, and we save back via a c.server.update()
+    // round-trip with action='save_training'.
     function loadTrainingData() {
         try {
-            c.personalVocab = JSON.parse(localStorage.getItem('netra.vocab')   || '{}') || {};
-            c.aliases       = JSON.parse(localStorage.getItem('netra.aliases') || '{}') || {};
-        } catch (e) { c.personalVocab = {}; c.aliases = {}; }
+            // c.data is populated by the Service Portal widget framework
+            // BEFORE the controller runs - so this is already there
+            var t = (c.data && c.data.training) || null;
+            var srvVocab   = (t && t.vocab)   || {};
+            var srvAliases = (t && t.aliases) || {};
+            // R2.3 migration: if server is empty but localStorage from R2.2
+            // has data, lift it up to the server.
+            var migrated = false;
+            try {
+                if (Object.keys(srvVocab).length === 0 && Object.keys(srvAliases).length === 0) {
+                    var localVocab   = JSON.parse(localStorage.getItem('netra.vocab')   || '{}') || {};
+                    var localAliases = JSON.parse(localStorage.getItem('netra.aliases') || '{}') || {};
+                    if (Object.keys(localVocab).length || Object.keys(localAliases).length) {
+                        srvVocab   = localVocab;
+                        srvAliases = localAliases;
+                        migrated = true;
+                    }
+                }
+            } catch (e) {}
+            c.personalVocab = srvVocab;
+            c.aliases       = srvAliases;
+            logEvent('train', 'loaded from ServiceNow: ' +
+                     Object.keys(c.personalVocab).length + ' words, ' +
+                     Object.keys(c.aliases).length       + ' aliases' +
+                     (migrated ? ' (migrated from R2.2 localStorage)' : ''));
+            if (migrated) {
+                // Push the migrated data up to the server immediately so it
+                // doesn't get lost, then wipe the local copy.
+                $timeout(function () {
+                    saveTrainingData();
+                    try {
+                        localStorage.removeItem('netra.vocab');
+                        localStorage.removeItem('netra.aliases');
+                    } catch (e) {}
+                }, 1000);
+            }
+        } catch (e) {
+            c.personalVocab = {}; c.aliases = {};
+            logEvent('warn', 'loadTrainingData: ' + e.message);
+        }
         _refreshTrainingViews();
     }
     var _saveDebounceTimer = null;
+    var _saveInflight = false;
     function saveTrainingData() {
         if (_saveDebounceTimer) $timeout.cancel(_saveDebounceTimer);
         _saveDebounceTimer = $timeout(function () {
-            try {
-                localStorage.setItem('netra.vocab',   JSON.stringify(c.personalVocab));
-                localStorage.setItem('netra.aliases', JSON.stringify(c.aliases));
-            } catch (e) {}
             _refreshTrainingViews();
-        }, 1500);
+            if (_saveInflight) {
+                // another save already going - reschedule
+                saveTrainingData();
+                return;
+            }
+            _saveInflight = true;
+            // Snapshot so we don't lose changes that happen during the round-trip
+            var vocabSnap   = JSON.parse(JSON.stringify(c.personalVocab));
+            var aliasesSnap = JSON.parse(JSON.stringify(c.aliases));
+            c.data.action  = 'save_training';
+            c.data.vocab   = vocabSnap;
+            c.data.aliases = aliasesSnap;
+            c.server.update().then(
+                function () {
+                    _saveInflight = false;
+                    if (c.data && c.data.training_result && c.data.training_result.ok) {
+                        logEvent('train', 'saved to ServiceNow: ' +
+                                 c.data.training_result.vocab_count + ' words, ' +
+                                 c.data.training_result.aliases_count + ' aliases');
+                    } else {
+                        logEvent('warn', 'save_training failed: ' +
+                                 ((c.data && c.data.training_result && c.data.training_result.error) || 'unknown'));
+                    }
+                },
+                function (err) {
+                    _saveInflight = false;
+                    logEvent('err', 'save_training transport error: ' + (err && err.message || err));
+                }
+            );
+        }, 2500);   // 2.5s debounce so rapid edits coalesce
     }
     function _refreshTrainingViews() {
         c.vocabCount  = Object.keys(c.personalVocab).length;
@@ -255,11 +322,15 @@ api.controller = function ($scope, $timeout, $window) {
         logEvent('train', 'alias: "' + m + '" -> "' + n + '"');
     };
     c.clearTraining = function () {
-        if (!confirm('Clear all training data?')) return;
+        if (!confirm('Clear all training data? This wipes the server-side copy too.')) return;
         c.personalVocab = {};
         c.aliases = {};
-        saveTrainingData();
-        logEvent('train', 'cleared all training data');
+        _refreshTrainingViews();
+        // Server-side wipe via dedicated action (faster than save with empty)
+        c.data.action = 'clear_training';
+        c.server.update().then(function () {
+            logEvent('train', 'cleared all training (local + ServiceNow)');
+        });
     };
 
     // Load on boot

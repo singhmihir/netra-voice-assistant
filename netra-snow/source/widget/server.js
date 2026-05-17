@@ -44,6 +44,17 @@
     _setPauseState();
     data.vocab = _getVocab();
 
+    // R2.3 - per-user voice training (vocab + aliases) lives in the
+    // Netra Context row. Expose it to the client on every load so it
+    // can rebuild the personal recognizer hints from server truth.
+    try {
+        var trainSnap = _trainingRead();
+        data.training = {
+            vocab:   trainSnap.vocab   || {},
+            aliases: trainSnap.aliases || {}
+        };
+    } catch (eT) { data.training = { vocab: {}, aliases: {} }; }
+
     var action = (input && input.action) ? String(input.action) : null;
 
     if (action === 'chat') {
@@ -84,6 +95,33 @@
         } catch (eP) {
             gs.error('[NetraGemini] poll: ' + eP);
             data.notifications = [];
+        }
+    } else if (action === 'save_training') {
+        // R2.3 - client sends its current vocab + aliases blob; we persist it
+        try {
+            var v = (input && input.vocab)   ? input.vocab   : null;
+            var a = (input && input.aliases) ? input.aliases : null;
+            if (!v && !a) {
+                data.training_result = { ok: false, error: 'Neither vocab nor aliases provided.' };
+            } else {
+                _trainingWrite(v, a);
+                var saved = _trainingRead();
+                data.training_result = {
+                    ok: true,
+                    vocab_count:   Object.keys(saved.vocab).length,
+                    aliases_count: Object.keys(saved.aliases).length,
+                    message: 'Training saved to ServiceNow.'
+                };
+            }
+        } catch (eTS) {
+            data.training_result = { ok: false, error: String(eTS.message || eTS) };
+        }
+    } else if (action === 'clear_training') {
+        try {
+            _trainingWrite({}, {});
+            data.training_result = { ok: true, message: 'Training cleared.' };
+        } catch (eC) {
+            data.training_result = { ok: false, error: String(eC.message || eC) };
         }
     } else if (action === 'debug') {
         try {
@@ -1587,9 +1625,12 @@
         type:              'type of change (standard, normal, emergency)'
     };
 
-    // R1.4 - Single combined context blob: {draft:{} | null, mem:[]}
-    // Stored with "CTX:" prefix in last_utterance field, so draft and
-    // long-term memory both survive each other.
+    // R2.3 - Unified context blob now carries FOUR things:
+    //   draft   - in-progress record draft (R1.3)
+    //   mem     - long-term conversation memory (R1.4)
+    //   vocab   - personal voice-training vocab (R2.3)
+    //   aliases - voice-training misheard->intended map (R2.3)
+    // All stored with "CTX:" prefix in last_utterance.
     function _ctxLoadGr() {
         var ctx = new GlideRecord(SCOPE + '_context');
         ctx.addQuery('user', gs.getUserID());
@@ -1603,22 +1644,49 @@
     function _ctxReadBlob() {
         var ctx = _ctxLoadGr();
         var raw = String(ctx.last_utterance || '');
+        var blob = { draft: null, mem: [], vocab: {}, aliases: {} };
         if (raw.indexOf('CTX:') === 0) {
-            try { return JSON.parse(raw.substring(4)) || { draft: null, mem: [] }; } catch (e) {}
+            try {
+                var parsed = JSON.parse(raw.substring(4)) || {};
+                blob.draft   = parsed.draft   || null;
+                blob.mem     = parsed.mem     || [];
+                blob.vocab   = parsed.vocab   || {};
+                blob.aliases = parsed.aliases || {};
+                return blob;
+            } catch (e) {}
         }
         // Backwards-compat: migrate old DRAFT: or MEM: prefixed values
         if (raw.indexOf('DRAFT:') === 0) {
-            try { return { draft: JSON.parse(raw.substring(6)), mem: [] }; } catch (e) {}
+            try { blob.draft = JSON.parse(raw.substring(6)); return blob; } catch (e) {}
         }
         if (raw.indexOf('MEM:') === 0) {
-            try { return { draft: null, mem: JSON.parse(raw.substring(4)) || [] }; } catch (e) {}
+            try { blob.mem = JSON.parse(raw.substring(4)) || []; return blob; } catch (e) {}
         }
-        return { draft: null, mem: [] };
+        return blob;
     }
     function _ctxWriteBlob(blob) {
         var ctx = _ctxLoadGr();
-        ctx.last_utterance = 'CTX:' + JSON.stringify(blob);
+        // Always include all four keys to avoid clobbering on partial writes
+        var payload = {
+            draft:   blob.draft   || null,
+            mem:     blob.mem     || [],
+            vocab:   blob.vocab   || {},
+            aliases: blob.aliases || {}
+        };
+        ctx.last_utterance = 'CTX:' + JSON.stringify(payload);
         ctx.update();
+    }
+
+    // R2.3 - per-user training read/write
+    function _trainingRead() {
+        var b = _ctxReadBlob();
+        return { vocab: b.vocab || {}, aliases: b.aliases || {} };
+    }
+    function _trainingWrite(vocab, aliases) {
+        var b = _ctxReadBlob();
+        if (vocab)   b.vocab   = vocab;
+        if (aliases) b.aliases = aliases;
+        _ctxWriteBlob(b);
     }
     function _draftLoadCtx() { return _ctxLoadGr(); }   // kept for compatibility
     function _draftRead() {
