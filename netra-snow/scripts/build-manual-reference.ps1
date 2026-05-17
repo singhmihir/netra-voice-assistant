@@ -33,11 +33,11 @@ function WriteReadme([string]$path, [string]$content) {
 # 01 - tables
 # ============================================================
 $tablesReadme = @"
-# Step 1 — Create the four tables
+# Step 1 - Create the four tables
 
 Create these inside the **$app** application (scope ``$scope``).
 
-In Studio, click **Create Application File → Table** for each one.
+In Studio, click **Create Application File -> Table** for each one.
 
 ---
 
@@ -47,19 +47,19 @@ In Studio, click **Create Application File → Table** for each one.
 |---------|----------------------------------------|
 | Label   | ``Netra Notification``                 |
 | Name    | ``${scope}_notification`` *(auto)*     |
-| Extends | *(none — base table)*                  |
+| Extends | *(none - base table)*                  |
 
-Add columns (Form Designer → Add field):
+Add columns (Form Designer -> Add field):
 
 | Column          | Type                  | Length | Default |
 |-----------------|-----------------------|--------|---------|
-| ``user``        | Reference → ``sys_user`` | —    | —       |
-| ``ticket_sys_id`` | String              | 32     | —       |
-| ``ticket_number`` | String              | 32     | —       |
-| ``kind``        | String                | 40     | —       |
-| ``message``     | String                | 1000   | —       |
-| ``delivered``   | True/False            | —      | ``false`` |
-| ``delivered_at`` | Date/Time            | —      | —       |
+| ``user``        | Reference -> ``sys_user`` | -    | -       |
+| ``ticket_sys_id`` | String              | 32     | -       |
+| ``ticket_number`` | String              | 32     | -       |
+| ``kind``        | String                | 40     | -       |
+| ``message``     | String                | 1000   | -       |
+| ``delivered``   | True/False            | -      | ``false`` |
+| ``delivered_at`` | Date/Time            | -      | -       |
 
 ---
 
@@ -74,13 +74,13 @@ Columns:
 
 | Column              | Type                  | Length | Default |
 |---------------------|-----------------------|--------|---------|
-| ``user``            | Reference → ``sys_user`` | —    | —       |
-| ``active``          | True/False            | —      | ``true``  |
-| ``paused_until``    | Date/Time             | —      | —       |
-| ``last_scan_time``  | Date/Time             | —      | —       |
-| ``watch_assignments`` | True/False          | —      | ``true``  |
-| ``watch_comments``  | True/False            | —      | ``true``  |
-| ``watch_approvals`` | True/False            | —      | ``true``  |
+| ``user``            | Reference -> ``sys_user`` | -    | -       |
+| ``active``          | True/False            | -      | ``true``  |
+| ``paused_until``    | Date/Time             | -      | -       |
+| ``last_scan_time``  | Date/Time             | -      | -       |
+| ``watch_assignments`` | True/False          | -      | ``true``  |
+| ``watch_comments``  | True/False            | -      | ``true``  |
+| ``watch_approvals`` | True/False            | -      | ``true``  |
 | ``voice_mode``      | String                | 20     | ``normal`` |
 
 ---
@@ -96,12 +96,12 @@ Columns:
 
 | Column           | Type                  | Length | Default |
 |------------------|-----------------------|--------|---------|
-| ``user``         | Reference → ``sys_user`` | —    | —       |
-| ``focus_table``  | String                | 40     | —       |
-| ``focus_sys_id`` | String                | 32     | —       |
-| ``focus_number`` | String                | 32     | —       |
-| ``focus_set_at`` | Date/Time             | —      | —       |
-| ``last_utterance`` | String              | 1000   | —       |
+| ``user``         | Reference -> ``sys_user`` | -    | -       |
+| ``focus_table``  | String                | 40     | -       |
+| ``focus_sys_id`` | String                | 32     | -       |
+| ``focus_number`` | String                | 32     | -       |
+| ``focus_set_at`` | Date/Time             | -      | -       |
+| ``last_utterance`` | String              | 1000   | -       |
 
 ---
 
@@ -116,14 +116,14 @@ Columns:
 
 | Column          | Type                  | Length |
 |-----------------|-----------------------|--------|
-| ``user``        | Reference → ``sys_user`` | —    |
+| ``user``        | Reference -> ``sys_user`` | -    |
 | ``record_table`` | String               | 40     |
 | ``record_sys_id`` | String              | 32     |
 | ``record_number`` | String              | 32     |
 
 ---
 
-✅ Once all 4 tables exist, move on to **Step 2 — Script Includes**.
+✅ Once all 4 tables exist, move on to **Step 2 - Script Includes**.
 "@
 WriteReadme "$dest\01-tables\README.md" $tablesReadme
 
@@ -131,11 +131,11 @@ WriteReadme "$dest\01-tables\README.md" $tablesReadme
 # 02 - script includes
 # ============================================================
 $siReadme = @"
-# Step 2 — Create the nine Script Includes
+# Step 2 - Create the nine Script Includes
 
 For each ``.js`` file in this folder:
 
-1. In Studio → **Create Application File → Script Include**
+1. In Studio -> **Create Application File -> Script Include**
 2. Settings:
    - **Name**: (file name without ``.js``, e.g. ``NetraIntent``)
    - **API Name**: auto-populates as ``$scope.<Name>``
@@ -151,25 +151,27 @@ For each ``.js`` file in this folder:
 
 | # | Name | Depends on |
 |---|------|-----------|
-| 1 | NetraIntent | (none — pure regex parser) |
+| 1 | NetraIntent | (none - pure regex parser) |
 | 2 | NetraTools | tables from Step 1 |
 | 3 | NetraContext | ``${scope}_context`` table |
 | 4 | NetraKnowledge | ``kb_knowledge`` (OOTB) |
 | 5 | NetraChat | ``sys_cs_*`` (OOTB, optional) |
-| 6 | NetraSummarizer | (none — pure logic) |
-| 7 | NetraNavigator | (none — URL mapper) |
+| 6 | NetraSummarizer | (none - pure logic) |
+| 7 | NetraNavigator | (none - URL mapper) |
 | 8 | NetraScanner | NetraTools, ``${scope}_notification`` |
 | 9 | NetraResponder | NetraTools, NetraKnowledge, NetraChat, NetraContext, NetraNavigator, NetraSummarizer |
 
 ## Quick smoke test after creating NetraIntent (#1)
 
-**System Definition → Scripts - Background** (run in **$app** scope):
+**System Definition - Scripts - Background** (run in **$app** scope):
 
 ``````javascript
 var p = new $scope.NetraIntent().parse('create a ticket for my email is broken');
-gs.print(JSON.stringify(p));
+gs.log(JSON.stringify(p));
 // Expected: {"action":"create","args":{"description":"my email is broken"}, ...}
 ``````
+
+> Use ``gs.log()`` (not ``gs.print()``) - ``gs.print`` is fenced in scoped apps.
 "@
 WriteReadme "$dest\02-script-includes\README.md" $siReadme
 
@@ -186,11 +188,11 @@ foreach ($n in $scriptIncludes) {
 # 03 - business rule
 # ============================================================
 $brReadme = @"
-# Step 3 — Create the Business Rule
+# Step 3 - Create the Business Rule
 
 ## ``Netra Notify On Comment``
 
-In Studio → **Create Application File → Business Rule**.
+In Studio -> **Create Application File -> Business Rule**.
 
 | Setting       | Value |
 |---------------|-------|
@@ -224,11 +226,11 @@ CopyWithScope "$src\business_rule\netra_notify_on_comment.js" "$dest\03-business
 # 04 - scheduled job
 # ============================================================
 $sjReadme = @"
-# Step 4 — Create the Scheduled Job
+# Step 4 - Create the Scheduled Job
 
 ## ``Netra Watch``
 
-Navigate to **System Definition → Scheduled Jobs → New** (or **Studio → Create → Scheduled Script Execution**).
+Navigate to **System Definition -> Scheduled Jobs -> New** (or **Studio -> Create -> Scheduled Script Execution**).
 
 | Setting          | Value |
 |------------------|-------|
@@ -261,11 +263,11 @@ CopyWithScope "$src\scheduled_jobs\netra_watch.js" "$dest\04-scheduled-job\netra
 # 05 - scripted rest
 # ============================================================
 $restReadme = @"
-# Step 5 — Create the Scripted REST API + 2 resources
+# Step 5 - Create the Scripted REST API + 2 resources
 
 ## 5.1  Create the service definition
 
-**System Web Services → Scripted REST APIs → New**.
+**System Web Services -> Scripted REST APIs -> New**.
 
 | Setting       | Value |
 |---------------|-------|
@@ -278,7 +280,7 @@ $restReadme = @"
 
 ## 5.2  Add resource: ``command``
 
-Open the **Netra Voice** record → related list **Resources** → **New**.
+Open the **Netra Voice** record -> related list **Resources** -> **New**.
 
 | Setting                    | Value |
 |----------------------------|-------|
@@ -322,11 +324,11 @@ CopyWithScope "$src\scripted_rest\notifications.js" "$dest\05-scripted-rest\noti
 # 06 - widget
 # ============================================================
 $widgetReadme = @"
-# Step 6 — Create the Service Portal widget
+# Step 6 - Create the Service Portal widget
 
 ## ``netra-mic``
 
-**Service Portal → Service Portal Configuration → Widgets → New**.
+**Service Portal -> Service Portal Configuration -> Widgets -> New**.
 
 | Setting     | Value |
 |-------------|-------|
@@ -349,14 +351,14 @@ Then paste each file from this folder into the matching widget field:
 
 ## Add it to a portal page
 
-1. **Service Portal → Service Portal Configuration → Designer**
+1. **Service Portal -> Service Portal Configuration -> Designer**
 2. Open the Service Portal home page (portal ``sp``, page id ``index``)
-3. Drag **Netra Mic** into any container — it floats fixed in the bottom-right corner
+3. Drag **Netra Mic** into any container - it floats fixed in the bottom-right corner
 4. **Save**
 
 ## Use it
 
-Open ``/sp`` in **Chrome or Edge**. Allow microphone. Say **"Netra"** —
+Open ``/sp`` in **Chrome or Edge**. Allow microphone. Say **"Netra"** -
 the floating dock turns red and listens for your command.
 "@
 WriteReadme "$dest\06-widget\README.md" $widgetReadme
@@ -370,12 +372,12 @@ CopyWithScope "$src\widget\option_schema.json" "$dest\06-widget\option_schema.js
 # Master README
 # ============================================================
 $masterReadme = @"
-# Netra_V1 — Manual Deployment Reference
+# Netra_V1 - Manual Deployment Reference
 
 Voice-first ServiceNow assistant for blind users. Scope ``$scope``, app
 ``$app``.
 
-This repo holds **only the scripts you need to paste into ServiceNow** —
+This repo holds **only the scripts you need to paste into ServiceNow** -
 no automation, no Update Set, no Source Control plumbing. Work through the
 folders in order; each one has its own README with exact UI clicks.
 
@@ -392,20 +394,20 @@ folders in order; each one has its own README with exact UI clicks.
 
 ## What each artifact does
 
-- **Tables** — durable state: notification queue, per-user preferences, context, watchlist
-- **NetraIntent** — regex parser, turns voice into ``{action, args}``
-- **NetraTools** — incident CRUD, approvals, watchlist, pause preferences
-- **NetraResponder** — composes the spoken reply, routes every intent
-- **NetraScanner** — periodic scanner; finds new assignments / approvals
-- **NetraKnowledge** — keyword-scored search over ``kb_knowledge``
-- **NetraChat** — read & reply to Connect Chat messages
-- **NetraSummarizer** — extractive summary for long tickets / KB articles
-- **NetraContext** — remembers the last ticket the user mentioned
-- **NetraNavigator** — maps spoken destinations to portal URLs
-- **Business Rule** — instant alert on new ticket comments
-- **Scheduled Job** — runs ``NetraScanner.run()`` every 3 minutes
-- **Scripted REST** — ``POST /command`` and ``GET /notifications`` for the widget
-- **Widget** — floating dock, wake word, push-to-talk, TTS, pause UI
+- **Tables** - durable state: notification queue, per-user preferences, context, watchlist
+- **NetraIntent** - regex parser, turns voice into ``{action, args}``
+- **NetraTools** - incident CRUD, approvals, watchlist, pause preferences
+- **NetraResponder** - composes the spoken reply, routes every intent
+- **NetraScanner** - periodic scanner; finds new assignments / approvals
+- **NetraKnowledge** - keyword-scored search over ``kb_knowledge``
+- **NetraChat** - read & reply to Connect Chat messages
+- **NetraSummarizer** - extractive summary for long tickets / KB articles
+- **NetraContext** - remembers the last ticket the user mentioned
+- **NetraNavigator** - maps spoken destinations to portal URLs
+- **Business Rule** - instant alert on new ticket comments
+- **Scheduled Job** - runs ``NetraScanner.run()`` every 3 minutes
+- **Scripted REST** - ``POST /command`` and ``GET /notifications`` for the widget
+- **Widget** - floating dock, wake word, push-to-talk, TTS, pause UI
 
 ## Voice command reference (after install)
 
@@ -421,7 +423,7 @@ folders in order; each one has its own README with exact UI clicks.
 | *"search knowledge for password reset"* | KB search |
 | *"read KB0010001"* | Reads article body (summarised if long) |
 | *"open my approvals"* / *"approve CHG0001234"* | Approval handling |
-| *"pause"* → *"two hours"* | Mute notifications for N hours |
+| *"pause"* -> *"two hours"* | Mute notifications for N hours |
 | *"resume"* | Unmute |
 | *"hi"* / *"thanks"* / *"how are you"* | Smalltalk |
 | *"help"* | Lists what Netra can do |
