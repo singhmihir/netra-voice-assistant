@@ -1,12 +1,14 @@
 /**
- * Netra Mic widget - SERVER SCRIPT  (R1.3 - Claude of ServiceNow)
+ * Netra Mic widget - SERVER SCRIPT  (R1.4 - Claude-of-ServiceNow ext)
  *
- * R1.3 delta: 42 tools (6 added: start_record_draft, set_record_field,
- *   review_draft, confirm_and_create, cancel_draft, send_sidebar_message).
- * System prompt rewritten Claude-style: MANDATORY multi-turn draft flow,
- *   confirmation before destructive actions, no direct create_ticket.
- * send_sidebar_message creates real sys_sidebar_discussion records (with
- *   participant + first message) instead of tracking incidents.
+ * R1.4 adds 4 tools: list_capabilities (introspection),
+ *   recall_past_conversations (long-term memory recall),
+ *   remember_fact (long-term memory write), analyze_screenshot
+ *   (multimodal vision signal). Memory + draft now coexist in a
+ *   single unified CTX: JSON blob in last_utterance. Daily briefing
+ *   upgraded with PROACTIVE highlights (top P1, oldest approval,
+ *   unread watchlist activity). Gemini contents now accept image
+ *   inlineData for screenshot analysis.
  *
  *
  * Powered by Google's Gemini API with full function-calling (tool use).
@@ -137,7 +139,18 @@
                 if (h && h.role && h.parts) contents.push(h);
             }
         }
-        contents.push({ role: 'user', parts: [{ text: userMessage }] });
+        // R1.4 - vision support: if the client attached an image, send it
+        // as inlineData alongside the text. Gemini 2.5-flash is multimodal.
+        var userParts = [{ text: userMessage }];
+        if (input && input.image_b64) {
+            userParts.unshift({
+                inlineData: {
+                    mimeType: input.image_mime || 'image/png',
+                    data:     String(input.image_b64)
+                }
+            });
+        }
+        contents.push({ role: 'user', parts: userParts });
 
         var systemInstruction = _systemPrompt();
         var tools = _toolDeclarations();
@@ -210,6 +223,9 @@
 
             // Append the final model turn to contents so client history is complete
             contents.push({ role: 'model', parts: [{ text: finalText }] });
+
+            // R1.4 - persist exchange into long-term memory (capped at 40 turns)
+            try { _memAppend(userMessage, finalText); } catch (eM) {}
 
             return {
                 ok: true,
@@ -418,6 +434,13 @@
 '- You are the "Claude of ServiceNow": careful, thoughtful, never destructive without confirmation, always reads-back before acting.\n' +
 '- Use the persons first name naturally. e.g. "Right, Mihir, here is what I have so far."\n' +
 '- BE EMPATHETIC. If the user sounds frustrated, acknowledge before acting.\n' +
+'\n' +
+'CAPABILITIES & MEMORY:\n' +
+'- When user asks "what can you do?" / "help me" / "show me your features" - call list_capabilities and read the categories.\n' +
+'- When user asks "what did we talk about / what was I doing earlier / remember when" - call recall_past_conversations (optionally with a keyword).\n' +
+'- When user says "remember that ..." / "for next time, ..." - call remember_fact to save it.\n' +
+'- When user has just captured a screenshot (system tells you an image was attached) - look at it carefully and answer their question naturally.\n' +
+'- Memory is YOURS - past exchanges are stored. Use them. Reference them. "Like the VPN issue we discussed earlier..."\n' +
 '\n' +
 'CREATING TICKETS - MANDATORY MULTI-TURN DRAFT FLOW (this is the most important rule):\n' +
 '- NEVER call create_ticket, create_problem, or create_change directly. Those tools still exist but you MUST NOT use them.\n' +
@@ -758,6 +781,34 @@
                         subject:        { type: 'string', description: 'Short discussion subject (defaults to "Message from " + user)' },
                         message:        { type: 'string', description: 'The message body' }
                     }, required: ['recipient_name','message'] }
+                },
+                // ------- R1.4 - Claude-of-ServiceNow advanced tools -------
+                {
+                    name: 'list_capabilities',
+                    description: 'Self-introspection: returns a categorized tour of what Netra can do. Use when the user asks "what can you do?", "help me", "show me your features", "list your capabilities", "how do you work".',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'recall_past_conversations',
+                    description: 'Look up the persistent conversation memory of the user. Returns the last N exchanges (each with timestamp, user input, Netra reply) so questions like "what did we discuss yesterday?", "what did I ask you about earlier?" can be answered. Memory persists across page loads.',
+                    parameters: { type: 'object', properties: {
+                        keyword: { type: 'string', description: 'Optional keyword to filter the recall (e.g. "vpn", "approval"). Leave empty for last 10 unfiltered.' },
+                        limit:   { type: 'number', description: 'Max exchanges to return (default 10, max 20)' }
+                    } }
+                },
+                {
+                    name: 'remember_fact',
+                    description: 'Store a personal fact the user shared (preference, project, person, etc) into long-term memory. Use sparingly - only when the user EXPLICITLY says "remember that..." or "for next time...".',
+                    parameters: { type: 'object', properties: {
+                        fact: { type: 'string', description: 'The fact to remember, in the user own words' }
+                    }, required: ['fact'] }
+                },
+                {
+                    name: 'analyze_screenshot',
+                    description: 'Analyze a screenshot the user has just captured of their ServiceNow screen. The client takes care of the capture - this tool just signals "yes, look at the image they will send next". Use when user says "look at this form", "what is wrong with this", "analyze this screen".',
+                    parameters: { type: 'object', properties: {
+                        question: { type: 'string', description: 'What the user wants you to look for or explain' }
+                    } }
                 }
             ]
         }];
@@ -857,6 +908,15 @@
                     return _cancelDraft();
                 case 'send_sidebar_message':
                     return _sendSidebarMessage(String(args.recipient_name || ''), String(args.subject || ''), String(args.message || ''));
+                // ------- R1.4 -------
+                case 'list_capabilities':
+                    return _listCapabilities();
+                case 'recall_past_conversations':
+                    return _recallPastConversations(String(args.keyword || ''), Number(args.limit) || 10);
+                case 'remember_fact':
+                    return _rememberFact(String(args.fact || ''));
+                case 'analyze_screenshot':
+                    return _analyzeScreenshot(String(args.question || ''));
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
@@ -1155,8 +1215,9 @@
         var hour = new GlideDateTime().getDisplayValue().substring(11, 13);
         var hrNum = parseInt(hour, 10) || 12;
         var greet = hrNum < 12 ? 'Good morning' : (hrNum < 17 ? 'Good afternoon' : 'Good evening');
+        var firstName = gs.getUserDisplayName().split(' ')[0];
 
-        var line = greet + ', ' + gs.getUserDisplayName().split(' ')[0] + '. ';
+        var line = greet + ', ' + firstName + '. ';
         var bits = [];
         if (myInc)      bits.push(myInc      + ' incident'    + (myInc      === 1 ? '' : 's'));
         if (myPrb)      bits.push(myPrb      + ' problem'     + (myPrb      === 1 ? '' : 's'));
@@ -1170,10 +1231,71 @@
             line += 'You have ' + bits.join(', ') + '.';
         }
 
+        // R1.4 - PROACTIVE HIGHLIGHTS
+        // Pick the single most-important item to mention so the briefing
+        // feels like a colleague talking, not a status board.
+        var highlights = [];
+
+        // 1. Highest-priority active incident
+        try {
+            var p = new GlideRecord('incident');
+            p.addActiveQuery();
+            p.addQuery('assigned_to', meId);
+            p.orderBy('priority');
+            p.orderBy('opened_at');
+            p.setLimit(1);
+            p.query();
+            if (p.next()) {
+                var pri = String(p.priority);
+                var num = String(p.number);
+                var sd  = String(p.short_description || '').substring(0, 80);
+                var label = pri === '1' ? 'a critical' : (pri === '2' ? 'a high-priority' : 'an');
+                highlights.push('Your top ticket is ' + num + ', ' + label + ' incident about ' + sd + '.');
+            }
+        } catch (eP) {}
+
+        // 2. Oldest pending approval
+        try {
+            var a = new GlideRecord('sysapproval_approver');
+            a.addQuery('approver', meId);
+            a.addQuery('state', 'requested');
+            a.orderBy('sys_created_on');
+            a.setLimit(1);
+            a.query();
+            if (a.next()) {
+                var approvalAge = '';
+                try {
+                    var gd = new GlideDateTime(a.sys_created_on);
+                    var now = new GlideDateTime();
+                    var diffMs = now.getNumericValue() - gd.getNumericValue();
+                    var hours = Math.floor(diffMs / 3600000);
+                    if (hours > 24) approvalAge = ' (waiting ' + Math.floor(hours / 24) + ' day' + (Math.floor(hours / 24) === 1 ? '' : 's') + ')';
+                    else if (hours > 0) approvalAge = ' (waiting ' + hours + ' hour' + (hours === 1 ? '' : 's') + ')';
+                } catch (eD) {}
+                highlights.push('Your oldest pending approval has been waiting' + approvalAge + '.');
+            }
+        } catch (eA) {}
+
+        // 3. Did anything change overnight in their watchlist? (notifications table)
+        try {
+            var n = new GlideRecord(SCOPE + '_notification');
+            n.addQuery('user', meId);
+            n.addQuery('delivered', false);
+            n.orderByDesc('sys_created_on');
+            n.setLimit(1);
+            n.query();
+            if (n.next()) {
+                highlights.push('Heads up - ' + String(n.message || 'there is unread activity in your watchlist') + '.');
+            }
+        } catch (eN) {}
+
         return {
-            ok: true, briefing: line,
+            ok: true,
+            briefing: line,
+            highlights: highlights,
             counts: { incidents: myInc, problems: myPrb, changes: myChg, requests: myReqOpen, approvals: myAppr, watching: watchCount },
-            greeting: greet
+            greeting: greet,
+            instruction_for_netra: 'Read the briefing aloud, then say the highlights one at a time in a calm, helpful tone. Pause briefly between them. End with an offer like "What would you like to focus on first?".'
         };
     }
 
@@ -1414,7 +1536,10 @@
         type:              'type of change (standard, normal, emergency)'
     };
 
-    function _draftLoadCtx() {
+    // R1.4 - Single combined context blob: {draft:{} | null, mem:[]}
+    // Stored with "CTX:" prefix in last_utterance field, so draft and
+    // long-term memory both survive each other.
+    function _ctxLoadGr() {
         var ctx = new GlideRecord(SCOPE + '_context');
         ctx.addQuery('user', gs.getUserID());
         ctx.query();
@@ -1424,20 +1549,35 @@
         }
         return ctx;
     }
-    function _draftRead() {
-        var ctx = _draftLoadCtx();
+    function _ctxReadBlob() {
+        var ctx = _ctxLoadGr();
         var raw = String(ctx.last_utterance || '');
-        if (raw.indexOf('DRAFT:') !== 0) return null;
-        try { return JSON.parse(raw.substring(6)); } catch (e) { return null; }
+        if (raw.indexOf('CTX:') === 0) {
+            try { return JSON.parse(raw.substring(4)) || { draft: null, mem: [] }; } catch (e) {}
+        }
+        // Backwards-compat: migrate old DRAFT: or MEM: prefixed values
+        if (raw.indexOf('DRAFT:') === 0) {
+            try { return { draft: JSON.parse(raw.substring(6)), mem: [] }; } catch (e) {}
+        }
+        if (raw.indexOf('MEM:') === 0) {
+            try { return { draft: null, mem: JSON.parse(raw.substring(4)) || [] }; } catch (e) {}
+        }
+        return { draft: null, mem: [] };
+    }
+    function _ctxWriteBlob(blob) {
+        var ctx = _ctxLoadGr();
+        ctx.last_utterance = 'CTX:' + JSON.stringify(blob);
+        ctx.update();
+    }
+    function _draftLoadCtx() { return _ctxLoadGr(); }   // kept for compatibility
+    function _draftRead() {
+        var b = _ctxReadBlob();
+        return b.draft || null;
     }
     function _draftWrite(d) {
-        var ctx = _draftLoadCtx();
-        if (d === null) {
-            ctx.last_utterance = '';
-        } else {
-            ctx.last_utterance = 'DRAFT:' + JSON.stringify(d);
-        }
-        ctx.update();
+        var b = _ctxReadBlob();
+        b.draft = d;
+        _ctxWriteBlob(b);
     }
 
     function _startRecordDraft(recordType, initialDesc) {
@@ -1638,9 +1778,129 @@
     }
 
     /* ===================================================================
-     *  Vocab miner - pull domain-specific words from ServiceNow tables
-     *  into the client's SpeechGrammarList. Cached 6 hours.
+     *  R1.4 - CLAUDE-OF-SERVICENOW UPGRADES
      * =================================================================== */
+
+    // 1. Capability tour - self-introspection
+    function _listCapabilities() {
+        return {
+            ok: true,
+            categories: [
+                { name: 'Tickets',  examples: [
+                    'open a ticket for ...', 'list my tickets', 'resolve INC...',
+                    'escalate INC...', 'assign INC... to John Adams',
+                    'change priority of INC... to high', 'summarise INC...'
+                ]},
+                { name: 'Other work', examples: [
+                    'log a problem about ...', 'raise a change for ...',
+                    'list my problems', 'list my changes', 'list my requests'
+                ]},
+                { name: 'Briefing & workload', examples: [
+                    'morning briefing', 'what is on my plate', 'workload summary',
+                    'what is overdue', 'how is my team doing'
+                ]},
+                { name: 'Approvals', examples: [
+                    'list my approvals', 'approve CHG...', 'reject CHG... because ...'
+                ]},
+                { name: 'People & messages', examples: [
+                    'who is John Adams', 'look up Mihir', 'tell John I will be late'
+                ]},
+                { name: 'Knowledge', examples: [
+                    'search knowledge for VPN', 'find articles about password reset'
+                ]},
+                { name: 'Context & memory', examples: [
+                    'what was I working on', 'what did we discuss earlier',
+                    'remember that my favourite group is Database Admins'
+                ]},
+                { name: 'Visual analysis', examples: [
+                    'look at this form and tell me what is wrong',
+                    'analyse this screen'
+                ]},
+                { name: 'Watchlist', examples: [
+                    'watch INC...', 'stop watching INC...', 'list my watchlist'
+                ]},
+                { name: 'Control', examples: [
+                    'stop listening', 'wake up', 'pause notifications for two hours',
+                    'tell a joke'
+                ]}
+            ],
+            message: 'I can do all of the above by voice. Speak naturally - I will pick the right tool.'
+        };
+    }
+
+    // 2. Persistent conversation memory - reads/writes through the unified
+    //    {draft, mem} blob so it does not collide with the draft state.
+    function _memRead() {
+        return _ctxReadBlob().mem || [];
+    }
+    function _memWrite(arr) {
+        var b = _ctxReadBlob();
+        b.mem = arr;
+        _ctxWriteBlob(b);
+    }
+    function _memAppend(userMsg, netraReply) {
+        if (!userMsg && !netraReply) return;
+        var arr = _memRead();
+        arr.push({
+            t: new GlideDateTime().toString(),
+            u: String(userMsg || '').substring(0, 240),
+            n: String(netraReply || '').substring(0, 480)
+        });
+        // Keep last 40 turns
+        if (arr.length > 40) arr = arr.slice(arr.length - 40);
+        _memWrite(arr);
+    }
+
+    function _recallPastConversations(keyword, limit) {
+        var arr = _memRead();
+        if (!arr.length) {
+            return { ok: true, count: 0, exchanges: [],
+                     message: 'I do not have any past conversations on record yet.' };
+        }
+        var filtered = arr;
+        if (keyword) {
+            var kw = keyword.toLowerCase();
+            filtered = arr.filter(function (e) {
+                return (e.u || '').toLowerCase().indexOf(kw) >= 0 ||
+                       (e.n || '').toLowerCase().indexOf(kw) >= 0;
+            });
+        }
+        var n = Math.min(20, Math.max(1, limit || 10));
+        var slice = filtered.slice(Math.max(0, filtered.length - n));
+        return {
+            ok: true,
+            count: slice.length,
+            total_remembered: arr.length,
+            keyword: keyword || null,
+            exchanges: slice,
+            message: 'Found ' + slice.length + ' relevant exchange' + (slice.length === 1 ? '' : 's') +
+                     (keyword ? ' for "' + keyword + '"' : '') + '.'
+        };
+    }
+
+    function _rememberFact(fact) {
+        if (!fact) return { ok: false, error: 'Fact text is required.' };
+        var arr = _memRead();
+        arr.push({
+            t: new GlideDateTime().toString(),
+            u: '[REMEMBER]',
+            n: fact
+        });
+        if (arr.length > 40) arr = arr.slice(arr.length - 40);
+        _memWrite(arr);
+        return { ok: true, message: 'Noted. I will remember that.' };
+    }
+
+    function _analyzeScreenshot(question) {
+        // The actual image is sent on the next turn as inlineData in contents.
+        // This tool just signals to Gemini that vision is expected.
+        return {
+            ok: true,
+            instruction: 'The next user message will contain an inlineData PNG. Analyse it carefully and answer: ' + (question || 'what does this show?'),
+            message: 'Looking at the screen now...'
+        };
+    }
+
     function _getVocab() {
         try {
             var cached = gs.getProperty(SCOPE + '.vocab_cache');

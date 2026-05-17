@@ -26,7 +26,7 @@
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
     <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
       <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <strong>NETRA <span class="netra-dev-ver">R1.3</span></strong>
+      <strong>NETRA <span class="netra-dev-ver">R1.4</span></strong>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
@@ -89,6 +89,16 @@
         </div>
         <div class="netra-bar-empty" ng-show="!c.charts.toolBars.length">no tools called yet</div>
       </div>
+      <!-- R1.4 - last-turn trace (Claude-style thinking transparency) -->
+      <div class="netra-graph-card netra-trace" ng-show="c.lastTrace.length">
+        <div class="netra-graph-title">LAST TURN TRACE <span class="netra-graph-sub">({{c.lastTrace.length}} tool{{c.lastTrace.length === 1 ? '' : 's'}})</span></div>
+        <div class="netra-trace-row" ng-repeat="t in c.lastTrace">
+          <span class="netra-trace-step">{{t.order}}</span>
+          <span class="netra-trace-name">{{t.name}}</span>
+          <span class="netra-trace-arrow">->&nbsp;</span>
+          <span class="netra-trace-ok">ok</span>
+        </div>
+      </div>
     </section>
 
     <section class="netra-dev-transcript">
@@ -113,6 +123,7 @@
               ng-disabled="!c.conversationOpen">End conv</button>
       <button ng-click="c.devTestTTS()"     title="Speak a test phrase with the chosen engine">Test TTS</button>
       <button ng-click="c.devToggleTTS()"   title="Switch between remote (free Raveena) and browser TTS (Heera)">{{c.useRemoteTTS ? 'Use browser' : 'Use free'}}</button>
+      <button ng-click="c.devCaptureScreen()" title="Capture a frame of your screen for Gemini multimodal analysis">Capture screen</button>
       <button ng-click="c.devCycleRemoteVoice()" title="Cycle through StreamElements voices"
               ng-disabled="!c.useRemoteTTS">{{c.remoteVoice}}</button>
       <button ng-click="c.devGreet()"       title="Re-trigger the greeting">Greet</button>
@@ -211,8 +222,12 @@
   </button>
 
   <!-- Small transcript card for sighted helpers -->
+  <!-- R1.4 - Spoken-response card. Always visible (devOn or not) while
+       there's been a recent exchange. Sticks for 12s after Netra stops
+       speaking, then fades. Drag the orb to move this card with it. -->
   <div class="netra-card"
-       ng-show="(c.lastHeard || c.spoken) && !c.devOn"
+       ng-show="c.lastHeard || c.spoken"
+       ng-class="{'netra-card-speaking': c.state === 'speaking'}"
        aria-hidden="true">
     <div class="netra-card-row" ng-show="c.lastHeard">
       <span class="netra-card-label">You</span>
@@ -221,6 +236,11 @@
     <div class="netra-card-row netra-card-row-bot" ng-show="c.spoken">
       <span class="netra-card-label">Netra</span>
       <span class="netra-card-text">{{c.spoken}}</span>
+    </div>
+    <div class="netra-card-meta" ng-show="c.stats.lastModel && c.stats.lastModel !== '-'">
+      <span>{{c.stats.lastModel}}</span>
+      <span>{{c.stats.lastLatencyMs}} ms</span>
+      <span ng-show="c.charts.toolBars.length">{{c.charts.toolBars[0].name}}</span>
     </div>
   </div>
 

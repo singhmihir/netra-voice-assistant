@@ -382,17 +382,40 @@
  *  Transcript card (sighted-helper preview)
  * ============================================================ */
 .netra-card {
-    width: 320px;
+    width: 360px;
     max-width: calc(100vw - 56px);
-    background: #FFFFFF;
-    border: 1px solid #E8EAED;
-    border-radius: 16px;
-    padding: 12px 14px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    background: linear-gradient(160deg, rgba(36, 36, 56, 0.96), rgba(18, 18, 28, 0.96));
+    border: 1px solid rgba(127, 255, 176, 0.25);
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4), 0 0 18px rgba(127, 255, 176, 0.18);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    color: #ebedf2;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
     animation: card-in 0.25s ease;
+    transition: box-shadow 0.35s ease, border-color 0.35s ease;
+}
+.netra-card-speaking {
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4), 0 0 26px rgba(127, 255, 176, 0.55);
+    border-color: rgba(127, 255, 176, 0.6);
+}
+.netra-card-meta {
+    display: flex;
+    gap: 8px;
+    color: #6b7178;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
+.netra-card-meta span:not(:last-child)::after {
+    content: '·';
+    margin-left: 8px;
+    color: rgba(255,255,255,0.15);
 }
 @keyframes card-in {
     from { opacity: 0; transform: translateY(6px); }
@@ -407,18 +430,23 @@
 }
 .netra-card-label {
     flex: none;
-    font-size: 10.5px;
+    font-size: 9.5px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #5F6368;
-    padding-top: 2px;
-    width: 36px;
+    letter-spacing: 0.1em;
+    color: #9aa0a6;
+    padding-top: 3px;
+    width: 42px;
 }
-.netra-card-row-bot .netra-card-label { color: #4285F4; }
+.netra-card-row-bot .netra-card-label { color: #a5d6a7; }
 .netra-card-text {
-    color: #202124;
+    color: #ebedf2;
     word-break: break-word;
+    line-height: 1.5;
+    font-size: 13px;
+}
+.netra-card-row-bot .netra-card-text {
+    color: #ffffff;
 }
 
 /* ============================================================
@@ -787,6 +815,43 @@
     text-align: center;
     padding: 6px 0;
     font-size: 10.5px;
+}
+
+/* R1.4 - last-turn tool trace */
+.netra-trace-row {
+    display: grid;
+    grid-template-columns: 20px 1fr 24px 32px;
+    gap: 4px;
+    align-items: center;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    padding: 2px 0;
+}
+.netra-trace-step {
+    background: rgba(127,255,176,0.18);
+    color: #a5d6a7;
+    border-radius: 3px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 9px;
+    padding: 1px 0;
+}
+.netra-trace-name {
+    color: #aecbfa;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.netra-trace-arrow {
+    color: #6b7178;
+    text-align: right;
+}
+.netra-trace-ok {
+    color: #a5d6a7;
+    font-weight: 600;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
 .netra-dev-voices label {

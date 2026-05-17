@@ -1,10 +1,11 @@
 /**
- * Netra Mic widget - CLIENT CONTROLLER (R1.3 - Claude of ServiceNow)
+ * Netra Mic widget - CLIENT CONTROLLER (R1.4 - Claude-of-ServiceNow ext)
  *
- * R1.3 delta: removed aggressive silent-rec heartbeat that caused
- *   Chrome's mic indicator to blink. Added draggable dev console.
- *   Simpler Claude-style icon (default top-left, 64px). Multi-turn
- *   record-draft confirmation flow on the server side.
+ * R1.4 adds: persistent conversation memory across page loads,
+ *   visible spoken-response card with model+latency badge, last-turn
+ *   tool-call trace in dev panel, screen capture via getDisplayMedia
+ *   for Gemini multimodal vision, list_capabilities introspection,
+ *   smarter proactive briefing with highlighted top items.
  *
  * Architecture:
  *   ONE continuous speech-recognition session that NEVER stops. The
@@ -90,6 +91,9 @@ api.controller = function ($scope, $timeout, $window) {
         lastModel:     '-',
         lastLatencyMs: 0
     };
+    // R1.4 - last-turn tool-call trace (Claude-style thinking transparency)
+    c.lastTrace = [];   // [{name, ts}, ...]
+    c.pendingScreenshot = null;
     c.charts = {
         confSeries: [],   // numbers 0-100
         latSeries:  [],   // numbers (ms)
@@ -561,6 +565,43 @@ api.controller = function ($scope, $timeout, $window) {
     // any) is then in SpeechRecognition transcription, not audio capture.
     c.micRecording = false;
     c.micTestResult = '';
+    /* ============================================================
+     *  R1.4 - Screen capture for vision input
+     *
+     *  Uses getDisplayMedia (Chrome native) - user is prompted to
+     *  share their tab once. We grab one frame, encode to PNG base64,
+     *  and send to the server as the next user message's inlineData.
+     * ============================================================ */
+    c.devCaptureScreen = function () {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            logEvent('err', 'getDisplayMedia not supported in this browser');
+            return;
+        }
+        logEvent('dev', 'requesting screen capture...');
+        navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: 'browser' } }).then(function (stream) {
+            var track = stream.getVideoTracks()[0];
+            var imageCapture = new ImageCapture(track);
+            imageCapture.grabFrame().then(function (bitmap) {
+                var canvas = document.createElement('canvas');
+                canvas.width  = Math.min(bitmap.width,  1280);
+                canvas.height = Math.min(bitmap.height, 800);
+                var ctx = canvas.getContext('2d');
+                ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                var b64 = canvas.toDataURL('image/png').split(',')[1];
+                track.stop();
+                logEvent('dev', 'screenshot captured: ' + Math.round(b64.length / 1024) + ' KB');
+                c.pendingScreenshot = b64;
+                c.spoken = 'Screenshot ready. Now ask me what to look for.';
+                $scope.$applyAsync();
+            }).catch(function (e) {
+                logEvent('err', 'grabFrame: ' + (e && e.message));
+                track.stop();
+            });
+        }).catch(function (err) {
+            logEvent('err', 'getDisplayMedia: ' + (err && err.message));
+        });
+    };
+
     c.devTestMic = function () {
         if (c.micRecording) return;
         if (!_micStream) {
@@ -890,6 +931,7 @@ api.controller = function ($scope, $timeout, $window) {
     var recRestartCount  = 0;   // consecutive rapid-end count for backoff
     var recLastStartTime = 0;   // track session start time
     var recLastActivityAt = 0;  // R1.1 - last interim or final result timestamp
+    var recRunningDebounceTimer = null;   // R1.3.1 - debounce live-indicator off
 
     function startContinuous() {
         if (!c.hasSR) return;
@@ -904,8 +946,14 @@ api.controller = function ($scope, $timeout, $window) {
         recLastStartTime = Date.now();
 
         contRec.onstart = function () {
+            // R1.3.1 - Cancel any pending "set false" so the indicator stays
+            // continuously on through quick restart cycles.
+            if (recRunningDebounceTimer) {
+                $timeout.cancel(recRunningDebounceTimer);
+                recRunningDebounceTimer = null;
+            }
             c.recRunning = true;
-            recRestartCount = 0;   // successful start — reset backoff counter
+            recRestartCount = 0;   // successful start - reset backoff counter
             $scope.$applyAsync();
         };
 
@@ -931,9 +979,19 @@ api.controller = function ($scope, $timeout, $window) {
         };
 
         contRec.onerror = function (ev) {
-            // 'no-speech', 'audio-capture' are routine in always-on mode
-            if (ev.error === 'no-speech' || ev.error === 'audio-capture') return;
-            if (ev.error === 'not-allowed') {
+            // R1.3.1 - These are all ROUTINE lifecycle events, not errors:
+            //   'no-speech'     = user was just quiet
+            //   'audio-capture' = mic device hiccup, will recover
+            //   'aborted'       = deliberate stop OR Chrome's 5-min session limit
+            //   'network'       = transient network blip (also self-recovers)
+            // Silently ignore so they do not pollute the dev log.
+            if (ev.error === 'no-speech' ||
+                ev.error === 'audio-capture' ||
+                ev.error === 'aborted' ||
+                ev.error === 'network') {
+                return;
+            }
+            if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
                 logEvent('err', 'mic permission DENIED - aborting recognition');
                 c.recRunning = false;
                 setState('error');
@@ -945,8 +1003,17 @@ api.controller = function ($scope, $timeout, $window) {
         };
 
         contRec.onend = function () {
-            c.recRunning = false;
-            $scope.$applyAsync();
+            // R1.3.1 - Don't flip recRunning false IMMEDIATELY if a restart
+            // is coming. The "off" period of the live indicator is just the
+            // 250 ms restart gap, which looks like rapid flicker to the user.
+            // Instead: stay-on for 600 ms; if start hasn't happened by then,
+            // actually report stopped.
+            if (recRunningDebounceTimer) $timeout.cancel(recRunningDebounceTimer);
+            recRunningDebounceTimer = $timeout(function () {
+                c.recRunning = false;
+                $scope.$applyAsync();
+            }, 600);
+
             // Always restart unless permission was denied
             if (c.permission === 'denied') return;
             // Exponential backoff if recognition is ending rapidly (<2s sessions)
@@ -1312,6 +1379,13 @@ api.controller = function ($scope, $timeout, $window) {
         c.data.action  = 'chat';
         c.data.message = transcript;
         c.data.history = geminiHistory;
+        // R1.4 - attach screenshot if one was just captured
+        if (c.pendingScreenshot) {
+            c.data.image_b64 = c.pendingScreenshot;
+            c.data.image_mime = 'image/png';
+            logEvent('srv', 'attaching screenshot (' + Math.round(c.pendingScreenshot.length / 1024) + ' KB)');
+            c.pendingScreenshot = null;
+        }
 
         var hung = $timeout(function () {
             logEvent('warn', 'server >12s, may be hung');
@@ -1333,6 +1407,10 @@ api.controller = function ($scope, $timeout, $window) {
                     if (r.tools_called) {
                         c.stats.toolsCalled += r.tools_called.length || 0;
                         r.tools_called.forEach(function (name) { _countTool(name); });
+                        // R1.4 - record the last turn's tool trace
+                        c.lastTrace = r.tools_called.map(function (name, i) {
+                            return { name: name, order: i + 1 };
+                        });
                     }
                 }
                 if (!r) {
