@@ -417,6 +417,25 @@
     margin-left: 8px;
     color: rgba(255,255,255,0.15);
 }
+/* R2.4 - clickable link fallback when popup blocked */
+.netra-card-link {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(127, 255, 176, 0.18);
+    color: #aef0d0 !important;
+    border: 1px solid rgba(127, 255, 176, 0.4);
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 600;
+    transition: background 0.15s ease;
+    word-break: break-all;
+}
+.netra-card-link:hover {
+    background: rgba(127, 255, 176, 0.3);
+    text-decoration: none;
+}
 @keyframes card-in {
     from { opacity: 0; transform: translateY(6px); }
     to   { opacity: 1; transform: translateY(0); }

@@ -100,6 +100,7 @@ api.controller = function ($scope, $timeout, $window) {
     // R1.4 - last-turn tool-call trace (Claude-style thinking transparency)
     c.lastTrace = [];   // [{name, ts}, ...]
     c.pendingScreenshot = null;
+    c.pendingOpenUrl    = null;   // R2.4 - clickable fallback when popup blocked
 
     /* ============================================================
      *  R2.2 - VOICE TRAINING (personal vocab + aliases)
@@ -1759,12 +1760,24 @@ api.controller = function ($scope, $timeout, $window) {
                                 }
                             }, 1500);
                         }
-                        // R2.4 - open external URL in new tab
+                        // R2.4 - open external URL. window.open may be blocked
+                        // by Chrome's popup blocker (no user-gesture context).
+                        // Show a clickable link in the spoken-response card as
+                        // a fallback so the sighted helper can complete the
+                        // open with one click - this counts as a user gesture.
                         if (r.directives.open_url) {
-                            logEvent('nav', 'opening new tab: ' + r.directives.open_url);
+                            logEvent('nav', 'opening: ' + r.directives.open_url);
                             $timeout(function () {
-                                try { $window.open(r.directives.open_url, '_blank', 'noopener,noreferrer'); }
-                                catch (e) { logEvent('err', 'window.open failed: ' + e.message); }
+                                var win = null;
+                                try { win = $window.open(r.directives.open_url, '_blank', 'noopener,noreferrer'); }
+                                catch (e) { logEvent('err', 'window.open threw: ' + e.message); }
+                                if (!win) {
+                                    // Blocked - put a clickable link in c.pendingOpenUrl
+                                    // (rendered in the response card)
+                                    c.pendingOpenUrl = r.directives.open_url;
+                                    logEvent('warn', 'popup blocked - showing clickable link in card');
+                                    $scope.$applyAsync();
+                                }
                             }, 1500);
                         }
                         if (r.directives.click_button_label) {

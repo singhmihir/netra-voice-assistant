@@ -270,6 +270,10 @@
       <span>{{c.stats.lastLatencyMs}} ms</span>
       <span ng-show="c.charts.toolBars.length">{{c.charts.toolBars[0].name}}</span>
     </div>
+    <!-- R2.4 - popup-blocked fallback: clickable link -->
+    <a class="netra-card-link" ng-show="c.pendingOpenUrl"
+       ng-href="{{c.pendingOpenUrl}}" target="_blank" rel="noopener noreferrer"
+       ng-click="c.pendingOpenUrl = null">Click here to open {{c.pendingOpenUrl}}</a>
   </div>
 
   <!-- Initial-gesture gate -->
