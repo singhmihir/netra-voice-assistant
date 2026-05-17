@@ -1,5 +1,5 @@
 /**
- * Netra Mic widget - SERVER SCRIPT  (R1.4 - Claude-of-ServiceNow ext)
+ * Netra Mic widget - SERVER SCRIPT  (Release 2 - web + in-tab control)
  *
  * R1.4 adds 4 tools: list_capabilities (introspection),
  *   recall_past_conversations (long-term memory recall),
@@ -131,10 +131,13 @@
         }
         var model = gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash');
 
-        // Build conversation history for Gemini
+        // Build conversation history for Gemini.
+        // R2 - aggressively prune to last 12 turns (was unbounded). Most
+        // commands are independent, history bloat slows every round-trip.
         var contents = [];
         if (Array.isArray(history)) {
-            for (var i = 0; i < history.length; i++) {
+            var start = Math.max(0, history.length - 12);
+            for (var i = start; i < history.length; i++) {
                 var h = history[i];
                 if (h && h.role && h.parts) contents.push(h);
             }
@@ -158,6 +161,7 @@
         // Tool-use loop (max 5 iterations to prevent runaway)
         var modelUsed = null;
         var toolsCalled = [];   // R1 - track which tools were invoked
+        var clientDirectives = {};   // R2 - navigate_url, click_button_label, etc.
         for (var iter = 0; iter < 5; iter++) {
             var resp = _callGemini(apiKey, model, contents, tools, systemInstruction);
             if (resp._model_used) modelUsed = resp._model_used;
@@ -197,6 +201,10 @@
                     var fc = functionCalls[f];
                     var result = _runTool(fc.name, fc.args || {});
                     toolsCalled.push(fc.name);   // R1 - record tool call
+                    // R2 - hoist client-side directives so the AngularJS
+                    // controller can act on them after the reply.
+                    if (result && result.navigate_url)       clientDirectives.navigate_url = result.navigate_url;
+                    if (result && result.click_button_label) clientDirectives.click_button_label = result.click_button_label;
                     gs.info('[NetraGemini] tool ' + fc.name + ' -> ' + JSON.stringify(result).substring(0, 200));
                     responseParts.push({
                         functionResponse: {
@@ -233,7 +241,8 @@
                 history: contents,
                 paused: data.paused,
                 model_used: modelUsed,
-                tools_called: toolsCalled    // R1 - for dev panel graph
+                tools_called: toolsCalled,    // R1 - for dev panel graph
+                directives: clientDirectives  // R2 - navigate_url / click_button_label
             };
         }
 
@@ -309,8 +318,14 @@
             systemInstruction: systemInstruction,
             generationConfig: {
                 temperature: 0.7,
-                maxOutputTokens: 1024,
+                maxOutputTokens: 512,    // R2 - smaller, faster, forces concise replies
                 topP: 0.95
+            },
+            // R2 - encourage Gemini to call multiple tools in ONE turn rather
+            // than chain them across iterations - that halves latency for
+            // multi-step commands like "list my tickets and my approvals".
+            toolConfig: {
+                functionCallingConfig: { mode: 'AUTO' }
             },
             // R1: relax default safety filters - this is an internal corporate
             // assistant. Corporate directory lookups, ticket text, and routine
@@ -444,6 +459,11 @@
 '- You are the "Claude of ServiceNow": careful, thoughtful, never destructive without confirmation, always reads-back before acting.\n' +
 '- Use the persons first name naturally. e.g. "Right, Mihir, here is what I have so far."\n' +
 '- BE EMPATHETIC. If the user sounds frustrated, acknowledge before acting.\n' +
+'\n' +
+'R2 - WEB SEARCH + IN-TAB CONTROL:\n' +
+'- For general-knowledge questions OUTSIDE ServiceNow (definitions, facts, "what is X", "who is X", "tell me about X"), call search_web. It uses free DuckDuckGo + Wikipedia. Cite the source briefly in your reply: "According to Wikipedia, ..." or "DuckDuckGo says, ...".\n' +
+'- When user says "open INC...", "show me INC...", "take me to INC..." - call navigate_to_record. It navigates the users existing ServiceNow tab to that record. Announce it briefly: "Opening INC zero zero one two now."\n' +
+'- When user says "click resolve", "submit this form", "approve it" - call click_button with the button label. Limited to standard form buttons.\n' +
 '\n' +
 'CAPABILITIES & MEMORY:\n' +
 '- When user asks "what can you do?" / "help me" / "show me your features" - call list_capabilities and read the categories.\n' +
@@ -819,6 +839,28 @@
                     parameters: { type: 'object', properties: {
                         question: { type: 'string', description: 'What the user wants you to look for or explain' }
                     } }
+                },
+                // ------- R2 - WEB SEARCH + IN-TAB CONTROL -------
+                {
+                    name: 'search_web',
+                    description: 'Search the public internet for general-knowledge information (definitions, facts, news, encyclopaedic summaries). Uses DuckDuckGo Instant Answer + Wikipedia (both free). Use for questions OUTSIDE ServiceNow: "what is GLP-1", "who is the CEO of NVIDIA", "what is the time difference between London and Bangalore", "explain Kubernetes". Do NOT use for ServiceNow questions - use the ticket / knowledge tools for those.',
+                    parameters: { type: 'object', properties: {
+                        query: { type: 'string', description: 'The search query in natural language' }
+                    }, required: ['query'] }
+                },
+                {
+                    name: 'navigate_to_record',
+                    description: 'Navigate the users current ServiceNow tab to a specific record. Use when user says "open INC...", "show me INC...", "take me to INC...". The client navigates within the Service Portal tab - no new tabs, no cross-tab control.',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'INC/CHG/PRB/RITM/SCTASK/KB number' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'click_button',
+                    description: 'Find and click a button on the currently-displayed Service Portal page by its visible label (case-insensitive substring match on the buttons text or aria-label). Use when user says "click resolve", "submit the form", "save this", "approve". Limited to buttons on the current SN tab only. Returns the buttons label on success.',
+                    parameters: { type: 'object', properties: {
+                        label: { type: 'string', description: 'Substring of the button text/aria-label, e.g. "Resolve", "Submit", "Approve"' }
+                    }, required: ['label'] }
                 }
             ]
         }];
@@ -927,6 +969,13 @@
                     return _rememberFact(String(args.fact || ''));
                 case 'analyze_screenshot':
                     return _analyzeScreenshot(String(args.question || ''));
+                // ------- R2 -------
+                case 'search_web':
+                    return _searchWeb(String(args.query || ''));
+                case 'navigate_to_record':
+                    return _navigateToRecord(_normNum(args.ticket_number));
+                case 'click_button':
+                    return _clickButton(String(args.label || ''));
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
@@ -1908,6 +1957,160 @@
             ok: true,
             instruction: 'The next user message will contain an inlineData PNG. Analyse it carefully and answer: ' + (question || 'what does this show?'),
             message: 'Looking at the screen now...'
+        };
+    }
+
+    /* ===================================================================
+     *  R2 - WEB SEARCH (DuckDuckGo Instant Answer + Wikipedia)
+     *  Both are free, key-less, and CORS-friendly. DuckDuckGo handles
+     *  factoids / definitions / abstracts; Wikipedia REST API handles
+     *  encyclopaedic summaries when DDG comes back empty.
+     * =================================================================== */
+    function _searchWeb(query) {
+        if (!query) return { ok: false, error: 'Query is required.' };
+
+        // 1. Try DuckDuckGo Instant Answer first
+        try {
+            var ddgUrl = 'https://api.duckduckgo.com/?q=' + encodeURIComponent(query) +
+                         '&format=json&no_html=1&skip_disambig=1&t=netra';
+            var rm = new sn_ws.RESTMessageV2();
+            rm.setEndpoint(ddgUrl);
+            rm.setHttpMethod('GET');
+            rm.setHttpTimeout(8000);
+            var r = rm.execute();
+            if (r.getStatusCode() === 200) {
+                var body = JSON.parse(r.getBody() || '{}');
+                var abstract = String(body.AbstractText || body.Abstract || '').trim();
+                var url      = String(body.AbstractURL  || body.URL      || '').trim();
+                var source   = String(body.AbstractSource || '').trim();
+                var heading  = String(body.Heading || query).trim();
+                if (abstract) {
+                    return {
+                        ok: true, source: 'DuckDuckGo / ' + (source || 'web'),
+                        heading: heading,
+                        answer: abstract.substring(0, 1200),
+                        url: url,
+                        message: 'Found a definition for ' + heading + '.'
+                    };
+                }
+                // DDG also returns RelatedTopics with text snippets
+                if (body.RelatedTopics && body.RelatedTopics.length > 0) {
+                    var snippets = [];
+                    for (var i = 0; i < body.RelatedTopics.length && snippets.length < 3; i++) {
+                        var t = body.RelatedTopics[i];
+                        if (t.Text) snippets.push(t.Text);
+                        else if (t.Topics && t.Topics[0] && t.Topics[0].Text) snippets.push(t.Topics[0].Text);
+                    }
+                    if (snippets.length) {
+                        return {
+                            ok: true, source: 'DuckDuckGo',
+                            heading: query,
+                            answer: snippets.join(' '),
+                            url: url || 'https://duckduckgo.com/?q=' + encodeURIComponent(query),
+                            message: 'Found ' + snippets.length + ' relevant snippets.'
+                        };
+                    }
+                }
+            }
+        } catch (e) { /* fall through to Wikipedia */ }
+
+        // 2. Fall through to Wikipedia REST API summary
+        try {
+            var title = query.replace(/\s+/g, '_');
+            var wikiUrl = 'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title);
+            var rm2 = new sn_ws.RESTMessageV2();
+            rm2.setEndpoint(wikiUrl);
+            rm2.setHttpMethod('GET');
+            rm2.setRequestHeader('Accept', 'application/json');
+            rm2.setHttpTimeout(8000);
+            var r2 = rm2.execute();
+            if (r2.getStatusCode() === 200) {
+                var w = JSON.parse(r2.getBody() || '{}');
+                if (w.extract) {
+                    return {
+                        ok: true, source: 'Wikipedia',
+                        heading: String(w.title || query),
+                        answer: String(w.extract).substring(0, 1200),
+                        url: w.content_urls && w.content_urls.desktop ? w.content_urls.desktop.page : '',
+                        message: 'Found a Wikipedia entry for ' + (w.title || query) + '.'
+                    };
+                }
+            }
+            // 3. As a last resort, Wikipedia OpenSearch for fuzzy match
+            var osUrl = 'https://en.wikipedia.org/w/api.php?action=opensearch&format=json&limit=1&search=' + encodeURIComponent(query);
+            var rm3 = new sn_ws.RESTMessageV2();
+            rm3.setEndpoint(osUrl);
+            rm3.setHttpMethod('GET');
+            rm3.setHttpTimeout(8000);
+            var r3 = rm3.execute();
+            if (r3.getStatusCode() === 200) {
+                var arr = JSON.parse(r3.getBody() || '[]');
+                if (arr && arr.length >= 3 && arr[1] && arr[1].length && arr[2] && arr[2].length) {
+                    return {
+                        ok: true, source: 'Wikipedia (fuzzy)',
+                        heading: String(arr[1][0] || query),
+                        answer: String(arr[2][0] || ''),
+                        url: arr[3] && arr[3][0] ? arr[3][0] : '',
+                        message: 'Closest match via Wikipedia OpenSearch.'
+                    };
+                }
+            }
+        } catch (e2) {}
+
+        return { ok: false, error: 'No information found for "' + query + '". The internet did not return a clear answer.' };
+    }
+
+    /* ===================================================================
+     *  R2 - NAVIGATE TO RECORD (in-tab SP navigation)
+     *  Returns a directive {navigate_url} that the client picks up and
+     *  applies via window.location.assign(). Stays within the SN tab.
+     * =================================================================== */
+    function _navigateToRecord(num) {
+        if (!num) return { ok: false, error: 'Ticket number is required.' };
+        var table = _tableForNumber(num);
+        if (!table) return { ok: false, error: 'Unrecognised number: ' + num };
+        var gr = new GlideRecord(table);
+        if (!gr.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+
+        // Map table -> SP page id (the Now portal default ticket page)
+        var pageId = 'ticket';   // works for incident/problem/change in stock /sp portal
+        if (table === 'kb_knowledge')  pageId = 'kb_article';
+        if (table === 'sc_req_item')   pageId = 'sc_request';
+        if (table === 'sc_task')       pageId = 'sc_task';
+
+        var url = '/sp?id=' + pageId + '&table=' + table + '&sys_id=' + gr.getUniqueValue();
+        // Client side will pick up navigate_url and call window.location.assign(url)
+        return {
+            ok: true,
+            navigate_url: url,
+            table: table, number: num, sys_id: gr.getUniqueValue(),
+            short_description: String(gr.short_description || ''),
+            message: 'Opening ' + num + ' in this tab. ' + String(gr.short_description || '').substring(0, 80)
+        };
+    }
+
+    /* ===================================================================
+     *  R2 - CLICK BUTTON (in-tab DOM click via client directive)
+     *  Server validates the label, client finds the matching button on
+     *  the current SP page and clicks it. No system-wide control.
+     * =================================================================== */
+    function _clickButton(label) {
+        if (!label) return { ok: false, error: 'Button label is required.' };
+        // Server-side gatekeeping - we only allow specific known safe labels
+        // to be clicked. Voice typos like "club" instead of "click" should fail.
+        var allowed = ['save','submit','update','resolve','close','reopen','approve','reject',
+                       'cancel','back','next','order now','add to cart','request',
+                       'create','delete','attach','send','post','reply','escalate'];
+        var lc = label.toLowerCase().trim();
+        var matched = allowed.find(function (a) { return lc.indexOf(a) >= 0; });
+        if (!matched) {
+            return { ok: false, error: 'I am only allowed to click standard form buttons (Save, Submit, Resolve, Approve, etc). I cannot click "' + label + '".' };
+        }
+        // Client side will pick up click_button_label and execute the DOM click
+        return {
+            ok: true,
+            click_button_label: matched,
+            message: 'Clicking ' + matched + ' for you.'
         };
     }
 

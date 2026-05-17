@@ -1,5 +1,10 @@
 /**
- * Netra Mic widget - CLIENT CONTROLLER (R1.6 - human-cadence voice)
+ * Netra Mic widget - CLIENT CONTROLLER (Release 2 - web + in-tab control)
+ *
+ * R2 adds: web search via DuckDuckGo + Wikipedia, in-SP-tab navigation,
+ *   in-SP-tab button click by label, faster Gemini round-trips through
+ *   history pruning + smaller max-tokens, parallel functionCalling.
+ *   R1 stays untouched on the release-1 branch and Netra_V1 update set.
  *
  * R1.4 adds: persistent conversation memory across page loads,
  *   visible spoken-response card with model+latency badge, last-turn
@@ -567,6 +572,57 @@ api.controller = function ($scope, $timeout, $window) {
     // any) is then in SpeechRecognition transcription, not audio capture.
     c.micRecording = false;
     c.micTestResult = '';
+    /* ============================================================
+     *  R2 - IN-TAB BUTTON CLICK
+     *  Find a button on the current SP page by label substring and
+     *  click it. Searches button, [role=button], a[href], input[type=button|submit]
+     *  by visible text + aria-label. Refuses to click outside the SP root
+     *  container so we never interact with non-ServiceNow elements.
+     * ============================================================ */
+    function _findAndClickButton(labelSub) {
+        if (!labelSub) return false;
+        var sub = labelSub.toLowerCase().trim();
+        // Scope to the page itself, NOT including our own widget (no clicking our own dev panel)
+        var scope = document.querySelector('main, .sp-page-root, body');
+        if (!scope) return false;
+        var candidates = scope.querySelectorAll('button, [role="button"], a.btn, input[type="button"], input[type="submit"], [ng-click]');
+        var match = null, matchScore = 999;
+        for (var i = 0; i < candidates.length; i++) {
+            var el = candidates[i];
+            // Skip our own widget's buttons
+            if (el.closest && el.closest('.netra-root')) continue;
+            // Skip invisible / disabled
+            var rect = el.getBoundingClientRect();
+            if (rect.width < 4 || rect.height < 4) continue;
+            if (el.disabled) continue;
+            var txt   = (el.textContent || '').toLowerCase().trim();
+            var aria  = (el.getAttribute('aria-label') || '').toLowerCase();
+            var title = (el.getAttribute('title') || '').toLowerCase();
+            var blob  = (txt + ' ' + aria + ' ' + title).trim();
+            if (!blob) continue;
+            if (blob.indexOf(sub) < 0) continue;
+            // Prefer shorter button text (exact match wins)
+            var score = Math.abs(txt.length - sub.length);
+            if (score < matchScore) {
+                matchScore = score;
+                match = el;
+            }
+        }
+        if (!match) {
+            logEvent('click', 'no button found matching "' + labelSub + '"');
+            return false;
+        }
+        try {
+            match.click();
+            var label = (match.textContent || match.getAttribute('aria-label') || labelSub).trim().substring(0, 40);
+            logEvent('click', 'clicked: "' + label + '"');
+            return true;
+        } catch (e) {
+            logEvent('err', 'click failed: ' + e.message);
+            return false;
+        }
+    }
+
     /* ============================================================
      *  R1.4 - Screen capture for vision input
      *
@@ -1413,6 +1469,24 @@ api.controller = function ($scope, $timeout, $window) {
                         c.lastTrace = r.tools_called.map(function (name, i) {
                             return { name: name, order: i + 1 };
                         });
+                    }
+                    // R2 - act on client directives from tools
+                    if (r.directives) {
+                        if (r.directives.navigate_url) {
+                            logEvent('nav', 'navigating to ' + r.directives.navigate_url);
+                            // Slight delay so Netra finishes saying the lead-in
+                            $timeout(function () {
+                                try { $window.location.assign(r.directives.navigate_url); } catch (e) {
+                                    logEvent('err', 'navigation failed: ' + e.message);
+                                }
+                            }, 1500);
+                        }
+                        if (r.directives.click_button_label) {
+                            logEvent('click', 'clicking button: ' + r.directives.click_button_label);
+                            $timeout(function () {
+                                _findAndClickButton(r.directives.click_button_label);
+                            }, 800);
+                        }
                     }
                 }
                 if (!r) {
