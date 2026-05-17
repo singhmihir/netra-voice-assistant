@@ -26,7 +26,7 @@
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
     <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
       <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <span class="netra-dev-ver">R2.7</span>
+      <span class="netra-dev-ver">R2.8</span>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
@@ -53,7 +53,7 @@
       <div><span>state</span><b>{{c.stateLabel}}</b></div>
       <div><span>recognition</span><b ng-class="{'l-err': !c.recRunning}">{{c.recRunning ? 'RUNNING (always-on)' : 'stopped'}}</b></div>
       <div><span>mode</span><b ng-class="{'on': c.conversationOpen}">{{c.conversationOpen ? 'ALWAYS LISTENING - just speak' : 'closed (say "Netra" or "wake up")'}}</b></div>
-      <div><span>TTS engine</span><b>{{c.ttsEngine === 'edge' ? ('Microsoft Edge ' + c.edgeVoice) : c.ttsEngine === 'stream' ? ('StreamElements ' + c.remoteVoice) : ('browser ' + c.voiceName)}}</b></div>
+      <div><span>TTS engine</span><b>{{c.ttsEngine === 'edge' ? ('Microsoft Edge ' + c.edgeVoice) : c.ttsEngine === 'gemini' ? ('Gemini Native ' + c.geminiVoice) : c.ttsEngine === 'stream' ? ('StreamElements ' + c.remoteVoice) : ('browser ' + c.voiceName)}}</b></div>
       <div><span>mic permission</span><b ng-class="{'l-err': c.permission==='denied'}">{{c.permission}}</b></div>
       <div><span>API key</span><b ng-class="{'l-err': !c.data.has_api_key}">{{c.data.has_api_key ? 'set' : 'MISSING'}}</b></div>
       <div><span>confidence</span><b>{{c.confidence || '-'}}</b></div>
@@ -68,14 +68,29 @@
     <!-- R1 - REAL-TIME GRAPHS -->
     <section class="netra-dev-graphs">
       <div class="netra-graph-card">
-        <div class="netra-graph-title">CONFIDENCE <span class="netra-graph-sub">(last 30 utterances)</span></div>
+        <div class="netra-graph-title">
+          CONFIDENCE <span class="netra-graph-sub">(last 30 utterances)</span>
+          <span class="netra-graph-stats">
+            now {{c.charts.confLast || 0}}<span ng-show="c.charts.confSeries.length">%</span>
+            <span class="netra-graph-dim"> · min {{c.charts.confMin || 0}}<span ng-show="c.charts.confSeries.length">%</span></span>
+            <span class="netra-graph-dim"> · max {{c.charts.confMax || 0}}<span ng-show="c.charts.confSeries.length">%</span></span>
+          </span>
+        </div>
         <svg class="netra-graph-svg" viewBox="0 0 200 50" preserveAspectRatio="none" aria-hidden="true">
           <polyline ng-attr-points="{{c.charts.confPath}}" fill="none" stroke="#8ab4f8" stroke-width="1.4" stroke-linejoin="round"/>
           <line x1="0" y1="40" x2="200" y2="40" stroke="rgba(255,255,255,0.08)" stroke-width="0.5" stroke-dasharray="2 2"/>
         </svg>
       </div>
       <div class="netra-graph-card">
-        <div class="netra-graph-title">LATENCY <span class="netra-graph-sub">(Gemini, ms)</span></div>
+        <div class="netra-graph-title">
+          LATENCY <span class="netra-graph-sub">(Gemini, ms)</span>
+          <span class="netra-graph-stats">
+            now {{c.charts.latLast || 0}}<span ng-show="c.charts.latSeries.length">ms</span>
+            <span class="netra-graph-dim"> · min {{c.charts.latMin || 0}}<span ng-show="c.charts.latSeries.length">ms</span></span>
+            <span class="netra-graph-dim"> · max {{c.charts.latMax || 0}}<span ng-show="c.charts.latSeries.length">ms</span></span>
+            <span class="netra-graph-dim"> · avg {{c.charts.latAvg || 0}}<span ng-show="c.charts.latSeries.length">ms</span></span>
+          </span>
+        </div>
         <svg class="netra-graph-svg" viewBox="0 0 200 50" preserveAspectRatio="none" aria-hidden="true">
           <polyline ng-attr-points="{{c.charts.latPath}}" fill="none" stroke="#a5d6a7" stroke-width="1.4" stroke-linejoin="round"/>
         </svg>
@@ -122,10 +137,10 @@
       <button ng-click="c.devCloseConversation()" title="Close the follow-up window so wake word is required again"
               ng-disabled="!c.conversationOpen">End conv</button>
       <button ng-click="c.devTestTTS()"     title="Speak a test phrase with the chosen engine">Test TTS</button>
-      <button ng-click="c.devToggleTTS()"   title="Cycle Edge Neural -> StreamElements -> browser TTS">{{c.ttsEngine === 'edge' ? 'Use Stream' : c.ttsEngine === 'stream' ? 'Use browser' : 'Use Edge'}}</button>
+      <button ng-click="c.devToggleTTS()"   title="Cycle Edge Neural -> Gemini Native -> StreamElements -> browser TTS">{{c.ttsEngine === 'edge' ? 'Use Gemini' : c.ttsEngine === 'gemini' ? 'Use Stream' : c.ttsEngine === 'stream' ? 'Use browser' : 'Use Edge'}}</button>
       <button ng-click="c.devCaptureScreen()" title="Capture a frame of your screen for Gemini multimodal analysis">Capture screen</button>
       <button ng-click="c.devCycleRemoteVoice()" title="Cycle voices for the active engine"
-              ng-disabled="c.ttsEngine === 'browser'">{{c.ttsEngine === 'edge' ? c.edgeVoice : c.remoteVoice}}</button>
+              ng-disabled="c.ttsEngine === 'browser'">{{c.ttsEngine === 'edge' ? c.edgeVoice : c.ttsEngine === 'gemini' ? c.geminiVoice : c.remoteVoice}}</button>
       <button ng-click="c.devGreet()"       title="Re-trigger the greeting">Greet</button>
       <button ng-click="c.devReplayLast()"  title="Speak the last response again">Replay</button>
       <button ng-click="c.devRestartRec()"  title="Restart the recognition session">Restart rec</button>
@@ -277,6 +292,45 @@
 
       <!-- ALL geometry centred at 60,60 in the 120x120 viewBox so we
            have room around the sphere for drop shadow + halo bleed -->
+
+      <!-- R2.8 - AUDIO-REACTIVE VOICE BAR
+           24 thin bars arranged in a circle around the orb.
+           Each bar's length is driven by c.audioLevel (0-100) which
+           the client populates from mic input (listening) or output
+           audio amplitude (speaking). Bars at φ-derived radii:
+             Inner end at r = 55         (just outside the 50-radius sphere)
+             Outer end at 55 + level*0.2 (so up to ~75 at level=100)
+           24 bars = Fibonacci-like density at 15° spacing.
+           Each bar is positioned + rotated by its angle.
+           When idle (audioLevel = 0), bars collapse to invisible. -->
+      <g class="netra-voice-bars" ng-show="c.audioLevel > 5 || c.state === 'listening' || c.state === 'speaking' || c.state === 'thinking'">
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0"
+              transform="rotate(0 60 60)"
+              ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.18 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(15 60 60)"  ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.20 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(30 60 60)"  ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.17 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(45 60 60)"  ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.22 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(60 60 60)"  ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.16 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(75 60 60)"  ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.19 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(90 60 60)"  ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.18 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(105 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.21 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(120 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.17 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(135 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.23 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(150 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.16 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(165 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.19 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(180 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.18 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(195 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.20 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(210 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.17 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(225 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.22 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(240 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.16 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(255 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.19 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(270 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.18 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(285 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.21 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(300 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.17 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(315 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.23 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(330 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.16 }}"/>
+        <line class="netra-voice-bar"  x1="60" y1="5"   x2="60" y2="0" transform="rotate(345 60 60)" ng-attr-y2="{{ 5 - (c.audioLevel || 0) * 0.20 }}"/>
+      </g>
 
       <!-- Outermost soft halo, pulses via CSS -->
       <circle class="netra-eye-halo" cx="60" cy="60" r="58" fill="url(#netra-halo)"/>

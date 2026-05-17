@@ -123,6 +123,63 @@
         } catch (eC) {
             data.training_result = { ok: false, error: String(eC.message || eC) };
         }
+    } else if (action === 'gemini_tts') {
+        // R2.8 - synthesise the given text via Gemini's native TTS model
+        // (gemini-2.5-flash-preview-tts). Same Gemini API key, no extra
+        // service. Returns base64 PCM 24kHz mono which the client wraps
+        // in a WAV header and plays. Falls back gracefully if the model
+        // is unavailable - client retries via Edge TTS.
+        try {
+            var text  = String((input && input.text)  || '').substring(0, 4000);
+            var voice = String((input && input.voice) || 'Kore');
+            if (!text) {
+                data.gemini_tts = { ok: false, error: 'no text' };
+            } else {
+                var key = gs.getProperty(SCOPE + '.gemini_api_key');
+                if (!key) {
+                    data.gemini_tts = { ok: false, error: 'no api key' };
+                } else {
+                    var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=' + encodeURIComponent(key);
+                    var body = {
+                        contents: [{ parts: [{ text: text }] }],
+                        generationConfig: {
+                            responseModalities: ['AUDIO'],
+                            speechConfig: {
+                                voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } }
+                            }
+                        }
+                    };
+                    var rm = new sn_ws.RESTMessageV2();
+                    rm.setEndpoint(url);
+                    rm.setHttpMethod('POST');
+                    rm.setRequestHeader('Content-Type', 'application/json');
+                    rm.setRequestBody(JSON.stringify(body));
+                    rm.setHttpTimeout(15000);
+                    var r = rm.execute();
+                    var code = r.getStatusCode();
+                    if (code !== 200) {
+                        data.gemini_tts = { ok: false, error: 'HTTP ' + code, body: String(r.getBody() || '').substring(0, 200) };
+                    } else {
+                        var parsed = JSON.parse(r.getBody() || '{}');
+                        var part = parsed && parsed.candidates && parsed.candidates[0] &&
+                                   parsed.candidates[0].content && parsed.candidates[0].content.parts &&
+                                   parsed.candidates[0].content.parts[0];
+                        if (part && part.inlineData && part.inlineData.data) {
+                            data.gemini_tts = {
+                                ok: true,
+                                mime: String(part.inlineData.mimeType || 'audio/L16;rate=24000'),
+                                b64:  String(part.inlineData.data),
+                                voice: voice
+                            };
+                        } else {
+                            data.gemini_tts = { ok: false, error: 'no audio in response' };
+                        }
+                    }
+                }
+            }
+        } catch (eG) {
+            data.gemini_tts = { ok: false, error: String(eG.message || eG) };
+        }
     } else if (action === 'debug') {
         try {
             var key = gs.getProperty(SCOPE + '.gemini_api_key') || '';

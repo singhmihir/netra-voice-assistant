@@ -118,6 +118,26 @@
     50%      { opacity: 0.65; }
 }
 
+/* R2.8 - audio-reactive voice bars wrapping the orb.
+   Each bar is a thin line; y2 animates via Angular binding to audioLevel.
+   Stroke fades in slightly when active so the bars feel alive. */
+.netra-voice-bars {
+    pointer-events: none;
+    opacity: 0;
+    animation: voice-bars-fade-in 0.4s ease-out forwards;
+}
+.netra-voice-bar {
+    stroke: var(--iris-bright, #aef0d0);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    transition: y 0.07s ease-out;
+    filter: drop-shadow(0 0 2px var(--iris-bright, rgba(127, 255, 176, 0.6)));
+}
+@keyframes voice-bars-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 0.85; }
+}
+
 /* The inscribed pentagram rotates SLOWLY - one full turn every 21 sec
    (the 7th Fibonacci number * 3, deliberately divisible by phi). */
 .netra-eye-pentagram {
@@ -803,6 +823,18 @@
     text-transform: none;
     letter-spacing: 0;
 }
+/* R2.8 - inline numeric labels on graphs */
+.netra-graph-title { display: flex; align-items: baseline; gap: 6px; }
+.netra-graph-stats {
+    margin-left: auto;
+    color: #ebedf2;
+    font-weight: 600;
+    font-size: 9px;
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+}
+.netra-graph-dim { color: #6b7178; font-weight: 400; }
 .netra-graph-svg {
     width: 100%;
     height: 40px;

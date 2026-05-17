@@ -101,6 +101,9 @@ api.controller = function ($scope, $timeout, $window) {
     c.lastTrace = [];   // [{name, ts}, ...]
     c.pendingScreenshot = null;
     c.pendingOpenUrl    = null;   // R2.4 - clickable fallback when popup blocked
+    // R2.8 - unified audio level (0-100) for the voice bars around the orb.
+    // Driven by mic input when listening; driven by playback amplitude when speaking.
+    c.audioLevel = 0;
 
     /* ============================================================
      *  R2.2 - VOICE TRAINING (personal vocab + aliases)
@@ -368,15 +371,28 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function _pushConfidence(conf) {
         if (typeof conf !== 'number' || !isFinite(conf)) return;
-        c.charts.confSeries.push(Math.round(conf * 100));
+        var v = Math.round(conf * 100);
+        c.charts.confSeries.push(v);
         if (c.charts.confSeries.length > 30) c.charts.confSeries.shift();
         c.charts.confPath = _seriesToPath(c.charts.confSeries, 100);
+        // R2.8 - graph numbers
+        c.charts.confLast = v;
+        c.charts.confMin  = Math.min.apply(null, c.charts.confSeries);
+        c.charts.confMax  = Math.max.apply(null, c.charts.confSeries);
     }
     function _pushLatency(ms) {
         if (typeof ms !== 'number' || !isFinite(ms)) return;
-        c.charts.latSeries.push(ms);
+        var v = Math.round(ms);
+        c.charts.latSeries.push(v);
         if (c.charts.latSeries.length > 30) c.charts.latSeries.shift();
         c.charts.latPath = _seriesToPath(c.charts.latSeries);
+        // R2.8 - graph numbers
+        c.charts.latLast = v;
+        c.charts.latMin  = Math.min.apply(null, c.charts.latSeries);
+        c.charts.latMax  = Math.max.apply(null, c.charts.latSeries);
+        var sum = 0;
+        for (var i = 0; i < c.charts.latSeries.length; i++) sum += c.charts.latSeries[i];
+        c.charts.latAvg  = Math.round(sum / c.charts.latSeries.length);
     }
     function _countTool(name) {
         c.charts.toolCounts[name] = (c.charts.toolCounts[name] || 0) + 1;
@@ -795,16 +811,19 @@ api.controller = function ($scope, $timeout, $window) {
 
             var loop = function () {
                 _micAnalyser.getByteTimeDomainData(data);
-                // RMS over the waveform
                 var sum = 0;
                 for (var i = 0; i < data.length; i++) {
                     var v = (data[i] - 128) / 128;
                     sum += v * v;
                 }
                 var rms = Math.sqrt(sum / data.length);
-                var level = Math.min(100, Math.round(rms * 300));   // scale up
+                var level = Math.min(100, Math.round(rms * 300));
                 c.micLevel = level;
                 if (level > c.micLevelPeak) c.micLevelPeak = level;
+                // R2.8 - feed the orb's voice bars from mic when NOT speaking
+                if (c.state !== 'speaking') {
+                    c.audioLevel = level;
+                }
                 $scope.$applyAsync();
                 _micRafId = requestAnimationFrame(loop);
             };
@@ -1897,12 +1916,14 @@ api.controller = function ($scope, $timeout, $window) {
         // after TTS finishes - prevents "stuck in speaking" bug.
         var wrappedDone = function () { _afterTTS(done); };
 
-        // R1.6 - ONE continuous Edge TTS call for the whole response (no
-        // mid-response audio gaps). SSML <break> tags between sentences
-        // give natural pacing inside the single audio stream. Filler
-        // sounds still play on state -> thinking before the reply starts.
+        // R2.8 - engine selection. 'gemini' uses Gemini-native TTS
+        // (same key as chat, costs a Gemini-quota credit per turn,
+        // sounds most like Gemini chat). Otherwise fall through to
+        // Edge / StreamElements / browser as before.
         var engine = c.ttsEngine || (c.useRemoteTTS ? 'edge' : 'browser');
-        if (engine === 'edge') {
+        if (engine === 'gemini') {
+            speakGemini(clean, wrappedDone);
+        } else if (engine === 'edge') {
             speakEdgeTTS(clean, wrappedDone);
         } else if (engine === 'stream') {
             speakStreamElements(clean, wrappedDone);
@@ -1930,6 +1951,61 @@ api.controller = function ($scope, $timeout, $window) {
                '<voice name=\'' + voice + '\'>' +
                '<prosody rate=\'+15%\' pitch=\'+1st\'>' + safe + '</prosody>' +
                '</voice></speak>';
+    }
+
+    /* ============================================================
+     *  R2.8 - OUTPUT AUDIO LEVEL ANALYSER
+     *
+     *  Plug any <audio> element into a Web Audio AnalyserNode so we
+     *  can read its real-time amplitude and drive c.audioLevel for
+     *  the voice bars around the orb. Without this, the bars would
+     *  freeze flat while Netra speaks.
+     * ============================================================ */
+    var _outSrc = null;       // MediaElementAudioSourceNode
+    var _outAnalyser = null;
+    var _outRafId = null;
+    function attachOutputAnalyser(audioEl) {
+        if (!audioEl || !window.AudioContext) return;
+        try {
+            // Reuse the mic AudioContext if it exists - one context is best
+            var ctx = _micCtx || new (window.AudioContext || window.webkitAudioContext)();
+            // MediaElementSource can only be created ONCE per element; bind on first use
+            if (audioEl.__netraSrc) {
+                _outAnalyser = audioEl.__netraSrc.netraAnalyser;
+            } else {
+                _outSrc = ctx.createMediaElementSource(audioEl);
+                _outAnalyser = ctx.createAnalyser();
+                _outAnalyser.fftSize = 512;
+                _outAnalyser.smoothingTimeConstant = 0.6;
+                _outSrc.connect(_outAnalyser);
+                _outAnalyser.connect(ctx.destination);   // still play to speakers
+                audioEl.__netraSrc = _outSrc;
+                _outSrc.netraAnalyser = _outAnalyser;
+            }
+            if (_outRafId) cancelAnimationFrame(_outRafId);
+            var data = new Uint8Array(_outAnalyser.frequencyBinCount);
+            var tick = function () {
+                if (audioEl.paused || audioEl.ended) {
+                    c.audioLevel = 0;
+                    $scope.$applyAsync();
+                    return;   // stop the loop when audio stops
+                }
+                _outAnalyser.getByteTimeDomainData(data);
+                var sum = 0;
+                for (var i = 0; i < data.length; i++) {
+                    var v = (data[i] - 128) / 128;
+                    sum += v * v;
+                }
+                var rms = Math.sqrt(sum / data.length);
+                c.audioLevel = Math.min(100, Math.round(rms * 320));
+                $scope.$applyAsync();
+                _outRafId = requestAnimationFrame(tick);
+            };
+            tick();
+        } catch (e) {
+            // Already-connected source is fine - means tick is already running
+            logEvent('warn', 'output analyser: ' + (e.message || e));
+        }
     }
 
     // Unified post-TTS handler: reset state, ensure mic is open, fire user callback.
@@ -1979,6 +2055,121 @@ api.controller = function ($scope, $timeout, $window) {
         var s = '';
         for (var i = 0; i < 32; i++) s += chars[Math.floor(Math.random() * 16)];
         return s;
+    }
+
+    /* ============================================================
+     *  R2.8 - GEMINI-NATIVE TTS (opt-in)
+     *  Hits the same Gemini API the chat uses, but the speech model.
+     *  Returns base64 PCM 24kHz mono. We wrap it in a WAV header
+     *  client-side and play via <audio>. Quality matches what Gemini
+     *  itself sounds like, since it IS Gemini's voice.
+     *  Cost: each speak = 1 Gemini quota credit (same as chat call).
+     *  Falls back to Edge TTS if the model is unavailable.
+     * ============================================================ */
+    c.geminiVoice = 'Kore';   // warm female; alternatives: Puck, Charon, Aoede, Fenrir
+    var GEMINI_VOICES = ['Kore', 'Puck', 'Charon', 'Aoede', 'Fenrir', 'Leda', 'Orus', 'Zephyr'];
+
+    function _pcmToWavBlob(b64, sampleRate) {
+        // Decode base64 PCM16 -> ArrayBuffer
+        var binary = atob(b64);
+        var bytes = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        // PCM data length
+        var pcmLen = bytes.byteLength;
+        // Build a WAV header: 44 bytes + PCM
+        var buf = new ArrayBuffer(44 + pcmLen);
+        var view = new DataView(buf);
+        function writeStr(off, s) { for (var i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); }
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + pcmLen, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);          // PCM subchunk size
+        view.setUint16(20, 1, true);           // PCM format
+        view.setUint16(22, 1, true);           // mono
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true); // byte rate
+        view.setUint16(32, 2, true);           // block align
+        view.setUint16(34, 16, true);          // bits per sample
+        writeStr(36, 'data');
+        view.setUint32(40, pcmLen, true);
+        new Uint8Array(buf, 44).set(bytes);
+        return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    function speakGemini(text, done) {
+        if (!text) { _afterTTS(done); return; }
+        c.data.action = 'gemini_tts';
+        c.data.text   = text;
+        c.data.voice  = c.geminiVoice;
+        ignoreFinalsUntil = Date.now() + 15000;
+        var resolved = false;
+        var watchdog = $timeout(function () {
+            if (!resolved) { resolved = true;
+                logEvent('warn', 'gemini-tts no response in 12s - fallback edge');
+                speakEdgeTTS(text, done);
+            }
+        }, 12000);
+        c.server.update().then(function () {
+            if (resolved) return;
+            $timeout.cancel(watchdog);
+            var r = c.data.gemini_tts;
+            if (!r || !r.ok || !r.b64) {
+                resolved = true;
+                logEvent('warn', 'gemini-tts failed: ' + (r && r.error || 'no data') + ' - fallback edge');
+                speakEdgeTTS(text, done);
+                return;
+            }
+            // mime is "audio/L16;rate=24000" - extract rate
+            var rate = 24000;
+            var m = String(r.mime).match(/rate=(\d+)/);
+            if (m) rate = parseInt(m[1], 10) || 24000;
+            try {
+                var blob = _pcmToWavBlob(r.b64, rate);
+                var url = URL.createObjectURL(blob);
+                var audio = new Audio(url);
+                audio.playbackRate = 1.20;   // gemini voice is already brisk
+                audio.volume = 1.0;
+                currentAudio = audio;
+                logEvent('tts', 'gemini: ' + r.voice + ' (' + Math.round(r.b64.length / 1024) + ' KB)');
+                setState('speaking');
+                audio.onplaying = function () {
+                    logEvent('tts', 'gemini playing');
+                    attachOutputAnalyser(audio);
+                };
+                audio.onended = function () {
+                    if (resolved) return;
+                    resolved = true;
+                    URL.revokeObjectURL(url);
+                    if (currentAudio === audio) currentAudio = null;
+                    ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
+                    if (done) try { done(); } catch (e) {}
+                };
+                audio.onerror = function () {
+                    if (resolved) return;
+                    resolved = true;
+                    URL.revokeObjectURL(url);
+                    logEvent('warn', 'gemini audio playback error - fallback edge');
+                    speakEdgeTTS(text, done);
+                };
+                audio.play().catch(function (e) {
+                    if (resolved) return;
+                    resolved = true;
+                    logEvent('warn', 'gemini play() rejected: ' + (e && e.message || e));
+                    speakEdgeTTS(text, done);
+                });
+            } catch (eW) {
+                resolved = true;
+                logEvent('err', 'gemini WAV wrap failed: ' + (eW.message || eW));
+                speakEdgeTTS(text, done);
+            }
+        }, function () {
+            if (resolved) return;
+            resolved = true;
+            $timeout.cancel(watchdog);
+            logEvent('warn', 'gemini-tts transport error - fallback edge');
+            speakEdgeTTS(text, done);
+        });
     }
 
     function speakEdgeTTS(text, done) {
@@ -2034,7 +2225,8 @@ api.controller = function ($scope, $timeout, $window) {
                         audio.onplaying = function () {
                             if (resolved) return;
                             $timeout.cancel(watchdog);
-                            logEvent('tts', 'edge playing @1.20x');
+                            logEvent('tts', 'edge playing @1.50x');
+                            attachOutputAnalyser(audio);   // R2.8 voice bars
                         };
                         audio.onended = function () {
                             if (resolved) return;
@@ -2232,6 +2424,7 @@ api.controller = function ($scope, $timeout, $window) {
             $timeout.cancel(watchdog);
             setState('speaking');
             logEvent('tts', 'remote playing');
+            attachOutputAnalyser(audio);   // R2.8 voice bars
         };
         audio.onended = function () { if (!resolved) { logEvent('tts', 'remote ended'); finish(); } };
         audio.onerror = function () { fallback('audio.onerror'); };
@@ -2613,24 +2806,30 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     c.devToggleTTS = function () {
-        // R1.5 - cycle: edge -> stream -> browser -> edge
-        var seq = ['edge', 'stream', 'browser'];
+        // R2.8 - cycle: edge -> gemini -> stream -> browser -> edge
+        var seq = ['edge', 'gemini', 'stream', 'browser'];
         var idx = seq.indexOf(c.ttsEngine || 'edge');
         c.ttsEngine = seq[(idx + 1) % seq.length];
-        // Keep useRemoteTTS in sync for legacy code paths
         c.useRemoteTTS = (c.ttsEngine !== 'browser');
         logEvent('dev', 'TTS engine -> ' + c.ttsEngine +
                  (c.ttsEngine === 'edge'   ? ' (' + c.edgeVoice + ', Microsoft Neural, free)' :
+                  c.ttsEngine === 'gemini' ? ' (' + c.geminiVoice + ', Gemini native, ~1 Gemini quota / turn)' :
                   c.ttsEngine === 'stream' ? ' (StreamElements ' + c.remoteVoice + ')' :
                                              ' (browser ' + c.voiceName + ')'));
     };
 
     c.devCycleRemoteVoice = function () {
-        // R1.5 - if Edge is the current engine, cycle Edge voices; otherwise StreamElements
+        // R2.8 - cycle voices for the active engine
         if (c.ttsEngine === 'edge') {
             var ei = EDGE_VOICES.indexOf(c.edgeVoice);
             c.edgeVoice = EDGE_VOICES[(ei + 1) % EDGE_VOICES.length];
             logEvent('dev', 'Edge voice -> ' + c.edgeVoice);
+            return;
+        }
+        if (c.ttsEngine === 'gemini') {
+            var gi = GEMINI_VOICES.indexOf(c.geminiVoice);
+            c.geminiVoice = GEMINI_VOICES[(gi + 1) % GEMINI_VOICES.length];
+            logEvent('dev', 'Gemini voice -> ' + c.geminiVoice);
             return;
         }
         var voices = ['Raveena','Aditi','Joanna','Salli','Kimberly','Amy','Emma','Brian','Russell','Nicole','Joey','Matthew'];
