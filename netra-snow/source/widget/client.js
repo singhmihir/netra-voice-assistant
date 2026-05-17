@@ -1588,7 +1588,7 @@ api.controller = function ($scope, $timeout, $window) {
         safe = safe.replace(/( - | -- | — )/g, '<break time="120ms"/>$1');
         return '<speak version=\'1.0\' xml:lang=\'en-IN\'>' +
                '<voice name=\'' + voice + '\'>' +
-               '<prosody rate=\'+10%\' pitch=\'+0Hz\'>' + safe + '</prosody>' +
+               '<prosody rate=\'+15%\' pitch=\'+1st\'>' + safe + '</prosody>' +
                '</voice></speak>';
     }
 
@@ -1688,7 +1688,7 @@ api.controller = function ($scope, $timeout, $window) {
                         var blob = new Blob(chunks, { type: 'audio/mp3' });
                         var url = URL.createObjectURL(blob);
                         var audio = new Audio(url);
-                        audio.playbackRate = 1.20;   // R1.5 - faster, more conversational
+                        audio.playbackRate = 1.50;   // R2.1 - 1.5x, brisk + Claude-like
                         audio.volume = 1.0;
                         currentAudio = audio;
                         audio.onplaying = function () {
@@ -1862,7 +1862,7 @@ api.controller = function ($scope, $timeout, $window) {
         var audio = new Audio();
         audio.src = url;
         audio.volume = 1.0;
-        audio.playbackRate = 1.20;   // R1.5 - faster, more conversational
+        audio.playbackRate = 1.50;   // R2.1 - 1.5x, brisk + Claude-like
         currentAudio = audio;
 
         // Single fallback guard - whichever signal fires first wins
@@ -1926,7 +1926,7 @@ api.controller = function ($scope, $timeout, $window) {
         }
 
         var u = new SpeechSynthesisUtterance(text);
-        u.rate  = 1.20;   // R1.5 - faster, more conversational
+        u.rate  = 1.50;   // R2.1 - 1.5x, brisk + Claude-like
         u.pitch = 1.05;
         u.volume = 1.0;
         var v = chooseVoice();
