@@ -241,8 +241,10 @@
                     toolsCalled.push(fc.name);   // R1 - record tool call
                     // R2 - hoist client-side directives so the AngularJS
                     // controller can act on them after the reply.
-                    if (result && result.navigate_url)       clientDirectives.navigate_url = result.navigate_url;
+                    if (result && result.navigate_url)       clientDirectives.navigate_url       = result.navigate_url;
                     if (result && result.click_button_label) clientDirectives.click_button_label = result.click_button_label;
+                    // R2.4 - open new tab directive
+                    if (result && result.open_url)           clientDirectives.open_url           = result.open_url;
                     gs.info('[NetraGemini] tool ' + fc.name + ' -> ' + JSON.stringify(result).substring(0, 200));
                     responseParts.push({
                         functionResponse: {
@@ -494,6 +496,32 @@
 '- For general-knowledge questions OUTSIDE ServiceNow (definitions, facts, "what is X", "who is X", "tell me about X"), call search_web. It uses free DuckDuckGo + Wikipedia. Cite the source briefly in your reply: "According to Wikipedia, ..." or "DuckDuckGo says, ...".\n' +
 '- When user says "open INC...", "show me INC...", "take me to INC..." - call navigate_to_record. It navigates the users existing ServiceNow tab to that record. Announce it briefly: "Opening INC zero zero one two now."\n' +
 '- When user says "click resolve", "submit this form", "approve it" - call click_button with the button label. Limited to standard form buttons.\n' +
+'- When user says "open YouTube / Google / BBC / any external site", call open_url with the full https:// URL. Use the well-known URL: YouTube=https://www.youtube.com, Google=https://www.google.com, BBC=https://www.bbc.com, GitHub=https://github.com, etc. ALWAYS confirm verbally first: "Want me to open YouTube in a new tab?".\n' +
+'- When user says "go back to ServiceNow / take me back / return to my work", call go_to_servicenow. This navigates the current tab back to /sp.\n' +
+'\n' +
+'R2.4 - CRITICAL RULES (read these first - these are bug fixes from R2.3):\n' +
+'\n' +
+'1. FIELD vs COMMENT - if the user names a SPECIFIC FIELD ("change the short description / urgency / category / assignment group / etc to X"), you MUST call update_field, NOT update_ticket. update_ticket is ONLY for free-form customer-visible comments like "add a comment that I tried restarting".\n' +
+'   - User: "Change short description of INC8005 to laptop has been delivered"\n' +
+'     -> update_field(INC8005, short_description, "laptop has been delivered") - NOT update_ticket\n' +
+'   - User: "Set urgency of INC1234 to high"\n' +
+'     -> update_field(INC1234, urgency, "high")\n' +
+'   - User: "Add a comment that I restarted the router"\n' +
+'     -> update_ticket(INC1234, comment="restarted the router") - this one IS a comment\n' +
+'\n' +
+'2. AMBIGUOUS NAMES - never guess. If the user says "message John" with no last name or email, you MUST call lookup_user(John) first. If it returns multiple matches, ASK the user which one. Do NOT create a ticket with name "John". Messaging is NEVER create_ticket. Messaging is send_sidebar_message after you have a confirmed recipient.\n' +
+'   - User: "Message John"\n' +
+'     -> lookup_user(John) -> "I found two Johns: John Adams and John Smith. Which one?"\n' +
+'     -> User: "Adams" -> send_sidebar_message(recipient_name="John Adams", ...)\n' +
+'   - NEVER create_ticket with short_description=John just because you saw the word "message".\n' +
+'\n' +
+'3. CONFIRM BEFORE WRITING (blind-user safety) - for EVERY destructive or update operation, you MUST first describe what you are about to do and wait for explicit yes. Tools that need confirmation: update_field, update_ticket, resolve_ticket, escalate_ticket, change_priority, assign_ticket_to_*, decide_approval, send_sidebar_message, confirm_and_create_record, click_button (write actions), open_url, navigate_to_record (only if it leaves /sp), go_to_servicenow.\n' +
+'   - User: "Set urgency of INC1234 to high"\n' +
+'     -> "Just to confirm - set urgency of I N C zero zero one two three four from " + current + " to high?"\n' +
+'     -> User: "Yes" -> THEN call update_field.\n' +
+'   - For tiny read-only operations (list, lookup, search, briefing) you do NOT need to confirm. Just do them.\n' +
+'\n' +
+'4. WHEN UNSURE, SAY NO. Better to ask "I am not sure I followed - did you mean X or Y?" than to do the wrong write. Refuse politely if intent is unclear: "I am not sure exactly what to update there - could you say it again?".\n' +
 '\n' +
 'CAPABILITIES & MEMORY:\n' +
 '- When user asks "what can you do?" / "help me" / "show me your features" - call list_capabilities and read the categories.\n' +
@@ -891,6 +919,29 @@
                     parameters: { type: 'object', properties: {
                         label: { type: 'string', description: 'Substring of the button text/aria-label, e.g. "Resolve", "Submit", "Approve"' }
                     }, required: ['label'] }
+                },
+                // ------- R2.4 - update_field + URL navigation -------
+                {
+                    name: 'update_field',
+                    description: 'Update ANY standard field on a ticket (incident/problem/change/RITM/sc_task). USE THIS - not update_ticket - whenever the user names a specific field: "change short description to X", "set urgency to high", "update assignment group to ...", "set category to network", etc. update_ticket is ONLY for adding a customer-visible comment. Common fields: short_description, description, urgency, impact, priority, category, subcategory, assignment_group, assigned_to, state, close_notes, work_notes.',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'INC/PRB/CHG/RITM/SCTASK number' },
+                        field:         { type: 'string', description: 'Field name in snake_case, e.g. short_description, urgency, priority, category' },
+                        value:         { type: 'string', description: 'New value (as string; will be coerced)' }
+                    }, required: ['ticket_number','field','value'] }
+                },
+                {
+                    name: 'open_url',
+                    description: 'Open an external website in a new browser tab. Use ONLY when the user explicitly asks to open a named site by voice: "open YouTube", "open Google", "go to BBC News", "search YouTube for X". Always confirm verbally first, never open URLs the user has not named. Returns the url that will be opened.',
+                    parameters: { type: 'object', properties: {
+                        url:   { type: 'string', description: 'Full URL including https://, e.g. https://www.youtube.com' },
+                        title: { type: 'string', description: 'Human-friendly name the user said, e.g. "YouTube", "BBC News"' }
+                    }, required: ['url'] }
+                },
+                {
+                    name: 'go_to_servicenow',
+                    description: 'Navigate the CURRENT tab back to ServiceNow Service Portal (/sp). Use when the user is on YouTube or another site and says "take me back to ServiceNow", "go back to my work", "return to Netra".',
+                    parameters: { type: 'object', properties: {} }
                 }
             ]
         }];
@@ -1006,6 +1057,12 @@
                     return _navigateToRecord(_normNum(args.ticket_number));
                 case 'click_button':
                     return _clickButton(String(args.label || ''));
+                case 'update_field':
+                    return _updateField(_normNum(args.ticket_number), String(args.field || ''), String(args.value || ''));
+                case 'open_url':
+                    return _openUrl(String(args.url || ''), String(args.title || ''));
+                case 'go_to_servicenow':
+                    return _goToServiceNow();
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
@@ -2154,6 +2211,150 @@
      *  Server validates the label, client finds the matching button on
      *  the current SP page and clicks it. No system-wide control.
      * =================================================================== */
+    /* ===================================================================
+     *  R2.4 - update_field
+     *  Update ANY standard field on a ticket (not just comments).
+     *  Safer than letting Gemini grab gr.setValue() through update_ticket
+     *  because we allow-list the fields it can touch.
+     * =================================================================== */
+    var UPDATE_ALLOW = {
+        short_description:  true, description:        true,
+        urgency:            true, impact:             true,
+        priority:           true, category:           true,
+        subcategory:        true, state:              true,
+        assignment_group:   true, assigned_to:        true,
+        comments:           true, work_notes:         true,
+        close_notes:        true, close_code:         true,
+        cmdb_ci:            true
+    };
+    // Map common synonyms the user might say to actual ServiceNow fields
+    var FIELD_SYNONYM = {
+        'short description':  'short_description',
+        'title':              'short_description',
+        'summary':            'short_description',
+        'desc':               'description',
+        'details':            'description',
+        'assignment group':   'assignment_group',
+        'assigned group':     'assignment_group',
+        'group':              'assignment_group',
+        'assignee':           'assigned_to',
+        'assigned to':        'assigned_to',
+        'owner':              'assigned_to',
+        'work note':          'work_notes',
+        'work notes':         'work_notes',
+        'internal note':      'work_notes',
+        'close note':         'close_notes',
+        'close notes':        'close_notes',
+        'configuration item': 'cmdb_ci',
+        'ci':                 'cmdb_ci'
+    };
+    function _updateField(num, field, value) {
+        if (!num || !field || value === undefined || value === null || value === '') {
+            return { ok: false, error: 'ticket number, field, and value all required' };
+        }
+        // Inline the allow-list + synonym map for robustness against any
+        // var-scoping weirdness in the scoped-app sandbox.
+        var ALLOW = {
+            'short_description': 1, 'description': 1, 'urgency': 1, 'impact': 1,
+            'priority': 1, 'category': 1, 'subcategory': 1, 'state': 1,
+            'assignment_group': 1, 'assigned_to': 1, 'comments': 1, 'work_notes': 1,
+            'close_notes': 1, 'close_code': 1, 'cmdb_ci': 1
+        };
+        var SYN = {
+            'short description': 'short_description',
+            'title':              'short_description',
+            'summary':            'short_description',
+            'desc':               'description',
+            'details':            'description',
+            'assignment group':   'assignment_group',
+            'assigned group':     'assignment_group',
+            'group':              'assignment_group',
+            'assignee':           'assigned_to',
+            'assigned to':        'assigned_to',
+            'owner':              'assigned_to',
+            'work note':          'work_notes',
+            'work notes':         'work_notes',
+            'internal note':      'work_notes',
+            'close note':         'close_notes',
+            'close notes':        'close_notes',
+            'configuration item': 'cmdb_ci',
+            'ci':                 'cmdb_ci'
+        };
+        var fieldRaw  = String(field).toLowerCase().trim();
+        var fieldNorm = SYN[fieldRaw] || fieldRaw.replace(/\s+/g, '_');
+        if (!ALLOW[fieldNorm]) {
+            return { ok: false, error: 'Field "' + field + '" is not in the safe update allow-list.' };
+        }
+        var table = _tableForNumber(num);
+        if (!table) return { ok: false, error: 'Unrecognised ticket number: ' + num };
+        var gr = new GlideRecord(table);
+        if (!gr.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+
+        var oldValue = '';
+        try { oldValue = String(gr.getValue(fieldNorm) || ''); } catch (eOld) { oldValue = ''; }
+        // Special handling for choice fields - try human label -> value
+        var newValue = value;
+        if (fieldNorm === 'urgency' || fieldNorm === 'impact' || fieldNorm === 'priority') {
+            var lc = String(value).toLowerCase().trim();
+            if (lc.indexOf('crit') === 0 || lc === 'p1')  newValue = '1';
+            else if (lc.indexOf('high') === 0 || lc === 'p2') newValue = '2';
+            else if (lc.indexOf('mod') === 0 || lc.indexOf('med') === 0 || lc === 'p3') newValue = '3';
+            else if (lc.indexOf('low') === 0 || lc === 'p4') newValue = '4';
+        }
+        if (fieldNorm === 'assignment_group') {
+            // Try to resolve group by name
+            var gg = new GlideRecord('sys_user_group');
+            gg.addEncodedQuery('nameLIKE' + value);
+            gg.setLimit(1);
+            gg.query();
+            if (gg.next()) newValue = gg.getUniqueValue();
+        }
+        if (fieldNorm === 'assigned_to') {
+            var u = new GlideRecord('sys_user');
+            u.addEncodedQuery('active=true^nameLIKE' + value + '^ORuser_nameLIKE' + value);
+            u.setLimit(1);
+            u.query();
+            if (u.next()) newValue = u.getUniqueValue();
+            else return { ok: false, error: 'No active user matching "' + value + '"' };
+        }
+        gr.setValue(fieldNorm, newValue);
+        gr.update();
+        return {
+            ok: true,
+            ticket:     num,
+            field:      fieldNorm,
+            old_value:  oldValue.substring(0, 120),
+            new_value:  String(value).substring(0, 120),
+            message:    'Updated ' + fieldNorm + ' on ' + num + '.'
+        };
+    }
+
+    /* ===================================================================
+     *  R2.4 - open_url + go_to_servicenow (Chrome tab navigation)
+     *  These return client directives that the controller acts on.
+     * =================================================================== */
+    function _openUrl(url, title) {
+        if (!url) return { ok: false, error: 'URL is required.' };
+        // Require https for safety; auto-prepend if missing
+        if (url.indexOf('http://') !== 0 && url.indexOf('https://') !== 0) {
+            url = 'https://' + url.replace(/^\/*/, '');
+        }
+        return {
+            ok: true,
+            open_url:    url,            // client-directive: window.open in new tab
+            url:         url,
+            title:       title || url,
+            message:     'Opening ' + (title || url) + ' in a new tab.'
+        };
+    }
+    function _goToServiceNow() {
+        return {
+            ok: true,
+            navigate_url: '/sp',         // existing R2 client handler will follow this
+            message:      'Going back to ServiceNow now.'
+        };
+    }
+
     function _clickButton(label) {
         if (!label) return { ok: false, error: 'Button label is required.' };
         // Server-side gatekeeping - we only allow specific known safe labels

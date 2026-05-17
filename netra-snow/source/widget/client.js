@@ -1753,11 +1753,18 @@ api.controller = function ($scope, $timeout, $window) {
                     if (r.directives) {
                         if (r.directives.navigate_url) {
                             logEvent('nav', 'navigating to ' + r.directives.navigate_url);
-                            // Slight delay so Netra finishes saying the lead-in
                             $timeout(function () {
                                 try { $window.location.assign(r.directives.navigate_url); } catch (e) {
                                     logEvent('err', 'navigation failed: ' + e.message);
                                 }
+                            }, 1500);
+                        }
+                        // R2.4 - open external URL in new tab
+                        if (r.directives.open_url) {
+                            logEvent('nav', 'opening new tab: ' + r.directives.open_url);
+                            $timeout(function () {
+                                try { $window.open(r.directives.open_url, '_blank', 'noopener,noreferrer'); }
+                                catch (e) { logEvent('err', 'window.open failed: ' + e.message); }
                             }, 1500);
                         }
                         if (r.directives.click_button_label) {
