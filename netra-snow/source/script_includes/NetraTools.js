@@ -123,11 +123,17 @@ NetraTools.prototype = {
         while (gr.next()) {
             var subject = '';
             var ref = '';
+            // Avoid getRefRecord() - fenced in some scoped contexts.
+            // Use Document-ID pattern: sysapproval = sys_id, source_table = table name.
             try {
-                var srcRec = gr.sysapproval.getRefRecord();
-                if (srcRec && srcRec.isValidRecord()) {
-                    ref = String(srcRec.number || '');
-                    subject = ref + ' — ' + String(srcRec.short_description || '');
+                var srcSysId = String(gr.sysapproval || '');
+                var srcTable = String(gr.source_table || gr.sysapproval_table || '');
+                if (srcSysId && srcTable) {
+                    var srcRec = new GlideRecord(srcTable);
+                    if (srcRec.isValid() && srcRec.get(srcSysId)) {
+                        ref = String(srcRec.getValue('number') || '');
+                        subject = ref + ' - ' + String(srcRec.getValue('short_description') || '');
+                    }
                 }
             } catch (e) {}
             out.push({
@@ -148,8 +154,12 @@ NetraTools.prototype = {
         gr.query();
         while (gr.next()) {
             try {
-                var src = gr.sysapproval.getRefRecord();
-                if (src && src.isValidRecord() && String(src.number).toUpperCase() === String(refNumber).toUpperCase()) {
+                var srcSysId = String(gr.sysapproval || '');
+                var srcTable = String(gr.source_table || gr.sysapproval_table || '');
+                if (!srcSysId || !srcTable) continue;
+                var srcRec = new GlideRecord(srcTable);
+                if (!srcRec.isValid() || !srcRec.get(srcSysId)) continue;
+                if (String(srcRec.getValue('number') || '').toUpperCase() === String(refNumber).toUpperCase()) {
                     gr.state = approve ? 'approved' : 'rejected';
                     gr.comments = approve ? 'Approved via Netra.' : 'Rejected via Netra.';
                     gr.update();

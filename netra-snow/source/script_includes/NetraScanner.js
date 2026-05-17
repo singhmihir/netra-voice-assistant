@@ -177,13 +177,20 @@ NetraScanner.prototype = {
         while (gr.next()) {
             if (this._alreadyNotified(userSysId, String(gr.sys_id), 'approval_requested')) continue;
 
-            // Best-effort: name what we're approving
+            // Best-effort: name what we're approving (avoid getRefRecord -
+            // it's fenced in some scoped contexts). Use the document_id pattern:
+            // sysapproval is a Document ID reference; source_table tells us
+            // which table to query.
             var subject = '';
-            var src = gr.sysapproval;
             try {
-                var srcRec = src.getRefRecord();
-                if (srcRec && srcRec.isValidRecord()) {
-                    subject = String(srcRec.number || '') + ' — ' + String(srcRec.short_description || '');
+                var srcSysId = String(gr.sysapproval || '');
+                var srcTable = String(gr.source_table || gr.sysapproval_table || '');
+                if (srcSysId && srcTable) {
+                    var srcRec = new GlideRecord(srcTable);
+                    if (srcRec.isValid() && srcRec.get(srcSysId)) {
+                        subject = String(srcRec.getValue('number') || '') + ' - ' +
+                                  String(srcRec.getValue('short_description') || '');
+                    }
                 }
             } catch (e) {}
 
