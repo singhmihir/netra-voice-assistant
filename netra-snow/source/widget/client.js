@@ -80,6 +80,7 @@ api.controller = function ($scope, $timeout, $window) {
     c.conversationOpen = false;     // follow-up window open?
     c.useRemoteTTS = REMOTE_TTS_DEFAULT;
     c.remoteVoice  = REMOTE_TTS_VOICE;
+    c.ttsEngine    = 'edge';   // R1.5 - default to Microsoft Edge Neural (free, natural)
 
     // R1 - Stats + Charts
     var BOOT_TIME = Date.now();
@@ -1481,8 +1482,16 @@ api.controller = function ($scope, $timeout, $window) {
         // after TTS finishes - prevents "stuck in speaking" bug.
         var wrappedDone = function () { _afterTTS(done); };
 
-        if (c.useRemoteTTS) {
-            speakRemote(clean, wrappedDone);
+        // R1.5 - new TTS preference order:
+        //   c.ttsEngine === 'edge'  -> Microsoft Edge Neural (default)
+        //   c.ttsEngine === 'stream'-> StreamElements Raveena
+        //   c.ttsEngine === 'browser' -> browser speechSynthesis
+        // Each falls back to the next on failure.
+        var engine = c.ttsEngine || (c.useRemoteTTS ? 'edge' : 'browser');
+        if (engine === 'edge') {
+            speakEdgeTTS(clean, wrappedDone);
+        } else if (engine === 'stream') {
+            speakStreamElements(clean, wrappedDone);
         } else {
             speakBrowser(clean, wrappedDone);
         }
@@ -1508,7 +1517,150 @@ api.controller = function ($scope, $timeout, $window) {
         if (userDone) { try { userDone(); } catch (e) { logEvent('err', 'done callback threw: ' + e); } }
     }
 
-    function speakRemote(text, done) {
+    /* ============================================================
+     *  R1.5 - EDGE TTS (Microsoft Neural voices, free, no key)
+     *
+     *  Connects to wss://speech.platform.bing.com/.../edge/v1
+     *  with a hardcoded TrustedClientToken that all Edge browsers
+     *  use. Streams MP3 chunks back, assembled into a Blob and
+     *  played through an <audio> element with playbackRate = 1.20
+     *  for that natural, slightly-quick-but-human cadence.
+     *
+     *  Voices: en-IN-NeerjaNeural (default - warm Indian female),
+     *  en-IN-AashiNeural, en-IN-AnanyaNeural, hi-IN-SwaraNeural.
+     *
+     *  Falls back to speakStreamElements -> speakBrowser on error.
+     * ============================================================ */
+    var EDGE_WSS_URL = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4';
+    c.edgeVoice = 'en-IN-NeerjaNeural';
+    var EDGE_VOICES = [
+        'en-IN-NeerjaNeural', 'en-IN-AashiNeural', 'en-IN-AnanyaNeural',
+        'hi-IN-SwaraNeural',  'en-US-JennyNeural', 'en-US-AriaNeural'
+    ];
+
+    function _edgeConnectId() {
+        // 32-hex random
+        var chars = '0123456789abcdef';
+        var s = '';
+        for (var i = 0; i < 32; i++) s += chars[Math.floor(Math.random() * 16)];
+        return s;
+    }
+
+    function speakEdgeTTS(text, done) {
+        if (!text) { _afterTTS(done); return; }
+        // Some networks/CSPs forbid arbitrary WSS - fall back fast if blocked.
+        if (typeof WebSocket === 'undefined') {
+            return speakStreamElements(text, done);
+        }
+        try {
+            var requestId = _edgeConnectId();
+            var ws = new WebSocket(EDGE_WSS_URL + '&ConnectionId=' + requestId);
+            ws.binaryType = 'arraybuffer';
+            var chunks = [];
+            var resolved = false;
+            var watchdog = $timeout(function () {
+                if (!resolved) { resolved = true; try { ws.close(); } catch (e) {}
+                    logEvent('warn', 'edge TTS no audio in 6s - fallback');
+                    speakStreamElements(text, done);
+                }
+            }, 6000);
+
+            ws.onopen = function () {
+                logEvent('tts', 'edge: ' + c.edgeVoice + ' (' + text.length + ' chars)');
+                var now = new Date().toISOString();
+                // 1. Speech config
+                var cfg = '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
+                ws.send('X-Timestamp:' + now + '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' + cfg);
+                // 2. SSML body. Rate +10% so it speaks slightly quick but stays clear.
+                //    The playbackRate=1.2 on the <audio> element adds another nudge.
+                var safe = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+                var ssml = '<speak version=\'1.0\' xml:lang=\'en-IN\'>' +
+                           '<voice name=\'' + c.edgeVoice + '\'>' +
+                           '<prosody rate=\'+10%\' pitch=\'+0Hz\'>' + safe + '</prosody>' +
+                           '</voice></speak>';
+                ws.send('X-RequestId:' + requestId + '\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:' + new Date().toISOString() + '\r\nPath:ssml\r\n\r\n' + ssml);
+                ignoreFinalsUntil = Date.now() + 15000;
+                setState('speaking');
+            };
+
+            ws.onmessage = function (ev) {
+                if (typeof ev.data === 'string') {
+                    if (ev.data.indexOf('Path:turn.end') >= 0) {
+                        try { ws.close(); } catch (e) {}
+                        // Assemble MP3 chunks and play
+                        if (chunks.length === 0) {
+                            logEvent('warn', 'edge returned no audio - fallback');
+                            if (!resolved) { resolved = true; $timeout.cancel(watchdog); speakStreamElements(text, done); }
+                            return;
+                        }
+                        var blob = new Blob(chunks, { type: 'audio/mp3' });
+                        var url = URL.createObjectURL(blob);
+                        var audio = new Audio(url);
+                        audio.playbackRate = 1.20;   // R1.5 - faster, more conversational
+                        audio.volume = 1.0;
+                        currentAudio = audio;
+                        audio.onplaying = function () {
+                            if (resolved) return;
+                            $timeout.cancel(watchdog);
+                            logEvent('tts', 'edge playing @1.20x');
+                        };
+                        audio.onended = function () {
+                            if (resolved) return;
+                            resolved = true;
+                            URL.revokeObjectURL(url);
+                            if (currentAudio === audio) currentAudio = null;
+                            ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
+                            _afterTTS(done);
+                        };
+                        audio.onerror = function () {
+                            if (resolved) return;
+                            resolved = true;
+                            URL.revokeObjectURL(url);
+                            logEvent('warn', 'edge audio playback error - fallback');
+                            speakStreamElements(text, done);
+                        };
+                        audio.play().catch(function (e) {
+                            if (resolved) return;
+                            resolved = true;
+                            logEvent('warn', 'edge play() rejected: ' + e.message);
+                            speakStreamElements(text, done);
+                        });
+                    }
+                } else {
+                    // Binary frame. The first 2 bytes are a big-endian uint16
+                    // of the header length, then the header, then the audio bytes.
+                    var data = new Uint8Array(ev.data);
+                    if (data.length < 2) return;
+                    var headerLen = (data[0] << 8) | data[1];
+                    if (data.length > 2 + headerLen) {
+                        chunks.push(data.slice(2 + headerLen));
+                    }
+                }
+            };
+
+            ws.onerror = function () {
+                if (resolved) return;
+                resolved = true;
+                $timeout.cancel(watchdog);
+                logEvent('warn', 'edge ws error - fallback to StreamElements');
+                speakStreamElements(text, done);
+            };
+
+            ws.onclose = function () {
+                if (!resolved) {
+                    resolved = true;
+                    $timeout.cancel(watchdog);
+                    logEvent('warn', 'edge ws closed early - fallback');
+                    speakStreamElements(text, done);
+                }
+            };
+        } catch (e) {
+            logEvent('err', 'edge TTS threw: ' + e.message);
+            speakStreamElements(text, done);
+        }
+    }
+
+    function speakStreamElements(text, done) {
         // Stop any currently playing remote audio
         if (currentAudio) {
             try { currentAudio.pause(); currentAudio.src = ''; } catch (e) {}
@@ -1530,6 +1682,7 @@ api.controller = function ($scope, $timeout, $window) {
         var audio = new Audio();
         audio.src = url;
         audio.volume = 1.0;
+        audio.playbackRate = 1.20;   // R1.5 - faster, more conversational
         currentAudio = audio;
 
         // Single fallback guard - whichever signal fires first wins
@@ -1593,7 +1746,7 @@ api.controller = function ($scope, $timeout, $window) {
         }
 
         var u = new SpeechSynthesisUtterance(text);
-        u.rate  = 0.96;
+        u.rate  = 1.20;   // R1.5 - faster, more conversational
         u.pitch = 1.05;
         u.volume = 1.0;
         var v = chooseVoice();
@@ -1910,11 +2063,26 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     c.devToggleTTS = function () {
-        c.useRemoteTTS = !c.useRemoteTTS;
-        logEvent('dev', 'TTS engine -> ' + (c.useRemoteTTS ? 'remote (StreamElements ' + c.remoteVoice + ')' : 'browser (' + c.voiceName + ')'));
+        // R1.5 - cycle: edge -> stream -> browser -> edge
+        var seq = ['edge', 'stream', 'browser'];
+        var idx = seq.indexOf(c.ttsEngine || 'edge');
+        c.ttsEngine = seq[(idx + 1) % seq.length];
+        // Keep useRemoteTTS in sync for legacy code paths
+        c.useRemoteTTS = (c.ttsEngine !== 'browser');
+        logEvent('dev', 'TTS engine -> ' + c.ttsEngine +
+                 (c.ttsEngine === 'edge'   ? ' (' + c.edgeVoice + ', Microsoft Neural, free)' :
+                  c.ttsEngine === 'stream' ? ' (StreamElements ' + c.remoteVoice + ')' :
+                                             ' (browser ' + c.voiceName + ')'));
     };
 
     c.devCycleRemoteVoice = function () {
+        // R1.5 - if Edge is the current engine, cycle Edge voices; otherwise StreamElements
+        if (c.ttsEngine === 'edge') {
+            var ei = EDGE_VOICES.indexOf(c.edgeVoice);
+            c.edgeVoice = EDGE_VOICES[(ei + 1) % EDGE_VOICES.length];
+            logEvent('dev', 'Edge voice -> ' + c.edgeVoice);
+            return;
+        }
         var voices = ['Raveena','Aditi','Joanna','Salli','Kimberly','Amy','Emma','Brian','Russell','Nicole','Joey','Matthew'];
         var idx = voices.indexOf(c.remoteVoice);
         c.remoteVoice = voices[(idx + 1) % voices.length];

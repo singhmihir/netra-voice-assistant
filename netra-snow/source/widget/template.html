@@ -26,7 +26,7 @@
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
     <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
       <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <strong>NETRA <span class="netra-dev-ver">R1.4</span></strong>
+      <strong>NETRA <span class="netra-dev-ver">R1.5</span></strong>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
@@ -53,7 +53,7 @@
       <div><span>state</span><b>{{c.stateLabel}}</b></div>
       <div><span>recognition</span><b ng-class="{'l-err': !c.recRunning}">{{c.recRunning ? 'RUNNING (always-on)' : 'stopped'}}</b></div>
       <div><span>mode</span><b ng-class="{'on': c.conversationOpen}">{{c.conversationOpen ? 'ALWAYS LISTENING - just speak' : 'closed (say "Netra" or "wake up")'}}</b></div>
-      <div><span>TTS engine</span><b>{{c.useRemoteTTS ? ('remote ' + c.remoteVoice + ' (free)') : 'browser (' + c.voiceName + ')'}}</b></div>
+      <div><span>TTS engine</span><b>{{c.ttsEngine === 'edge' ? ('Microsoft Edge ' + c.edgeVoice) : c.ttsEngine === 'stream' ? ('StreamElements ' + c.remoteVoice) : ('browser ' + c.voiceName)}}</b></div>
       <div><span>mic permission</span><b ng-class="{'l-err': c.permission==='denied'}">{{c.permission}}</b></div>
       <div><span>API key</span><b ng-class="{'l-err': !c.data.has_api_key}">{{c.data.has_api_key ? 'set' : 'MISSING'}}</b></div>
       <div><span>confidence</span><b>{{c.confidence || '-'}}</b></div>
@@ -122,10 +122,10 @@
       <button ng-click="c.devCloseConversation()" title="Close the follow-up window so wake word is required again"
               ng-disabled="!c.conversationOpen">End conv</button>
       <button ng-click="c.devTestTTS()"     title="Speak a test phrase with the chosen engine">Test TTS</button>
-      <button ng-click="c.devToggleTTS()"   title="Switch between remote (free Raveena) and browser TTS (Heera)">{{c.useRemoteTTS ? 'Use browser' : 'Use free'}}</button>
+      <button ng-click="c.devToggleTTS()"   title="Cycle Edge Neural -> StreamElements -> browser TTS">{{c.ttsEngine === 'edge' ? 'Use Stream' : c.ttsEngine === 'stream' ? 'Use browser' : 'Use Edge'}}</button>
       <button ng-click="c.devCaptureScreen()" title="Capture a frame of your screen for Gemini multimodal analysis">Capture screen</button>
-      <button ng-click="c.devCycleRemoteVoice()" title="Cycle through StreamElements voices"
-              ng-disabled="!c.useRemoteTTS">{{c.remoteVoice}}</button>
+      <button ng-click="c.devCycleRemoteVoice()" title="Cycle voices for the active engine"
+              ng-disabled="c.ttsEngine === 'browser'">{{c.ttsEngine === 'edge' ? c.edgeVoice : c.remoteVoice}}</button>
       <button ng-click="c.devGreet()"       title="Re-trigger the greeting">Greet</button>
       <button ng-click="c.devReplayLast()"  title="Speak the last response again">Replay</button>
       <button ng-click="c.devRestartRec()"  title="Restart the recognition session">Restart rec</button>
