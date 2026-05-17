@@ -26,7 +26,7 @@
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
     <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
       <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <strong>NETRA <span class="netra-dev-ver">R2.4</span></strong>
+      <span class="netra-dev-ver">R2.5</span>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
@@ -189,63 +189,159 @@
           title="Alt+D to toggle">DEV</button>
 
   <!-- ====================================================
-        ORB - inline SVG (R1.3 - simple Claude-style mark)
+        ORB - inline SVG (R2.5 - 3D golden-ratio orb)
 
-        Minimal industry-standard icon:
-          - One circular iris with depth gradient
-          - One pupil dot
-          - One subtle catchlight
-          - Soft pulsing glow halo (Claude-style)
-          - No lashes, no HUD lines, no aperture blades
-          - No telemetry ticks, no corner brackets
-          - Tiny - 64px default - sits in the top-left corner
+        Designed strictly to Leonardo da Vinci's golden ratio
+        (phi = 1.61803). Every radius and position derives from
+        phi-spacing of the previous - so the eye is mathematically
+        beautiful, not just decoratively so.
+
+        Radii (50 / phi^n):
+          50      - outer halo + sphere edge
+          30.901  - limbal ring (50/phi)
+          19.098  - iris-mid band (50/phi^2)
+          11.803  - iris-inner (50/phi^3)
+           7.295  - pupil radius (50/phi^4)
+           4.508  - primary catchlight (50/phi^5)
+           2.787  - secondary catchlight (50/phi^6)
+
+        Catchlight position at the golden-section point (1-1/phi) =
+        0.382 of the way from centre to edge, at 137.5 degrees from
+        the +x axis (the golden angle, 360/phi^2).
+
+        Inscribed pentagram (5 vertices, golden-ratio diagonals)
+        floats faintly within the iris as a homage to da Vinci.
+
+        3D effect: sphere shading from upper-left, drop shadow
+        beneath, inner rim shadow, rim light on the lower-right
+        edge - the classic four-light setup.
         ==================================================== -->
   <button class="netra-orb"
           ng-mousedown="c.dragStart($event)"
           ng-click="c.tap()"
           aria-label="Netra is {{c.stateLabel}}. Drag to move, double-click to shrink."
           title="Drag to reposition - double-click to shrink - single-click to sleep or wake">
-    <svg class="netra-eye-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <svg class="netra-eye-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>
-        <!-- Iris radial gradient (light to dark, edge-darkening) -->
-        <radialGradient id="netra-iris-grad" cx="40%" cy="38%" r="60%">
-          <stop offset="0%"   stop-color="var(--iris-bright, #7fffb0)"/>
+        <!-- 3D sphere shading (light from upper-left) -->
+        <radialGradient id="netra-sphere" cx="36%" cy="32%" r="68%" fx="32%" fy="28%">
+          <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.95"/>
+          <stop offset="8%"   stop-color="#d6ffe8"/>
+          <stop offset="22%"  stop-color="var(--iris-bright, #7fffb0)"/>
           <stop offset="55%"  stop-color="var(--iris-mid, #2eb858)"/>
+          <stop offset="82%"  stop-color="var(--iris-dark, #0a4a25)"/>
           <stop offset="100%" stop-color="var(--iris-deep, #021a0d)"/>
         </radialGradient>
 
-        <!-- Pupil deep core -->
-        <radialGradient id="netra-pupil-grad" cx="50%" cy="50%" r="55%">
-          <stop offset="0%"   stop-color="#0a0f12"/>
+        <!-- Pupil deep core with bright inner reflection -->
+        <radialGradient id="netra-pupil" cx="50%" cy="48%" r="55%">
+          <stop offset="0%"   stop-color="var(--core-mid, #aef0d0)" stop-opacity="0.35"/>
+          <stop offset="22%"  stop-color="#001a0a"/>
           <stop offset="100%" stop-color="#000000"/>
         </radialGradient>
 
         <!-- Outer halo (pulses) -->
-        <radialGradient id="netra-halo-grad" cx="50%" cy="50%" r="50%">
-          <stop offset="0%"   stop-color="var(--eye-glow, rgba(127,255,176,0.55))"/>
-          <stop offset="55%"  stop-color="var(--eye-glow, rgba(127,255,176,0.18))"/>
+        <radialGradient id="netra-halo" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stop-color="var(--eye-glow, rgba(127,255,176,0.65))"/>
+          <stop offset="55%"  stop-color="var(--eye-glow, rgba(127,255,176,0.22))"/>
           <stop offset="100%" stop-color="rgba(127,255,176,0)"/>
         </radialGradient>
+
+        <!-- Rim light gradient (highlight on lower-right edge) -->
+        <radialGradient id="netra-rim" cx="74%" cy="76%" r="48%">
+          <stop offset="0%"   stop-color="rgba(255,255,255,0)"/>
+          <stop offset="70%"  stop-color="rgba(255,255,255,0)"/>
+          <stop offset="95%"  stop-color="var(--iris-bright, rgba(174,240,208,0.55))"/>
+          <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+        </radialGradient>
+
+        <!-- Inner cast shadow (gives the depth-inset look at the rim) -->
+        <radialGradient id="netra-inner-shadow" cx="50%" cy="50%" r="50%">
+          <stop offset="75%" stop-color="rgba(0,0,0,0)"/>
+          <stop offset="92%" stop-color="rgba(0,0,0,0.25)"/>
+          <stop offset="100%" stop-color="rgba(0,0,0,0.55)"/>
+        </radialGradient>
+
+        <!-- Soft drop shadow filter -->
+        <filter id="netra-drop" x="-15%" y="-10%" width="130%" height="130%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="2.5"/>
+          <feOffset dx="0" dy="3"/>
+          <feComponentTransfer><feFuncA type="linear" slope="0.5"/></feComponentTransfer>
+          <feMerge>
+            <feMergeNode/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
       </defs>
 
-      <!-- Soft pulsing halo (Claude-style glow) -->
-      <circle class="netra-eye-halo" cx="50" cy="50" r="48" fill="url(#netra-halo-grad)"/>
+      <!-- ALL geometry centred at 60,60 in the 120x120 viewBox so we
+           have room around the sphere for drop shadow + halo bleed -->
 
-      <!-- Iris -->
-      <circle class="netra-eye-iris" cx="50" cy="50" r="28" fill="url(#netra-iris-grad)"/>
+      <!-- Outermost soft halo, pulses via CSS -->
+      <circle class="netra-eye-halo" cx="60" cy="60" r="58" fill="url(#netra-halo)"/>
 
-      <!-- Pupil -->
-      <circle class="netra-eye-pupil" cx="50" cy="50" r="10" fill="url(#netra-pupil-grad)"/>
+      <!-- The 3D sphere (r=50, the unit) -->
+      <g filter="url(#netra-drop)">
+        <circle class="netra-eye-sphere" cx="60" cy="60" r="50" fill="url(#netra-sphere)"/>
+        <!-- Inner ring/cast shadow gives the look of an inset orb -->
+        <circle cx="60" cy="60" r="50" fill="url(#netra-inner-shadow)"/>
+        <!-- Rim light from lower-right (golden-angle counter-light) -->
+        <circle cx="60" cy="60" r="50" fill="url(#netra-rim)"/>
+      </g>
 
-      <!-- Single subtle catchlight -->
-      <circle class="netra-eye-glint" cx="44" cy="44" r="2.6" fill="rgba(255,255,255,0.9)"/>
+      <!-- LIMBAL RING at radius 50/phi = 30.901 (the dark band marking
+           where iris meets sclera in a healthy human eye) -->
+      <circle class="netra-eye-iris" cx="60" cy="60" r="30.901" fill="none"
+              stroke="rgba(0,20,10,0.45)" stroke-width="1.2"/>
 
-      <!-- Iris outline (subtle) -->
-      <circle class="netra-eye-outline" cx="50" cy="50" r="28" fill="none"
-              stroke="var(--iris-bright, #7fffb0)" stroke-width="0.6" opacity="0.5"/>
+      <!-- IRIS MID-BAND at radius 50/phi^2 = 19.098 - subtle ring -->
+      <circle cx="60" cy="60" r="19.098" fill="none"
+              stroke="var(--iris-bright, rgba(127,255,176,0.55))" stroke-width="0.5"
+              stroke-dasharray="2 3" opacity="0.6"/>
+
+      <!-- INSCRIBED PENTAGRAM (homage to da Vinci) - five vertices
+           at radius 19.098 around centre, drawn as a connected star.
+           Vertex angles: -90, -18, 54, 126, 198 degrees.
+           Each line skips one vertex to make the star. -->
+      <g class="netra-eye-pentagram" opacity="0.18">
+        <polygon
+          points="60,40.902 78.166,53.106 71.235,74.453 48.765,74.453 41.834,53.106"
+          fill="none"
+          stroke="var(--iris-bright, #aef0d0)" stroke-width="0.4"/>
+        <!-- The actual five-pointed star formed by connecting every other vertex -->
+        <path d="M 60 40.902 L 71.235 74.453 L 41.834 53.106 L 78.166 53.106 L 48.765 74.453 Z"
+              fill="none" stroke="var(--iris-bright, #aef0d0)" stroke-width="0.5"/>
+      </g>
+
+      <!-- IRIS INNER at radius 50/phi^3 = 11.803 - pupil border ring -->
+      <circle cx="60" cy="60" r="11.803" fill="none"
+              stroke="var(--iris-bright, rgba(127,255,176,0.7))" stroke-width="0.5"/>
+
+      <!-- PUPIL at radius 50/phi^4 = 7.295 -->
+      <circle class="netra-eye-pupil" cx="60" cy="60" r="7.295" fill="url(#netra-pupil)"/>
+
+      <!-- PRIMARY CATCHLIGHT at the golden-section point.
+           Distance from centre = 0.382 * 50 = 19.098.
+           Angle = 137.5 degrees (the golden angle from +x axis),
+           which lands the catchlight in the upper-left quadrant.
+           cx = 60 + 19.098 * cos(137.5 deg) = 60 + 19.098 * -0.7373 = 45.92
+           cy = 60 - 19.098 * sin(137.5 deg) = 60 - 19.098 *  0.6756 = 47.10
+           Catchlight radius = 50/phi^5 = 4.508 -->
+      <ellipse class="netra-eye-glint" cx="45.92" cy="47.1" rx="4.508" ry="3.6"
+               fill="#ffffff" opacity="0.92"/>
+      <ellipse cx="45.92" cy="47.1" rx="2.4" ry="1.8" fill="#ffffff"/>
+
+      <!-- SECONDARY CATCHLIGHT at the OPPOSITE golden-section point.
+           Distance 0.382 * 50 = 19.098, angle = 137.5 + 180 = 317.5 deg,
+           which lands in the lower-right quadrant.
+           cx = 60 + 19.098 * cos(317.5) = 60 + 19.098 *  0.7373 = 74.08
+           cy = 60 - 19.098 * sin(317.5) = 60 - 19.098 * -0.6756 = 72.90
+           Radius = 50/phi^6 = 2.787 -->
+      <circle class="netra-eye-glint-small" cx="74.08" cy="72.9" r="2.787"
+              fill="rgba(255,255,255,0.55)"/>
 
       <!-- Eyelid (only used in dormant state - covers iris when closed) -->
-      <circle class="netra-eye-lid-top" cx="50" cy="50" r="28" fill="#0a1a14" opacity="0"/>
+      <circle class="netra-eye-lid-top" cx="60" cy="60" r="50" fill="#0a1a14" opacity="0"/>
     </svg>
   </button>
 

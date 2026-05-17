@@ -42,27 +42,34 @@
  * ============================================================ */
 .netra-orb {
     position: relative;
-    width: 64px;
-    height: 64px;
+    /* R2.5 - golden-ratio sizing: 72px x 72px (square = ratio 1:1, the orb
+       inside is the golden form). Hover scales by phi-1 = 0.618 of step. */
+    width: 72px;
+    height: 72px;
     border: 0;
     cursor: grab;
     background: transparent;
     padding: 0;
-    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), filter 0.35s ease, width 0.3s ease, height 0.3s ease;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                filter 0.35s ease,
+                width 0.382s ease,        /* 1 - 1/phi seconds */
+                height 0.382s ease;
     overflow: visible;
-    /* R1.3 - simple green palette */
-    --iris-bright: #7fffb0;
+    /* R1.3 - simple green palette + R2.5 golden-ratio additions */
+    --iris-bright: #aef0d0;
     --iris-mid:    #2eb858;
+    --iris-dark:   #0a4a25;
     --iris-deep:   #021a0d;
+    --core-mid:    #aef0d0;
     --eye-glow:    rgba(127, 255, 176, 0.55);
 }
-.netra-orb:hover  { transform: scale(1.08); }
-.netra-orb:active { cursor: grabbing; transform: scale(0.96); }
+.netra-orb:hover  { transform: scale(1.0618); }   /* 1 + 1/phi*0.1 */
+.netra-orb:active { cursor: grabbing; transform: scale(0.95); }
 
-/* Shrunk mode - even smaller (Apple AssistiveTouch dot) */
+/* Shrunk mode - 72 / phi = 44.5 ~ 44 px (golden-ratio shrink) */
 .netra-shrunk .netra-orb {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
 }
 .netra-orb:hover  { transform: scale(1.05); }
 .netra-orb:active { transform: scale(0.98); }
@@ -76,38 +83,51 @@
     height: 100%;
     display: block;
     overflow: visible;
-    filter: drop-shadow(0 0 12px var(--eye-glow, rgba(127, 255, 176, 0.5)));
+    /* R2.5 - golden-ratio drop shadow: blur radius = 12, offset y = 12/phi = 7.4 */
+    filter: drop-shadow(0 7.4px 12px var(--eye-glow, rgba(127, 255, 176, 0.4)));
 }
 
-/* Soft halo pulses (Claude-style glow) */
+/* R2.5 - Halo pulses on a phi-second cycle (1.618 * 2.236 = ~3.618 s) */
 .netra-eye-halo {
-    transform-origin: 50px 50px;
+    transform-origin: 60px 60px;
     transform-box: view-box;
-    animation: netra-halo-pulse 3.6s ease-in-out infinite;
+    animation: netra-halo-pulse 3.618s ease-in-out infinite;
 }
 @keyframes netra-halo-pulse {
-    0%, 100% { opacity: 0.7; transform: scale(0.95); }
-    50%      { opacity: 1;   transform: scale(1.08); }
+    0%, 100% { opacity: 0.62;  transform: scale(0.945); }   /* 1/phi  + halo at rest */
+    50%      { opacity: 1;     transform: scale(1.083); }   /* breathing out */
 }
 
-/* Pupil gentle breathe */
+/* Pupil breathes on the same phi cycle (in sync with halo) */
 .netra-eye-pupil {
-    transform-origin: 50px 50px;
+    transform-origin: 60px 60px;
     transform-box: view-box;
-    animation: netra-pupil-breath 3.6s ease-in-out infinite;
+    animation: netra-pupil-breath 3.618s ease-in-out infinite;
 }
 @keyframes netra-pupil-breath {
     0%, 100% { transform: scale(1);    }
-    50%      { transform: scale(1.08); }
+    50%      { transform: scale(1.083); }
 }
 
-/* Catchlight subtle shimmer */
+/* Catchlight shimmer at golden-cycle (phi^2 = 2.618 s) */
 .netra-eye-glint {
-    animation: netra-glint-shimmer 5s ease-in-out infinite;
+    animation: netra-glint-shimmer 2.618s ease-in-out infinite;
 }
 @keyframes netra-glint-shimmer {
-    0%, 100% { opacity: 0.9; }
-    50%      { opacity: 0.6; }
+    0%, 100% { opacity: 0.92; }
+    50%      { opacity: 0.65; }
+}
+
+/* The inscribed pentagram rotates SLOWLY - one full turn every 21 sec
+   (the 7th Fibonacci number * 3, deliberately divisible by phi). */
+.netra-eye-pentagram {
+    transform-origin: 60px 60px;
+    transform-box: view-box;
+    animation: netra-pentagram-spin 21s linear infinite;
+}
+@keyframes netra-pentagram-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
 }
 
 .netra-eye-glow {
@@ -252,10 +272,12 @@
     --eye-glow:    rgba(80, 90, 105, 0.25);
     filter: brightness(0.65) saturate(0.6);
 }
-.netra-state-dormant .netra-eye-lid-top   { opacity: 0.85; }
+.netra-state-dormant .netra-eye-lid-top   { opacity: 0.92; }
 .netra-state-dormant .netra-eye-glint     { opacity: 0;    }
+.netra-state-dormant .netra-eye-glint-small { opacity: 0;  }
 .netra-state-dormant .netra-eye-iris      { opacity: 0.35; }
 .netra-state-dormant .netra-eye-pupil     { opacity: 0.4;  }
+.netra-state-dormant .netra-eye-pentagram { opacity: 0;    }
 
 /* ============================================================
  *  State - PAUSED
@@ -528,18 +550,9 @@
     user-select: none;
 }
 .netra-dev-head:active { cursor: grabbing; }
-.netra-dev-head strong {
-    color: #ebedf2;
-    font-size: 12.5px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    flex: 1;
-    background: linear-gradient(90deg, #8ab4f8 0%, #c39bd3 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
+/* R2.5 - NETRA wordmark removed; version pill stretches to fill the gap */
 .netra-dev-ver {
+    flex: 1;
     color: #9aa0a6;
     font-size: 9.5px;
     font-weight: 500;
