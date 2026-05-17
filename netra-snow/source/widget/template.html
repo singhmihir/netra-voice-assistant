@@ -1,34 +1,105 @@
 <!--
-  Netra Mic widget template - v6 (voice-only, blind-first)
-  No chat panel. No typing. No buttons.
-  Just an audio assistant. A single pulsing orb is the only visual cue,
-  for the benefit of sighted helpers + low-vision users. All meaningful
-  state is announced via ARIA live regions for screen readers.
+  Netra Mic widget template - v7 (DEV MODE: visible debug panel)
+
+  Two layers:
+    1. DEV PANEL (top-left)  - shows everything happening so you can see
+       whether the mic is listening, what it heard, the chosen voice,
+       confidence scores, server responses, and lets you type text
+       directly to Netra without using speech at all.
+    2. ORB (bottom-right)    - the blind-first persistent visual.
+
+  When you are ready to ship to blind users, set c.devOn = false in the
+  controller and the dev panel disappears entirely.
 -->
 <div class="netra-root"
      ng-class="['netra-state-' + c.state]"
      role="region"
      aria-label="Netra voice assistant">
 
-  <!--
-    SR live region. role=status is polite; we use this for transient
-    state announcements ("listening", "thinking") so JAWS/NVDA pick
-    them up without interrupting the user.
-  -->
+  <!-- SR live regions -->
   <div class="netra-sr-only" role="status" aria-live="polite" aria-atomic="true">
     {{c.stateLabel}}
   </div>
-
-  <!--
-    SR assertive region for hearable responses. Pushes the announcement
-    immediately - used for Netra's spoken replies so screen readers
-    convey them even if TTS is muted at the OS level.
-  -->
   <div class="netra-sr-only" role="alert" aria-live="assertive" aria-atomic="true">
     {{c.spoken}}
   </div>
 
-  <!-- Orb - the only persistent visual element -->
+  <!-- ====================================================
+        DEV PANEL  (visible when c.devOn === true)
+        ==================================================== -->
+  <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
+    <header class="netra-dev-head">
+      <strong>NETRA DEV  <span class="netra-dev-ver">v7.0</span></strong>
+      <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
+      <button class="netra-dev-x" ng-click="c.toggleDev()" title="Hide (Alt+D)">hide</button>
+    </header>
+
+    <section class="netra-dev-status">
+      <div><span>state</span><b>{{c.stateLabel}}</b></div>
+      <div><span>wake on</span><b>{{c.wakeOn}}</b></div>
+      <div><span>mic permission</span><b ng-class="{'l-err': c.permission==='denied'}">{{c.permission}}</b></div>
+      <div><span>API key</span><b ng-class="{'l-err': !c.data.has_api_key}">{{c.data.has_api_key ? 'set' : 'MISSING'}}</b></div>
+      <div><span>SpeechRec</span><b ng-class="{'l-err': !c.hasSR}">{{c.hasSR ? 'available' : 'unavailable'}}</b></div>
+      <div><span>TTS</span><b ng-class="{'l-err': !c.hasTTS}">{{c.hasTTS ? 'available' : 'unavailable'}}</b></div>
+      <div><span>voice</span><b>{{c.voiceName}}</b></div>
+      <div><span>confidence</span><b>{{c.confidence || '-'}}</b></div>
+    </section>
+
+    <section class="netra-dev-transcript">
+      <div class="netra-dev-tx-row"><span>hearing</span><em ng-class="{'on': c.interim}">{{c.interim || '(silent)'}}</em></div>
+      <div class="netra-dev-tx-row"><span>last heard</span><em>{{c.lastHeard || '(nothing yet)'}}</em></div>
+      <div class="netra-dev-tx-row"><span>last spoken</span><em>{{c.spoken || '(nothing yet)'}}</em></div>
+    </section>
+
+    <section class="netra-dev-input">
+      <input type="text"
+             ng-model="c.devText"
+             placeholder="Type a command (bypass mic), press Enter"
+             ng-keydown="c.devKey($event)"
+             aria-label="Type a command to test Netra without using your microphone" />
+      <button ng-click="c.devSendText()" ng-disabled="!c.devText">Send</button>
+    </section>
+
+    <section class="netra-dev-actions">
+      <button ng-click="c.devTestMic()"  title="6-second mic test, shows everything heard">Test mic</button>
+      <button ng-click="c.devSkipWake()" title="Skip the wake word, jump to command capture">Skip wake</button>
+      <button ng-click="c.devTestTTS()"  title="Speak a test phrase with the chosen voice">Test TTS</button>
+      <button ng-click="c.devGreet()"    title="Re-trigger the greeting">Greet</button>
+      <button ng-click="c.devReplayLast()" title="Speak the last response again">Replay</button>
+      <button ng-click="c.devStop()"     title="Stop everything (recognition + speech)">Stop all</button>
+      <button ng-click="c.devClearLog()" title="Clear the event log below">Clear log</button>
+      <button ng-click="c.devPingServer()" title="Server diagnostic round-trip">Ping server</button>
+    </section>
+
+    <section class="netra-dev-voices" ng-show="c.voices.length">
+      <label>
+        <span>force voice</span>
+        <select ng-model="c.voicePick" ng-change="c.devPickVoice()">
+          <option value="">(auto - female en-IN preferred)</option>
+          <option ng-repeat="v in c.voices" value="{{v.name}}">{{v.name}} -- {{v.lang}}</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="netra-dev-log" aria-label="Event log">
+      <div class="netra-dev-log-row" ng-repeat="e in c.events track by $index"
+           ng-class="'l-' + e.l">
+        <span class="t">{{e.t}}</span>
+        <span class="l">{{e.l}}</span>
+        <span class="m">{{e.m}}</span>
+      </div>
+      <div class="netra-dev-log-empty" ng-show="!c.events.length">no events yet</div>
+    </section>
+  </div>
+
+  <!-- Dev toggle badge - shown when dev panel is hidden -->
+  <button class="netra-dev-badge" ng-show="!c.devOn" ng-click="c.toggleDev()"
+          aria-label="Show Netra developer panel"
+          title="Alt+D to toggle">DEV</button>
+
+  <!-- ====================================================
+        ORB  (always visible)
+        ==================================================== -->
   <button class="netra-orb"
           ng-click="c.tap()"
           aria-label="Netra is {{c.stateLabel}}. Say Netra to talk, or press Alt N."
@@ -42,14 +113,9 @@
     </span>
   </button>
 
-  <!--
-    Visible transcript card for sighted helpers + screen readers.
-    Hidden when there is nothing to show. Last user utterance + last
-    Netra reply only - this is not a chat history, it intentionally
-    forgets to keep cognitive load low.
-  -->
+  <!-- Small transcript card for sighted helpers -->
   <div class="netra-card"
-       ng-show="c.lastHeard || c.spoken"
+       ng-show="(c.lastHeard || c.spoken) && !c.devOn"
        aria-hidden="true">
     <div class="netra-card-row" ng-show="c.lastHeard">
       <span class="netra-card-label">You</span>
@@ -61,12 +127,7 @@
     </div>
   </div>
 
-  <!--
-    Initial-greeting gate. Some browsers refuse to start the
-    SpeechRecognition or AudioContext without a user gesture. Until
-    the sighted helper (or the user pressing space/enter) interacts
-    once, we surface this big accessible prompt.
-  -->
+  <!-- Initial-gesture gate -->
   <button class="netra-gate"
           ng-show="c.needsTap"
           ng-click="c.tap()"
@@ -76,7 +137,7 @@
     </span>
     <span class="netra-gate-text">
       <strong>Press here to start Netra</strong>
-      <span>Then just say "Netra" to talk.</span>
+      <span>Then just say "Netra" to talk - or use the dev panel.</span>
     </span>
   </button>
 

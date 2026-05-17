@@ -74,6 +74,33 @@
             gs.error('[NetraGemini] poll: ' + eP);
             data.notifications = [];
         }
+    } else if (action === 'debug') {
+        try {
+            var key = gs.getProperty(SCOPE + '.gemini_api_key') || '';
+            var mdl = gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash');
+            var toolDecls = _toolDeclarations();
+            var toolNames = [];
+            if (toolDecls[0] && toolDecls[0].functionDeclarations) {
+                for (var ti = 0; ti < toolDecls[0].functionDeclarations.length; ti++) {
+                    toolNames.push(toolDecls[0].functionDeclarations[ti].name);
+                }
+            }
+            data.debug = {
+                version: 'v7.0',
+                scope: SCOPE,
+                user_name: gs.getUserDisplayName(),
+                user_sys_id: user,
+                model: mdl,
+                api_key_status: key ? ('set (length=' + key.length + ', prefix=' + key.substring(0, 6) + ')') : 'MISSING',
+                tool_count: toolNames.length,
+                tools: toolNames,
+                paused: !!data.paused,
+                paused_until: data.paused_until || '',
+                server_time: String(new GlideDateTime())
+            };
+        } catch (eD) {
+            data.debug = { error: String(eD.message || eD) };
+        }
     }
 
     /* ===================================================================
