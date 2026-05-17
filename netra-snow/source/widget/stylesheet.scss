@@ -817,6 +817,98 @@
     font-size: 10.5px;
 }
 
+/* R2.2 - voice training */
+.netra-dev-train {
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.netra-train-title {
+    color: #aecbfa;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.netra-train-sub {
+    color: #6b7178;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    margin-left: auto;
+}
+.netra-train-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.netra-train-row input {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.34);
+    color: #ebedf2;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 11px;
+    font-family: inherit;
+    outline: none;
+    min-width: 0;
+}
+.netra-train-row input::placeholder { color: #6b7178; }
+.netra-train-row button {
+    background: linear-gradient(180deg, #3a3d49 0%, #2c2f3a 100%);
+    color: #ebedf2;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 10px;
+    cursor: pointer;
+    flex: none;
+    font-family: inherit;
+}
+.netra-train-row button:disabled { opacity: 0.4; cursor: not-allowed; }
+.netra-train-half { flex: 1; }
+.netra-train-arrow {
+    color: #aecbfa;
+    font-size: 12px;
+    flex: none;
+}
+.netra-train-aliases {
+    max-height: 80px;
+    overflow: auto;
+    padding: 4px 0;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 9.5px;
+}
+.netra-train-alias {
+    padding: 1px 0;
+    color: #c4c7c5;
+}
+.netra-train-alias-misheard { color: #ff9b9b; }
+.netra-train-alias-arrow    { color: #6b7178; padding: 0 4px; }
+.netra-train-alias-intended { color: #a5d6a7; }
+.netra-train-clear {
+    background: rgba(255, 118, 118, 0.12);
+    color: #ff9b9b;
+    border: 1px solid rgba(255, 118, 118, 0.2);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 9.5px;
+    cursor: pointer;
+    align-self: flex-start;
+    font-family: inherit;
+}
+.netra-train-clear:hover {
+    background: rgba(255, 118, 118, 0.2);
+}
+
 /* R1.4 - last-turn tool trace */
 .netra-trace-row {
     display: grid;

@@ -100,6 +100,170 @@ api.controller = function ($scope, $timeout, $window) {
     // R1.4 - last-turn tool-call trace (Claude-style thinking transparency)
     c.lastTrace = [];   // [{name, ts}, ...]
     c.pendingScreenshot = null;
+
+    /* ============================================================
+     *  R2.2 - VOICE TRAINING (personal vocab + aliases)
+     *
+     *  Chrome's Web Speech API can't be retrained directly, but we can:
+     *  (1) Get top-5 alternatives per utterance (maxAlternatives=5)
+     *  (2) Score each alternative against the user's personal vocab
+     *      and pick the highest scorer instead of just the first
+     *  (3) Pre-process the chosen text through an alias map to fix
+     *      known mis-hearings ("net rah" -> "Netra", "agar" -> "Adam")
+     *  (4) Auto-learn: every word in a successful command goes into
+     *      vocab, so frequently-used names self-reinforce
+     *  (5) Manual UI in dev panel to add words + map aliases
+     * ============================================================ */
+    c.personalVocab = {};      // { wordLower: { count, lastSeen } }
+    c.aliases       = {};      // { mishearLower: intendedString }
+    c.trainText      = '';
+    c.aliasMisheard  = '';
+    c.aliasIntended  = '';
+    c.aliasList      = [];     // computed view for the dev panel
+    c.vocabCount     = 0;
+    c.aliasCount     = 0;
+
+    function loadTrainingData() {
+        try {
+            c.personalVocab = JSON.parse(localStorage.getItem('netra.vocab')   || '{}') || {};
+            c.aliases       = JSON.parse(localStorage.getItem('netra.aliases') || '{}') || {};
+        } catch (e) { c.personalVocab = {}; c.aliases = {}; }
+        _refreshTrainingViews();
+    }
+    var _saveDebounceTimer = null;
+    function saveTrainingData() {
+        if (_saveDebounceTimer) $timeout.cancel(_saveDebounceTimer);
+        _saveDebounceTimer = $timeout(function () {
+            try {
+                localStorage.setItem('netra.vocab',   JSON.stringify(c.personalVocab));
+                localStorage.setItem('netra.aliases', JSON.stringify(c.aliases));
+            } catch (e) {}
+            _refreshTrainingViews();
+        }, 1500);
+    }
+    function _refreshTrainingViews() {
+        c.vocabCount  = Object.keys(c.personalVocab).length;
+        c.aliasCount  = Object.keys(c.aliases).length;
+        var list = [];
+        for (var k in c.aliases) {
+            if (c.aliases.hasOwnProperty(k)) list.push({ misheard: k, intended: c.aliases[k] });
+        }
+        c.aliasList = list.slice(-8);   // last 8
+        $scope.$applyAsync();
+    }
+
+    // Apply alias map to a transcript before sending to Gemini.
+    function applyAliases(text) {
+        if (!text) return text;
+        var out = text;
+        for (var misheard in c.aliases) {
+            if (!c.aliases.hasOwnProperty(misheard)) continue;
+            // Word-boundary case-insensitive replace
+            var safe = misheard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            try {
+                var re = new RegExp('\\b' + safe + '\\b', 'gi');
+                out = out.replace(re, c.aliases[misheard]);
+            } catch (e) {}
+        }
+        return out;
+    }
+
+    // Add every successful word to personal vocab (auto-learning).
+    function learnFromTranscript(transcript) {
+        if (!transcript) return;
+        var words = transcript.toLowerCase().split(/[^a-z']+/);
+        var dirty = false;
+        for (var i = 0; i < words.length; i++) {
+            var w = words[i];
+            if (w.length < 3) continue;
+            if (!c.personalVocab[w]) c.personalVocab[w] = { count: 0, lastSeen: 0 };
+            c.personalVocab[w].count++;
+            c.personalVocab[w].lastSeen = Date.now();
+            dirty = true;
+        }
+        if (dirty) saveTrainingData();
+    }
+
+    // Score an alternative against personal vocab. Higher = better match.
+    function _scoreAlternative(transcript, confidence) {
+        var lc = (transcript || '').toLowerCase();
+        var score = (confidence || 0) * 1.0;
+        var words = lc.split(/\s+/);
+        var hits = 0;
+        for (var i = 0; i < words.length; i++) {
+            var w = words[i].replace(/[^a-z']/g, '');
+            if (w.length >= 3 && c.personalVocab[w]) {
+                hits++;
+                score += 0.12;   // each known word adds 0.12 score
+            }
+        }
+        // Bonus if the entire utterance looks like a known alias key
+        if (c.aliases[lc.trim()]) score += 0.30;
+        return { score: score, vocabHits: hits };
+    }
+
+    // Pick the best of Chrome's top-5 alternatives based on vocab match.
+    function pickBestAlternative(altObj) {
+        // altObj is the SpeechRecognitionResult, alternatives accessible as altObj[i]
+        if (!altObj || altObj.length === 0) return null;
+        var best = { transcript: altObj[0].transcript, confidence: altObj[0].confidence || 0, vocabHits: 0 };
+        var bestScore = _scoreAlternative(best.transcript, best.confidence).score;
+        for (var i = 0; i < altObj.length && i < 5; i++) {
+            var alt = altObj[i];
+            var sc = _scoreAlternative(alt.transcript, alt.confidence || 0);
+            if (sc.score > bestScore) {
+                bestScore = sc.score;
+                best = { transcript: alt.transcript, confidence: alt.confidence || 0, vocabHits: sc.vocabHits };
+            }
+        }
+        return best;
+    }
+
+    // Dev UI handlers
+    c.addTrainingWord = function () {
+        var w = (c.trainText || '').toLowerCase().trim();
+        if (!w) return;
+        // Split phrases into words so each token is recognised
+        w.split(/\s+/).forEach(function (token) {
+            if (token.length < 2) return;
+            c.personalVocab[token] = c.personalVocab[token] || { count: 0, lastSeen: 0 };
+            c.personalVocab[token].count += 5;   // manual entries get a head-start
+            c.personalVocab[token].lastSeen = Date.now();
+        });
+        c.trainText = '';
+        saveTrainingData();
+        // Re-attach grammar so the recognizer also gets it as a hint
+        if (contRec) attachGrammar(contRec);
+        logEvent('train', 'added word(s): ' + w);
+    };
+    c.addAlias = function () {
+        var m = (c.aliasMisheard || '').toLowerCase().trim();
+        var n = (c.aliasIntended || '').trim();
+        if (!m || !n) return;
+        c.aliases[m] = n;
+        // Also add the intended phrase to vocab so future matches prefer it
+        n.toLowerCase().split(/\s+/).forEach(function (token) {
+            if (token.length < 2) return;
+            c.personalVocab[token] = c.personalVocab[token] || { count: 0, lastSeen: 0 };
+            c.personalVocab[token].count += 3;
+            c.personalVocab[token].lastSeen = Date.now();
+        });
+        c.aliasMisheard = '';
+        c.aliasIntended = '';
+        saveTrainingData();
+        if (contRec) attachGrammar(contRec);
+        logEvent('train', 'alias: "' + m + '" -> "' + n + '"');
+    };
+    c.clearTraining = function () {
+        if (!confirm('Clear all training data?')) return;
+        c.personalVocab = {};
+        c.aliases = {};
+        saveTrainingData();
+        logEvent('train', 'cleared all training data');
+    };
+
+    // Load on boot
+    loadTrainingData();
     c.charts = {
         confSeries: [],   // numbers 0-100
         latSeries:  [],   // numbers (ms)
@@ -317,6 +481,27 @@ api.controller = function ($scope, $timeout, $window) {
     function matchLocal(s) {
         if (!s) return null;
         var lc = s.toLowerCase().trim();
+
+        // R2.2 - voice-correction: "no, I meant X" / "I said X" / "the word is X"
+        // Auto-learn an alias from the previously-heard transcript to X.
+        var corrMatch = lc.match(/^(?:no,?\s+)?(?:i\s+(?:said|meant)|the\s+word\s+is)\s+(.+)$/i);
+        if (corrMatch) {
+            var intended = corrMatch[1].trim();
+            var misheard = (c.lastHeard || '').toLowerCase().trim();
+            if (misheard && intended && misheard !== intended.toLowerCase()) {
+                c.aliases[misheard] = intended;
+                intended.toLowerCase().split(/\s+/).forEach(function (tk) {
+                    if (tk.length < 2) return;
+                    c.personalVocab[tk] = c.personalVocab[tk] || { count: 0, lastSeen: 0 };
+                    c.personalVocab[tk].count += 3;
+                    c.personalVocab[tk].lastSeen = Date.now();
+                });
+                saveTrainingData();
+                if (contRec) attachGrammar(contRec);
+                return { intent: 'correction',
+                         reply: 'Noted — I will hear "' + intended + '" from now on.' };
+            }
+        }
 
         // greetings (English + Indian)
         if (/^(hi|hello|hey|hiya|namaste|namaskar|salaam|salam|good\s*(morning|afternoon|evening|day)|shubh\s*prabhat|shubh\s*ratri)\b/.test(lc) && lc.length < 40) {
@@ -999,7 +1184,7 @@ api.controller = function ($scope, $timeout, $window) {
         contRec.continuous     = true;
         contRec.interimResults = true;
         contRec.lang           = 'en-IN';
-        contRec.maxAlternatives = 1;
+        contRec.maxAlternatives = 5;   // R2.2 - get top 5 guesses to re-rank against personal vocab
         attachGrammar(contRec);
         recLastStartTime = Date.now();
 
@@ -1031,6 +1216,19 @@ api.controller = function ($scope, $timeout, $window) {
                 if (Date.now() < ignoreFinalsUntil) {
                     logEvent('rec.echo', '"' + t.trim() + '" (ignored - within TTS guard)');
                     continue;
+                }
+                // R2.2 - pick the best alternative against personal vocab
+                var picked = pickBestAlternative(res);
+                if (picked && picked.transcript !== t) {
+                    logEvent('train', 'reranked: "' + t + '" -> "' + picked.transcript + '" (vocab hits: ' + picked.vocabHits + ')');
+                    t = picked.transcript;
+                    conf = picked.confidence;
+                }
+                // R2.2 - apply alias map (e.g. "agar" -> "Adam")
+                var aliasedT = applyAliases(t);
+                if (aliasedT !== t) {
+                    logEvent('train', 'alias-rewrite: "' + t + '" -> "' + aliasedT + '"');
+                    t = aliasedT;
                 }
                 processFinalTranscript(t, conf);
             }
@@ -1255,6 +1453,12 @@ api.controller = function ($scope, $timeout, $window) {
             if (dynCatItems.length) {
                 domain += '\npublic <catitem> = ' + dynCatItems.join(' | ') + ' ;';
             }
+            // R2.2 - inject the users PERSONAL VOCAB into the grammar so
+            // Chrome itself biases toward those names/words during recognition.
+            var personalWords = Object.keys(c.personalVocab || {}).slice(0, 120);
+            if (personalWords.length) {
+                domain += '\npublic <personal> = ' + personalWords.join(' | ') + ' ;';
+            }
             var list = new SGL();
             list.addFromString(domain, 0.7);
             rec.grammars = list;
@@ -1282,6 +1486,10 @@ api.controller = function ($scope, $timeout, $window) {
         c.confidence = conf ? conf.toFixed(2) : '-';
         if (typeof conf === 'number') _pushConfidence(conf);   // R1 chart
         logEvent('rec.f', '"' + clean + '" conf=' + c.confidence);
+        // R2.2 - auto-learn: every word in a confident utterance becomes
+        // part of the personal vocabulary, so frequent names/projects
+        // self-reinforce over time.
+        if (conf >= MIN_CONFIDENCE) learnFromTranscript(clean);
         $scope.$applyAsync();
 
         // ---- 1. Sleep command works in any mode ----

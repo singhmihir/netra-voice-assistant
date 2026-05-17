@@ -26,7 +26,7 @@
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
     <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
       <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <strong>NETRA <span class="netra-dev-ver">R2.1</span></strong>
+      <strong>NETRA <span class="netra-dev-ver">R2.2</span></strong>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
@@ -132,6 +132,34 @@
       <button ng-click="c.devDiagnose()"    title="Log diagnostic info (voices, perms, state)">Diagnose</button>
       <button ng-click="c.devPingServer()"  title="Server diagnostic round-trip">Ping server</button>
       <button ng-click="c.devClearLog()"    title="Clear the event log below">Clear log</button>
+    </section>
+
+    <!-- R2.2 - Voice training: personal vocab + alias map -->
+    <section class="netra-dev-train">
+      <div class="netra-train-title">VOICE TRAINING
+        <span class="netra-train-sub">{{c.vocabCount || 0}} words, {{c.aliasCount || 0}} aliases</span>
+      </div>
+      <div class="netra-train-row">
+        <input ng-model="c.trainText"
+               placeholder="Add a word Netra should know (name, project, tool)"
+               ng-keydown="$event.keyCode === 13 && c.addTrainingWord()" />
+        <button ng-click="c.addTrainingWord()" ng-disabled="!c.trainText">+ Word</button>
+      </div>
+      <div class="netra-train-row netra-train-alias-row">
+        <input ng-model="c.aliasMisheard" placeholder="Netra heard..." class="netra-train-half" />
+        <span class="netra-train-arrow">→</span>
+        <input ng-model="c.aliasIntended" placeholder="You meant..." class="netra-train-half" />
+        <button ng-click="c.addAlias()" ng-disabled="!c.aliasMisheard || !c.aliasIntended">+ Map</button>
+      </div>
+      <div class="netra-train-aliases" ng-show="c.aliasList.length">
+        <div class="netra-train-alias" ng-repeat="a in c.aliasList track by $index">
+          <span class="netra-train-alias-misheard">"{{a.misheard}}"</span>
+          <span class="netra-train-alias-arrow">→</span>
+          <span class="netra-train-alias-intended">"{{a.intended}}"</span>
+        </div>
+      </div>
+      <button class="netra-train-clear" ng-click="c.clearTraining()"
+              ng-show="c.vocabCount > 0 || c.aliasCount > 0">clear all training</button>
     </section>
 
     <section class="netra-dev-voices" ng-show="c.voices.length">
