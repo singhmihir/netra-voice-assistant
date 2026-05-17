@@ -1,5 +1,5 @@
 /**
- * Netra Mic widget - CLIENT CONTROLLER (R1.4 - Claude-of-ServiceNow ext)
+ * Netra Mic widget - CLIENT CONTROLLER (R1.6 - human-cadence voice)
  *
  * R1.4 adds: persistent conversation memory across page loads,
  *   visible spoken-response card with model+latency badge, last-turn
@@ -454,6 +454,7 @@ api.controller = function ($scope, $timeout, $window) {
         $timeout(populateVoices, 1500);
         $timeout(tryBoot, 600);
         $timeout(startMicLevelMeter, 1000);   // R1.2 - mic-level live VU
+        $timeout(preloadFillers, 2500);       // R1.6 - thinking-cue cache
     };
 
     c.$onDestroy = function () {
@@ -1482,11 +1483,10 @@ api.controller = function ($scope, $timeout, $window) {
         // after TTS finishes - prevents "stuck in speaking" bug.
         var wrappedDone = function () { _afterTTS(done); };
 
-        // R1.5 - new TTS preference order:
-        //   c.ttsEngine === 'edge'  -> Microsoft Edge Neural (default)
-        //   c.ttsEngine === 'stream'-> StreamElements Raveena
-        //   c.ttsEngine === 'browser' -> browser speechSynthesis
-        // Each falls back to the next on failure.
+        // R1.6 - ONE continuous Edge TTS call for the whole response (no
+        // mid-response audio gaps). SSML <break> tags between sentences
+        // give natural pacing inside the single audio stream. Filler
+        // sounds still play on state -> thinking before the reply starts.
         var engine = c.ttsEngine || (c.useRemoteTTS ? 'edge' : 'browser');
         if (engine === 'edge') {
             speakEdgeTTS(clean, wrappedDone);
@@ -1495,6 +1495,27 @@ api.controller = function ($scope, $timeout, $window) {
         } else {
             speakBrowser(clean, wrappedDone);
         }
+    }
+
+    // Build SSML body with natural breath breaks between sentences.
+    // Splits on .!? boundaries and inserts <break time="180ms"/>.
+    function _buildHumanSSML(text, voice) {
+        var safe = String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+        // Insert breath break after every .!? (followed by space or end)
+        safe = safe.replace(/([.!?]+)(\s|$)/g, '$1<break time="180ms"/>$2');
+        // Slightly shorter pause after commas
+        safe = safe.replace(/(,)(\s)/g, '$1<break time="80ms"/>$2');
+        // Slightly longer pause after em-dashes (Indian-English thinking pause)
+        safe = safe.replace(/( - | -- | — )/g, '<break time="120ms"/>$1');
+        return '<speak version=\'1.0\' xml:lang=\'en-IN\'>' +
+               '<voice name=\'' + voice + '\'>' +
+               '<prosody rate=\'+10%\' pitch=\'+0Hz\'>' + safe + '</prosody>' +
+               '</voice></speak>';
     }
 
     // Unified post-TTS handler: reset state, ensure mic is open, fire user callback.
@@ -1571,13 +1592,10 @@ api.controller = function ($scope, $timeout, $window) {
                 // 1. Speech config
                 var cfg = '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
                 ws.send('X-Timestamp:' + now + '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' + cfg);
-                // 2. SSML body. Rate +10% so it speaks slightly quick but stays clear.
-                //    The playbackRate=1.2 on the <audio> element adds another nudge.
-                var safe = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-                var ssml = '<speak version=\'1.0\' xml:lang=\'en-IN\'>' +
-                           '<voice name=\'' + c.edgeVoice + '\'>' +
-                           '<prosody rate=\'+10%\' pitch=\'+0Hz\'>' + safe + '</prosody>' +
-                           '</voice></speak>';
+                // 2. SSML body with sentence/comma/em-dash breath breaks.
+                //    R1.6 - one continuous audio stream with natural pacing
+                //    inside, rather than multiple TTS calls per sentence.
+                var ssml = _buildHumanSSML(text, c.edgeVoice);
                 ws.send('X-RequestId:' + requestId + '\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:' + new Date().toISOString() + '\r\nPath:ssml\r\n\r\n' + ssml);
                 ignoreFinalsUntil = Date.now() + 15000;
                 setState('speaking');
@@ -1610,7 +1628,7 @@ api.controller = function ($scope, $timeout, $window) {
                             URL.revokeObjectURL(url);
                             if (currentAudio === audio) currentAudio = null;
                             ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
-                            _afterTTS(done);
+                            if (done) try { done(); } catch (e) {}
                         };
                         audio.onerror = function () {
                             if (resolved) return;
@@ -1658,6 +1676,94 @@ api.controller = function ($scope, $timeout, $window) {
             logEvent('err', 'edge TTS threw: ' + e.message);
             speakStreamElements(text, done);
         }
+    }
+
+    /* ============================================================
+     *  R1.6 - THINKING-CUE FILLERS
+     *
+     *  Pre-generate short "hmm.", "let me see.", "okay so.", "right."
+     *  clips via the Edge TTS pipeline on boot. Cache them as Blob URLs.
+     *  When state transitions to 'thinking' (user said something, Gemini
+     *  is now thinking), randomly play one to eliminate dead air.
+     *
+     *  Falls back silently if Edge TTS is unavailable - no filler is OK,
+     *  the existing audio cue from cue('think') stays.
+     * ============================================================ */
+    var FILLER_PHRASES = ['Hmm.', 'Let me see.', 'Okay so.', 'Right.', 'Mm.', 'Ahh.'];
+    var fillerCache = [];   // [{url, text}]
+    var lastFillerPlayedAt = 0;
+    var currentFillerAudio = null;
+
+    function _edgeBlob(text, voice, cb) {
+        try {
+            var requestId = _edgeConnectId();
+            var ws = new WebSocket(EDGE_WSS_URL + '&ConnectionId=' + requestId);
+            ws.binaryType = 'arraybuffer';
+            var chunks = [];
+            var done = false;
+            var watchdog = $timeout(function () {
+                if (!done) { done = true; try { ws.close(); } catch (e) {} cb(null); }
+            }, 5000);
+            ws.onopen = function () {
+                var cfg = '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
+                ws.send('X-Timestamp:' + new Date().toISOString() + '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' + cfg);
+                var safe = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                var ssml = '<speak version=\'1.0\' xml:lang=\'en-IN\'><voice name=\'' + (voice || c.edgeVoice) + '\'>' +
+                           '<prosody rate=\'+5%\' pitch=\'+0Hz\'>' + safe + '</prosody></voice></speak>';
+                ws.send('X-RequestId:' + requestId + '\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:' + new Date().toISOString() + '\r\nPath:ssml\r\n\r\n' + ssml);
+            };
+            ws.onmessage = function (ev) {
+                if (typeof ev.data === 'string') {
+                    if (ev.data.indexOf('Path:turn.end') >= 0) {
+                        try { ws.close(); } catch (e) {}
+                        if (done) return;
+                        done = true;
+                        $timeout.cancel(watchdog);
+                        if (!chunks.length) { cb(null); return; }
+                        cb(new Blob(chunks, { type: 'audio/mp3' }));
+                    }
+                } else {
+                    var data = new Uint8Array(ev.data);
+                    if (data.length < 2) return;
+                    var headerLen = (data[0] << 8) | data[1];
+                    if (data.length > 2 + headerLen) chunks.push(data.slice(2 + headerLen));
+                }
+            };
+            ws.onerror = function () { if (!done) { done = true; $timeout.cancel(watchdog); cb(null); } };
+            ws.onclose = function () { if (!done) { done = true; $timeout.cancel(watchdog); cb(null); } };
+        } catch (e) { cb(null); }
+    }
+
+    function preloadFillers() {
+        if (typeof WebSocket === 'undefined') return;
+        logEvent('tts', 'pre-loading thinking-cue fillers...');
+        var pending = FILLER_PHRASES.length;
+        FILLER_PHRASES.forEach(function (phrase) {
+            _edgeBlob(phrase, c.edgeVoice, function (blob) {
+                if (blob) {
+                    var url = URL.createObjectURL(blob);
+                    fillerCache.push({ url: url, text: phrase });
+                }
+                if (--pending === 0) {
+                    logEvent('tts', 'filler cache ready (' + fillerCache.length + '/' + FILLER_PHRASES.length + ')');
+                }
+            });
+        });
+    }
+
+    function playThinkingFiller() {
+        if (!fillerCache.length) return;
+        // Only one filler at a time, and at most once per 4s
+        if (Date.now() - lastFillerPlayedAt < 4000) return;
+        if (currentFillerAudio) { try { currentFillerAudio.pause(); } catch (e) {} }
+        var f = fillerCache[Math.floor(Math.random() * fillerCache.length)];
+        var a = new Audio(f.url);
+        a.volume = 0.75;
+        a.playbackRate = 1.15;
+        currentFillerAudio = a;
+        lastFillerPlayedAt = Date.now();
+        a.play().catch(function () { /* ignore - autoplay may be blocked */ });
+        logEvent('tts', 'filler: "' + f.text + '"');
     }
 
     function speakStreamElements(text, done) {
@@ -2116,8 +2222,14 @@ api.controller = function ($scope, $timeout, $window) {
      *  STATE
      * ============================================================ */
     function setState(s) {
+        var prev = c.state;
         c.state = s;
         c.stateLabel = STATE_LABEL[s] || s;
         $scope.$applyAsync();
+        // R1.6 - on transition INTO 'thinking', play a thinking-cue filler
+        // so there is no dead air while Gemini is processing.
+        if (s === 'thinking' && prev !== 'thinking') {
+            $timeout(playThinkingFiller, 80);
+        }
     }
 };
