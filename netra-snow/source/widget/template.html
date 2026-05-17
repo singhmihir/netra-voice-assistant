@@ -1,15 +1,10 @@
 <!--
-  Netra Mic widget template - v7 (DEV MODE: visible debug panel)
+  Netra Mic widget template - v8 (always-on, voice-controlled)
 
-  Two layers:
-    1. DEV PANEL (top-left)  - shows everything happening so you can see
-       whether the mic is listening, what it heard, the chosen voice,
-       confidence scores, server responses, and lets you type text
-       directly to Netra without using speech at all.
-    2. ORB (bottom-right)    - the blind-first persistent visual.
-
-  When you are ready to ship to blind users, set c.devOn = false in the
-  controller and the dev panel disappears entirely.
+  The mic is always open. Say "stop listening" to put Netra to sleep,
+  say "Netra" (or any wake-word variant) to wake her up again. The
+  dev panel shows everything: live interim transcript, confidence,
+  alert/dormant state, voice picker, event log.
 -->
 <div class="netra-root"
      ng-class="['netra-state-' + c.state]"
@@ -29,14 +24,16 @@
         ==================================================== -->
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
     <header class="netra-dev-head">
-      <strong>NETRA DEV  <span class="netra-dev-ver">v7.0</span></strong>
+      <strong>NETRA DEV  <span class="netra-dev-ver">v8.0</span></strong>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
+      <span class="netra-dev-pill netra-dev-pill-mode"
+            ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
       <button class="netra-dev-x" ng-click="c.toggleDev()" title="Hide (Alt+D)">hide</button>
     </header>
 
     <section class="netra-dev-status">
       <div><span>state</span><b>{{c.stateLabel}}</b></div>
-      <div><span>wake on</span><b>{{c.wakeOn}}</b></div>
+      <div><span>recognition</span><b ng-class="{'l-err': !c.recRunning}">{{c.recRunning ? 'RUNNING (always-on)' : 'stopped'}}</b></div>
       <div><span>mic permission</span><b ng-class="{'l-err': c.permission==='denied'}">{{c.permission}}</b></div>
       <div><span>API key</span><b ng-class="{'l-err': !c.data.has_api_key}">{{c.data.has_api_key ? 'set' : 'MISSING'}}</b></div>
       <div><span>SpeechRec</span><b ng-class="{'l-err': !c.hasSR}">{{c.hasSR ? 'available' : 'unavailable'}}</b></div>
@@ -61,14 +58,15 @@
     </section>
 
     <section class="netra-dev-actions">
-      <button ng-click="c.devTestMic()"  title="6-second mic test, shows everything heard">Test mic</button>
-      <button ng-click="c.devSkipWake()" title="Skip the wake word, jump to command capture">Skip wake</button>
-      <button ng-click="c.devTestTTS()"  title="Speak a test phrase with the chosen voice">Test TTS</button>
-      <button ng-click="c.devGreet()"    title="Re-trigger the greeting">Greet</button>
+      <button ng-click="c.devListenNow()"  title="Arm command capture without saying Netra">Listen now</button>
+      <button ng-click="c.devToggleSleep()" title="Toggle dormant / alert">{{c.alert ? 'Sleep' : 'Wake'}}</button>
+      <button ng-click="c.devTestTTS()"    title="Speak a test phrase with the chosen voice">Test TTS</button>
+      <button ng-click="c.devGreet()"      title="Re-trigger the greeting">Greet</button>
       <button ng-click="c.devReplayLast()" title="Speak the last response again">Replay</button>
-      <button ng-click="c.devStop()"     title="Stop everything (recognition + speech)">Stop all</button>
-      <button ng-click="c.devClearLog()" title="Clear the event log below">Clear log</button>
+      <button ng-click="c.devRestartRec()" title="Restart the recognition session">Restart rec</button>
+      <button ng-click="c.devDiagnose()"   title="Log diagnostic info (voices, perms, state)">Diagnose</button>
       <button ng-click="c.devPingServer()" title="Server diagnostic round-trip">Ping server</button>
+      <button ng-click="c.devClearLog()"   title="Clear the event log below">Clear log</button>
     </section>
 
     <section class="netra-dev-voices" ng-show="c.voices.length">
@@ -137,7 +135,7 @@
     </span>
     <span class="netra-gate-text">
       <strong>Press here to start Netra</strong>
-      <span>Then just say "Netra" to talk - or use the dev panel.</span>
+      <span>Mic stays on. Say "Netra" anytime. Say "stop listening" to sleep.</span>
     </span>
   </button>
 

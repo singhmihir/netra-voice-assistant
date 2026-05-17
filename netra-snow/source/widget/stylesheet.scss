@@ -358,11 +358,17 @@ $ink-soft:    #5F6368;
 
     &.netra-dev-pill-idle      { background: #1a3a52; color: #8ab4f8; }
     &.netra-dev-pill-listening { background: #5a1f1f; color: #ff7676; }
+    &.netra-dev-pill-awaiting  { background: #2d3a1f; color: #aed581; }
     &.netra-dev-pill-thinking  { background: #5a4500; color: #f9ab00; }
     &.netra-dev-pill-speaking  { background: #1f4f23; color: #81c995; }
     &.netra-dev-pill-paused    { background: #2d2d3a; color: #c4c7c5; }
+    &.netra-dev-pill-dormant   { background: #2d2d3a; color: #9aa0a6; }
     &.netra-dev-pill-error     { background: #5a1f1f; color: #ff7676; }
     &.netra-dev-pill-boot      { background: #2d2d3a; color: #c4c7c5; }
+    &.netra-dev-pill-mode {
+        &.on  { background: #1f4f23; color: #81c995; }
+        &.off { background: #2d2d3a; color: #9aa0a6; }
+    }
 }
 .netra-dev-x {
     font-size: 10px;
