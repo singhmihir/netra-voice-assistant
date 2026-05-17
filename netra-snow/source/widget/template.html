@@ -26,7 +26,7 @@
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
     <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
       <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <span class="netra-dev-ver">R2.6</span>
+      <span class="netra-dev-ver">R2.7</span>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
@@ -132,6 +132,7 @@
       <button ng-click="c.devDiagnose()"    title="Log diagnostic info (voices, perms, state)">Diagnose</button>
       <button ng-click="c.devPingServer()"  title="Server diagnostic round-trip">Ping server</button>
       <button ng-click="c.devClearLog()"    title="Clear the event log below">Clear log</button>
+      <button ng-click="c.devNuclearReset()" title="Wipe Gemini history + restart mic + AudioContext (Alt+Shift+R)">Reset all</button>
     </section>
 
     <!-- R2.2 - Voice training: personal vocab + alias map -->

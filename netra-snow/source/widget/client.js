@@ -775,8 +775,12 @@ api.controller = function ($scope, $timeout, $window) {
             logEvent('warn', 'mic-meter: getUserMedia not supported');
             return;
         }
+        // R2.7 - autoGainControl=false. With AGC on, Chrome silently
+        // attenuates the mic over time when the average level is "high"
+        // (the user's own voice counts as high), causing the meter to
+        // gradually drop. Off means the meter shows true acoustic level.
         navigator.mediaDevices.getUserMedia({ audio: {
-            echoCancellation: true, noiseSuppression: true, autoGainControl: true
+            echoCancellation: true, noiseSuppression: true, autoGainControl: false
         } }).then(function (stream) {
             _micStream = stream;
             c.micStreamActive = true;
@@ -806,6 +810,30 @@ api.controller = function ($scope, $timeout, $window) {
             };
             loop();
             logEvent('mic', 'live level meter started (audio is flowing)');
+
+            // R2.7 - mic-stream health watchdog. Every 20s check:
+            //  1. AudioContext is not suspended (Chrome auto-suspends in
+            //     background tabs; resume() unsuspends).
+            //  2. The MediaStream track is still live. If "ended" or
+            //     "muted", tear down and re-acquire.
+            var __micHealthTick = function () {
+                try {
+                    if (_micCtx && _micCtx.state === 'suspended') {
+                        logEvent('mic', 'AudioContext was suspended - resuming');
+                        _micCtx.resume();
+                    }
+                    var tracks = _micStream ? _micStream.getAudioTracks() : [];
+                    var live = tracks.filter(function (t) { return t.readyState === 'live' && !t.muted; });
+                    if (tracks.length && !live.length) {
+                        logEvent('warn', 'mic stream tracks died - reacquiring');
+                        try { stopMicLevelMeter(); } catch (e) {}
+                        $timeout(startMicLevelMeter, 500);
+                        return;   // dont reschedule; new instance will
+                    }
+                } catch (eH) { logEvent('warn', 'mic health: ' + eH.message); }
+                $timeout(__micHealthTick, 20000);
+            };
+            $timeout(__micHealthTick, 20000);
         }, function (err) {
             logEvent('err', 'mic-meter getUserMedia failed: ' + (err && err.name) + ' ' + (err && err.message));
             c.micStreamActive = false;
@@ -1443,6 +1471,14 @@ api.controller = function ($scope, $timeout, $window) {
                     recRestartCount = 0;
                     startContinuous();
                 }
+                // R2.7 - resume the AudioContext (Chrome suspends it on
+                // background; mic meter would silently die without this).
+                try {
+                    if (_micCtx && _micCtx.state === 'suspended') {
+                        logEvent('mic', 'visibility: resuming AudioContext');
+                        _micCtx.resume();
+                    }
+                } catch (eC) {}
                 // Also reset stuck speaking state on tab return
                 if (c.state === 'speaking' && (!TTS || !TTS.speaking)) {
                     if (!currentAudio || currentAudio.paused) {
@@ -1749,6 +1785,11 @@ api.controller = function ($scope, $timeout, $window) {
                         c.lastTrace = r.tools_called.map(function (name, i) {
                             return { name: name, order: i + 1 };
                         });
+                    }
+                    // R2.7 - server told us payload was too large, reset
+                    if (r.force_history_reset) {
+                        logEvent('warn', 'server requested history reset (payload too large)');
+                        geminiHistory = [];
                     }
                     // R2 - act on client directives from tools
                     if (r.directives) {
@@ -2387,6 +2428,22 @@ api.controller = function ($scope, $timeout, $window) {
                 c.tap();
                 $scope.$applyAsync();
             }
+            if (e.altKey && e.shiftKey && (e.key === 'r' || e.key === 'R')) {
+                // R2.7 - Alt+Shift+R = NUCLEAR reset (history, mic, rec, AudioContext)
+                e.preventDefault();
+                logEvent('warn', 'Alt+Shift+R: nuclear reset of everything');
+                geminiHistory = [];
+                recRestartCount = 0;
+                ignoreFinalsUntil = Date.now();
+                try { if (contRec) contRec.stop(); } catch (er) {}
+                try { stopMicLevelMeter(); } catch (e2) {}
+                $timeout(function () {
+                    startContinuous();
+                    startMicLevelMeter();
+                }, 300);
+                $scope.$applyAsync();
+                return;
+            }
             if (e.altKey && (e.key === 'r' || e.key === 'R')) {
                 // R1.1 - Alt+R = force restart recognition (escape hatch)
                 e.preventDefault();
@@ -2510,6 +2567,20 @@ api.controller = function ($scope, $timeout, $window) {
 
     c.devClearLog = function () {
         c.events = [];
+    };
+
+    // R2.7 - exposes Alt+Shift+R as a button click for sighted helpers
+    c.devNuclearReset = function () {
+        logEvent('warn', 'Reset all clicked - nuclear reset');
+        geminiHistory = [];
+        recRestartCount = 0;
+        ignoreFinalsUntil = Date.now();
+        try { if (contRec) contRec.stop(); } catch (e) {}
+        try { stopMicLevelMeter(); } catch (e) {}
+        $timeout(function () {
+            startContinuous();
+            startMicLevelMeter();
+        }, 300);
     };
 
     c.devPickVoice = function () {

@@ -170,14 +170,57 @@
         var model = gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash');
 
         // Build conversation history for Gemini.
-        // R2 - aggressively prune to last 12 turns (was unbounded). Most
-        // commands are independent, history bloat slows every round-trip.
+        // R2.7 - aggressive sanitisation to keep payloads under ~40KB even
+        // in 30-minute sessions:
+        //   - Keep last 12 turns
+        //   - Truncate any tool-response body over 1500 chars to a digest
+        //   - Strip any inlineData (screenshot frames) from past turns
+        //   - Hard byte cap: if still over 60KB, drop oldest turns
         var contents = [];
         if (Array.isArray(history)) {
             var start = Math.max(0, history.length - 12);
             for (var i = start; i < history.length; i++) {
                 var h = history[i];
-                if (h && h.role && h.parts) contents.push(h);
+                if (!h || !h.role || !h.parts) continue;
+                var sanitisedParts = [];
+                for (var p = 0; p < h.parts.length; p++) {
+                    var part = h.parts[p];
+                    if (!part) continue;
+                    // Drop inlineData (binary frames) from past turns
+                    if (part.inlineData) continue;
+                    if (part.functionResponse && part.functionResponse.response) {
+                        // Truncate large tool-result bodies in-place
+                        var resp = part.functionResponse.response;
+                        var s = '';
+                        try { s = JSON.stringify(resp); } catch (eS) {}
+                        if (s.length > 1500) {
+                            sanitisedParts.push({
+                                functionResponse: {
+                                    name: part.functionResponse.name,
+                                    response: { result: { ok: true, _truncated: true, summary: s.substring(0, 800) + '...[' + (s.length - 800) + ' more chars trimmed]' } }
+                                }
+                            });
+                        } else {
+                            sanitisedParts.push(part);
+                        }
+                    } else if (part.text && part.text.length > 2000) {
+                        sanitisedParts.push({ text: part.text.substring(0, 2000) + '...[truncated]' });
+                    } else {
+                        sanitisedParts.push(part);
+                    }
+                }
+                if (sanitisedParts.length) {
+                    contents.push({ role: h.role, parts: sanitisedParts });
+                }
+            }
+            // Hard byte cap
+            var size = JSON.stringify(contents).length;
+            while (contents.length > 2 && size > 60000) {
+                contents.shift();
+                size = JSON.stringify(contents).length;
+            }
+            if (size > 60000) {
+                gs.warn('[NetraGemini] history still ' + size + ' bytes after pruning; will rely on Gemini to handle');
             }
         }
         // R1.4 - vision support: if the client attached an image, send it
@@ -209,7 +252,13 @@
                 var err = String(resp.error);
                 if (err.indexOf('429') >= 0)        friendly = 'I have hit the rate limit. Kindly wait a minute and try again.';
                 else if (err.indexOf('401') >= 0 || err.indexOf('403') >= 0) friendly = 'My API key is not authorised. Kindly check the configuration.';
-                else if (err.indexOf('400') >= 0)   friendly = 'I could not understand that request, kindly rephrase.';
+                else if (err.indexOf('400') >= 0) {
+                    // R2.7 - 400 after a long session usually means payload too large.
+                    // Tell the client to reset history rather than the misleading
+                    // "could not understand" message.
+                    friendly = 'My memory has grown a bit too large. Could you say it again? I have just trimmed it.';
+                    return { ok: false, message: friendly, error_detail: err, force_history_reset: true };
+                }
                 else if (err.indexOf('404') >= 0)   friendly = 'The AI model is not available right now.';
                 else if (err.indexOf('exhausted') >= 0) friendly = 'All AI models are busy at the moment. Kindly try again in a few seconds.';
                 return { ok: false, message: friendly, error_detail: err };
