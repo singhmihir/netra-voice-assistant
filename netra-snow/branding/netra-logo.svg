@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" width="720" height="220" role="img" aria-label="Netra Voice Assistant">
+  <title>Netra — Voice Assistant</title>
+  <desc>An eye-shaped mark in navy with a green sound-wave accent, followed by the Netra wordmark and 'Voice Assistant' tagline.</desc>
+
+  <defs>
+    <radialGradient id="iris" cx="50%" cy="45%" r="55%">
+      <stop offset="0%"   stop-color="#3b82f6"/>
+      <stop offset="55%"  stop-color="#1a56db"/>
+      <stop offset="100%" stop-color="#0e2e7a"/>
+    </radialGradient>
+    <linearGradient id="lid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0e2e7a"/>
+      <stop offset="100%" stop-color="#1a3b8a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- =========================================================
+       Eye mark (Netra = "eye" in Sanskrit).
+       Almond shape + iris + pupil + highlight.
+       ========================================================= -->
+  <g transform="translate(40, 50)">
+    <!-- Eye outline -->
+    <path d="M 0,60 Q 60,0 130,0 Q 200,0 260,60 Q 200,120 130,120 Q 60,120 0,60 Z"
+          fill="none" stroke="url(#lid)" stroke-width="6" stroke-linejoin="round"/>
+    <!-- Iris -->
+    <circle cx="130" cy="60" r="44" fill="url(#iris)"/>
+    <!-- Pupil -->
+    <circle cx="130" cy="60" r="18" fill="#0a1530"/>
+    <!-- Catch-light -->
+    <circle cx="120" cy="50" r="6"  fill="#ffffff" opacity="0.9"/>
+    <circle cx="142" cy="68" r="3"  fill="#ffffff" opacity="0.55"/>
+
+    <!-- Sound-wave / voice accent: three concentric arcs in green
+         (suggests audio emanation from the eye).
+         Green dot remains a generic design accent and is not a
+         reproduction of any third-party brand mark. -->
+    <g stroke="#22b573" stroke-width="3.5" stroke-linecap="round" fill="none" opacity="0.92">
+      <path d="M 220 60 Q 240 38 264  60"/>
+      <path d="M 220 60 Q 248 24 280  60"/>
+      <path d="M 220 60 Q 256 10 296  60"/>
+    </g>
+  </g>
+
+  <!-- =========================================================
+       Wordmark
+       ========================================================= -->
+  <g transform="translate(360, 0)" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+    <text x="0" y="125" font-size="84" font-weight="800" letter-spacing="-2" fill="#0e2e7a">Netra</text>
+    <text x="2" y="165" font-size="18" font-weight="600" letter-spacing="6" fill="#475569">VOICE ASSISTANT</text>
+  </g>
+</svg>

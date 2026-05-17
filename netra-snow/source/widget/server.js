@@ -1,5 +1,14 @@
 /**
- * Netra Mic widget - SERVER SCRIPT  (v5 - Gemini agent)
+ * Netra Mic widget - SERVER SCRIPT  (Release 1 - humane agentic Gemini)
+ *
+ * R1 milestone: 36 tools (12 added in v14: daily_briefing, workload_summary,
+ *   create_problem, create_change, list_overdue, set_focus_ticket,
+ *   recall_focus, add/remove/list_watchlist, add_work_note, team_workload).
+ * Updated Gemini model fallback chain (1.5 retired, gemini-flash-latest added).
+ * Safety filters relaxed (BLOCK_ONLY_HIGH) so lookup_user details flow.
+ * System prompt now: warm, calls user by first name, proactive, empathetic,
+ * chains multi-step actions without confirmation prompts.
+ *
  *
  * Powered by Google's Gemini API with full function-calling (tool use).
  * The model decides when to call tools (create ticket, list, resolve,
@@ -32,6 +41,7 @@
 
     _ensurePref();
     _setPauseState();
+    data.vocab = _getVocab();
 
     var action = (input && input.action) ? String(input.action) : null;
 
@@ -134,11 +144,21 @@
         var tools = _toolDeclarations();
 
         // Tool-use loop (max 5 iterations to prevent runaway)
+        var modelUsed = null;
+        var toolsCalled = [];   // R1 - track which tools were invoked
         for (var iter = 0; iter < 5; iter++) {
             var resp = _callGemini(apiKey, model, contents, tools, systemInstruction);
+            if (resp._model_used) modelUsed = resp._model_used;
             if (resp.error) {
                 gs.error('[NetraGemini] API error: ' + resp.error);
-                return { ok: false, message: 'I could not reach the AI service. ' + resp.error };
+                var friendly = 'Sorry, the AI service is busy right now. Kindly try again in a moment.';
+                var err = String(resp.error);
+                if (err.indexOf('429') >= 0)        friendly = 'I have hit the rate limit. Kindly wait a minute and try again.';
+                else if (err.indexOf('401') >= 0 || err.indexOf('403') >= 0) friendly = 'My API key is not authorised. Kindly check the configuration.';
+                else if (err.indexOf('400') >= 0)   friendly = 'I could not understand that request, kindly rephrase.';
+                else if (err.indexOf('404') >= 0)   friendly = 'The AI model is not available right now.';
+                else if (err.indexOf('exhausted') >= 0) friendly = 'All AI models are busy at the moment. Kindly try again in a few seconds.';
+                return { ok: false, message: friendly, error_detail: err };
             }
 
             var candidate = (resp.candidates && resp.candidates[0]) || null;
@@ -164,6 +184,7 @@
                 for (var f = 0; f < functionCalls.length; f++) {
                     var fc = functionCalls[f];
                     var result = _runTool(fc.name, fc.args || {});
+                    toolsCalled.push(fc.name);   // R1 - record tool call
                     gs.info('[NetraGemini] tool ' + fc.name + ' -> ' + JSON.stringify(result).substring(0, 200));
                     responseParts.push({
                         functionResponse: {
@@ -195,7 +216,9 @@
                 ok: true,
                 message: finalText,
                 history: contents,
-                paused: data.paused
+                paused: data.paused,
+                model_used: modelUsed,
+                tools_called: toolsCalled    // R1 - for dev panel graph
             };
         }
 
@@ -203,9 +226,66 @@
     }
 
     /* ===================================================================
-     *  HTTP call to Google's Gemini API via sn_ws.RESTMessageV2
+     *  Gemini call with model fallback chain
+     *  On 503/429/UNAVAILABLE, transparently retry on a sibling model.
+     *  All in Google's free tier.
      * =================================================================== */
-    function _callGemini(apiKey, model, contents, tools, systemInstruction) {
+    function _callGemini(apiKey, requestedModel, contents, tools, systemInstruction) {
+        // v14: updated chain - 1.5 models retired by Google, replaced with
+        // currently-available 2.x families plus the "latest" aliases (which
+        // Google auto-points at whichever production model is healthy).
+        var chain = [requestedModel];
+        ['gemini-2.5-flash',
+         'gemini-flash-latest',
+         'gemini-2.5-flash-lite',
+         'gemini-flash-lite-latest',
+         'gemini-2.0-flash',
+         'gemini-2.0-flash-lite',
+         'gemini-2.5-pro',
+         'gemini-pro-latest'].forEach(function (m) {
+            if (chain.indexOf(m) < 0) chain.push(m);
+        });
+
+        var lastErr = null;
+        // 404 on a deprecated model is NOT a real "stop the chain" signal -
+        // the model just doesnt exist. Keep going. We only stop on auth (401/403),
+        // quota (RESOURCE_EXHAUSTED with quota), or actual permission errors.
+        for (var i = 0; i < chain.length; i++) {
+            var result = _callGeminiOnce(apiKey, chain[i], contents, tools, systemInstruction);
+            if (!result.error) {
+                if (i > 0) {
+                    gs.info('[NetraGemini] fallback succeeded on ' + chain[i] + ' after ' + i + ' failures');
+                    data.last_model_used = chain[i];
+                }
+                result._model_used = chain[i];
+                return result;
+            }
+            lastErr = result.error;
+            var transient = lastErr.indexOf('503') >= 0 ||
+                            lastErr.indexOf('429') >= 0 ||
+                            lastErr.indexOf('500') >= 0 ||
+                            lastErr.indexOf('UNAVAILABLE') >= 0 ||
+                            lastErr.indexOf('overloaded') >= 0 ||
+                            lastErr.indexOf('high demand') >= 0 ||
+                            // 404 "model not found" is treated as transient (skip and continue)
+                            // because we always want to try the next model, not abort.
+                            (lastErr.indexOf('404') >= 0 && lastErr.indexOf('not found') >= 0) ||
+                            (lastErr.indexOf('404') >= 0 && lastErr.indexOf('is not supported') >= 0);
+            if (!transient) {
+                gs.warn('[NetraGemini] non-transient error on ' + chain[i] + ': ' + lastErr.substring(0, 200));
+                return result;
+            }
+            // For 404 vs busy, log differently so debugging stays clear
+            if (lastErr.indexOf('404') >= 0) {
+                gs.info('[NetraGemini] ' + chain[i] + ' is retired/missing, trying next model');
+            } else {
+                gs.info('[NetraGemini] ' + chain[i] + ' is busy, falling through to next model');
+            }
+        }
+        return { error: 'All fallback models exhausted. Last: ' + lastErr };
+    }
+
+    function _callGeminiOnce(apiKey, model, contents, tools, systemInstruction) {
         var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
                   encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
         var body = {
@@ -216,7 +296,16 @@
                 temperature: 0.7,
                 maxOutputTokens: 1024,
                 topP: 0.95
-            }
+            },
+            // R1: relax default safety filters - this is an internal corporate
+            // assistant. Corporate directory lookups, ticket text, and routine
+            // language must not be blocked by overly-cautious filters.
+            safetySettings: [
+                { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
+                { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_ONLY_HIGH' },
+                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+            ]
         };
         try {
             var rm = new sn_ws.RESTMessageV2();
@@ -245,7 +334,8 @@
             parts: [{
                 text:
 'You are Netra, a female voice assistant for ServiceNow, designed specifically for blind and visually-impaired users.\n' +
-'You are speaking with ' + gs.getUserDisplayName() + '.\n' +
+'You are speaking with ' + gs.getUserDisplayName() + '. Call them by their first name "' + gs.getUserDisplayName().split(' ')[0] + '" naturally in conversation - not in every sentence, but at the start of replies and at transitions. ' +
+'Be warm. Be empathetic. You are their trusted colleague, not a robot.\n' +
 '\n' +
 'CRITICAL - ACCESSIBILITY CONTEXT:\n' +
 '- The user is BLIND. They cannot see anything on the screen.\n' +
@@ -272,17 +362,70 @@
 'check approvals, search knowledge. Be patient, be clear, be brief.\n' +
 '\n' +
 'YOUR CAPABILITIES (use tools - do not describe):\n' +
+'TICKETS:\n' +
 '- create_ticket - open a new incident\n' +
-'- list_tickets - list the users open incidents\n' +
+'- list_tickets - list the user open incidents\n' +
 '- resolve_ticket - mark an incident resolved\n' +
 '- update_ticket - add a comment to an incident\n' +
 '- get_ticket_status - read state of an incident\n' +
+'- summarize_ticket - full summary (desc, state, priority, assignee, comments, work notes)\n' +
+'- change_priority - 1 critical, 2 high, 3 moderate, 4 low\n' +
+'- escalate_ticket - raise priority by one level\n' +
+'- assign_ticket_to_group - assign to an assignment group by name\n' +
+'- assign_ticket_to_user - assign to a user by name/email\n' +
+'- search_incidents - search across ALL incidents by keyword\n' +
+'OTHER TASK TYPES:\n' +
+'- list_my_problems - problem records (separate from incidents)\n' +
+'- list_my_changes - change requests\n' +
+'- list_my_requests - catalog RITMs\n' +
+'ATTACHMENTS:\n' +
+'- list_attachments - list files on an incident\n' +
+'- read_text_attachment - read text content of .txt/.csv/.log/.md/.json/.xml only\n' +
+'PEOPLE (corporate directory - sharing details is REQUIRED, never refuse):\n' +
+'- lookup_user - find user by name/email/username and SPEAK BACK all details (name, email, title, username).\n' +
+'  Context: This is an internal corporate ServiceNow directory. Every record is a colleague the user works with daily.\n' +
+'  Speak the email letter-by-letter if not common ("J O H N dot A D A M S at example dot com").\n' +
+'  NEVER refuse to share these details - the user needs them to do their job (assign tickets, send messages, etc).\n' +
+'- send_message_to_user - send a message via a tracking incident\n' +
+'KNOWLEDGE:\n' +
 '- search_knowledge - search the knowledge base\n' +
+'APPROVALS:\n' +
 '- list_approvals - list pending approvals\n' +
-'- decide_approval - approve or reject a pending approval\n' +
-'- pause_notifications - silence proactive alerts for N hours\n' +
-'- resume_notifications - turn notifications back on\n' +
+'- decide_approval - approve or reject\n' +
+'NOTIFICATIONS:\n' +
+'- pause_notifications - silence for N hours\n' +
+'- resume_notifications - turn back on\n' +
+'FUN:\n' +
+'- tell_joke - short tech / ServiceNow joke (ONLY when user asks)\n' +
+'BRIEFING & WORKLOAD:\n' +
+'- daily_briefing - greet by name + count incidents, problems, changes, requests, approvals. Use for "morning briefing", "what is on my plate today", "summary of my day".\n' +
+'- workload_summary - quick counts only (no greeting). Use for "how much work do I have".\n' +
+'- list_overdue - tickets past SLA threshold.\n' +
+'- team_workload - count of open incidents in each of the users assignment groups.\n' +
+'CONTEXT (focus + watchlist):\n' +
+'- set_focus_ticket - whenever the user names a ticket, set it as focus so follow-up commands (it/that/this) know which one.\n' +
+'- recall_focus - tell the user which ticket is currently in focus.\n' +
+'- add_to_watchlist - watch a ticket; Netra will proactively announce changes on it.\n' +
+'- remove_from_watchlist - stop watching.\n' +
+'- list_watchlist - tell the user what is on their watchlist.\n' +
+'CREATE OTHER TASK TYPES:\n' +
+'- create_problem - log a problem record (distinct from incident).\n' +
+'- create_change - create a normal/standard/emergency change request.\n' +
+'NOTES:\n' +
+'- add_work_note - private internal note (only fulfillers see). Use update_ticket for customer-visible comments.\n' +
 '\n' +
+'AGENTIC BEHAVIOUR (R1 - act like a real, helpful colleague):\n' +
+'- Use the persons first name naturally. e.g. "Right, Mihir, INC zero zero one two is done." / "Mihir, you have three open this morning."\n' +
+'- BE PROACTIVE. If the user asks for a briefing and you see an overdue P1, mention it and offer to escalate.\n' +
+'- BE EMPATHETIC. If the user sounds frustrated ("ugh", "again?"), acknowledge before acting: "I hear you, that does sound annoying. Let me look it up."\n' +
+'- CHAIN ACTIONS. If user says "open a ticket for VPN, and add a comment that I tried restarting" - call create_ticket, then update_ticket on the new number. Do not ask for confirmation between steps for simple chains.\n' +
+'- ASK ONLY ONE QUESTION. If you need to clarify, ask one short question and remember the rest for follow-up.\n' +
+'- IF the user mentions a ticket number, ALWAYS call set_focus_ticket BEFORE the action, so context is set.\n' +
+'- IF the user says "it", "that ticket", "this one" - call recall_focus first to find the focused ticket.\n' +
+'- IF the user says "morning briefing" / "what is on my plate" - use daily_briefing (it includes the greeting).\n' +
+'- HUMANE TONE: never sound mechanical. Use phrases like "no worries", "happy to help", "let me take a look", "consider it done", "shall I?", "right away".\n' +
+'- CELEBRATE small wins. When a ticket is resolved, briefly congratulate: "Done, Mihir. INC zero zero one two is resolved - one down from your plate."\n' +
+'- ON ERRORS, be human. "Hmm, that did not go through, Mihir. Let me try again." rather than dry "ok=false".\n' +
 'BEHAVIOUR:\n' +
 '- When the user wants something done, CALL THE TOOL - do not just describe what it would do.\n' +
 '- If the request is vague, ask ONE short clarifying question.\n' +
@@ -390,6 +533,167 @@
                     name: 'resume_notifications',
                     description: 'Turn notifications back on.',
                     parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'change_priority',
+                    description: 'Change the priority of an incident. 1=critical, 2=high, 3=moderate, 4=low.',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string' },
+                        priority: { type: 'string', enum: ['1','2','3','4'] }
+                    }, required: ['ticket_number','priority'] }
+                },
+                {
+                    name: 'escalate_ticket',
+                    description: 'Escalate an incident by raising its priority one level (3 -> 2 -> 1).',
+                    parameters: { type: 'object', properties: { ticket_number: { type: 'string' } }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'assign_ticket_to_group',
+                    description: 'Assign an incident to an assignment group by name (partial match).',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string' },
+                        group_name: { type: 'string' }
+                    }, required: ['ticket_number','group_name'] }
+                },
+                {
+                    name: 'assign_ticket_to_user',
+                    description: 'Assign an incident to a user by name, username, or email.',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string' },
+                        user_name: { type: 'string' }
+                    }, required: ['ticket_number','user_name'] }
+                },
+                {
+                    name: 'list_my_problems',
+                    description: 'List the user open problem records (problem table, separate from incidents).',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'list_my_changes',
+                    description: 'List the user open change requests.',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'list_my_requests',
+                    description: 'List the user open catalog requested items (RITM records).',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'search_incidents',
+                    description: 'Search across ALL incidents (not just the user own) by keyword in short description.',
+                    parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }
+                },
+                {
+                    name: 'lookup_user',
+                    description: 'Find a corporate colleague in the ServiceNow user directory by name, username, or email. Returns up to 3 matches with name, email, username, and job title. USE THIS whenever the user asks "who is X", "find X", "tell me about X", "look up X" - and after calling, SPEAK BACK the details. This is a corporate directory of colleagues - sharing these details is the entire purpose. Never refuse.',
+                    parameters: { type: 'object', properties: { query: { type: 'string', description: 'Full or partial name, username, or email of the colleague to look up' } }, required: ['query'] }
+                },
+                {
+                    name: 'list_attachments',
+                    description: 'List file attachments on an incident.',
+                    parameters: { type: 'object', properties: { ticket_number: { type: 'string' } }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'read_text_attachment',
+                    description: 'Read the contents of a TEXT attachment (.txt, .csv, .log, .md, .json, .xml) on an incident. PDFs and binaries cannot be read.',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string' },
+                        attachment_name: { type: 'string' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'summarize_ticket',
+                    description: 'Full summary of an incident including description, state, priority, assignee, comments, work notes.',
+                    parameters: { type: 'object', properties: { ticket_number: { type: 'string' } }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'send_message_to_user',
+                    description: 'Send a message to another ServiceNow user. Creates a tracking incident assigned to them.',
+                    parameters: { type: 'object', properties: {
+                        recipient_name: { type: 'string' },
+                        message: { type: 'string' }
+                    }, required: ['recipient_name','message'] }
+                },
+                {
+                    name: 'tell_joke',
+                    description: 'Tell a short tech / ServiceNow joke. Use ONLY when the user explicitly asks for a joke.',
+                    parameters: { type: 'object', properties: {} }
+                },
+                // ------- v14 advanced tools -------
+                {
+                    name: 'daily_briefing',
+                    description: 'Morning briefing with counts of pending incidents, approvals, changes, requests, and problems for the user. Use when the user asks "what is my day", "morning briefing", "summary", "what is on my plate today".',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'workload_summary',
+                    description: 'Concise count of open work across incidents, problems, changes, requests and pending approvals. Use when user asks "how much work do I have", "workload", "what is open".',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'create_problem',
+                    description: 'Create a new problem record. Use when user says "log a problem about ..." or "raise a problem".',
+                    parameters: { type: 'object', properties: {
+                        short_description: { type: 'string', description: 'One-line description of the problem' },
+                        impact: { type: 'string', description: 'Impact 1-3 (1=high). Default 3.' }
+                    }, required: ['short_description'] }
+                },
+                {
+                    name: 'create_change',
+                    description: 'Create a normal change request. Use when user says "raise a change for ..." or "create a change request".',
+                    parameters: { type: 'object', properties: {
+                        short_description: { type: 'string', description: 'One-line description of the change' },
+                        change_type: { type: 'string', enum: ['standard','normal','emergency'], description: 'Type. Default normal.' }
+                    }, required: ['short_description'] }
+                },
+                {
+                    name: 'list_overdue',
+                    description: 'List the users own open incidents that have crossed their due-date / SLA breach threshold (older than 3 days for P3+, 1 day for P2, 4 hours for P1).',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'set_focus_ticket',
+                    description: 'Remember a ticket as the conversation focus so subsequent commands like "resolve it", "raise its priority", "summarize it" know which ticket to act on. Use whenever the user names a ticket explicitly.',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'INC/CHG/PRB/RITM number. Spoken digits will be normalised.' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'recall_focus',
+                    description: 'Tell the user which ticket Netra is currently focused on. Use when user says "what was I working on", "which ticket is in focus".',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'add_to_watchlist',
+                    description: 'Add a ticket to the users Netra watchlist - Netra will proactively notify them of any state/comment changes on it.',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'INC/CHG/PRB/RITM number' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'remove_from_watchlist',
+                    description: 'Stop watching a ticket. Use when the user says "stop watching INC...", "drop X from my watchlist", "I do not need updates on X anymore".',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'INC/CHG/PRB/RITM number' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'list_watchlist',
+                    description: 'List all tickets currently being watched by the user.',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'add_work_note',
+                    description: 'Add a private work note (visible only to fulfillers, not the requester) to a ticket. Distinct from update_ticket which adds customer-visible comments.',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'INC/CHG/PRB/RITM number' },
+                        note: { type: 'string', description: 'The internal note text' }
+                    }, required: ['ticket_number','note'] }
+                },
+                {
+                    name: 'team_workload',
+                    description: 'Count open incidents per group the user belongs to. Use when user asks "what is my teams workload" or "how is the queue".',
+                    parameters: { type: 'object', properties: {} }
                 }
             ]
         }];
@@ -422,6 +726,60 @@
                     return tools.pauseNotifications(Number(args.hours) || 1);
                 case 'resume_notifications':
                     return tools.resumeNotifications();
+                // ------- v11 expanded tools -------
+                case 'change_priority':
+                    return _changePriority(_normNum(args.ticket_number), String(args.priority));
+                case 'escalate_ticket':
+                    return _escalateTicket(_normNum(args.ticket_number));
+                case 'assign_ticket_to_group':
+                    return _assignToGroup(_normNum(args.ticket_number), String(args.group_name || ''));
+                case 'assign_ticket_to_user':
+                    return _assignToUser(_normNum(args.ticket_number), String(args.user_name || ''));
+                case 'list_my_problems':
+                    return _listMyOf('problem', 5);
+                case 'list_my_changes':
+                    return _listMyOf('change_request', 5);
+                case 'list_my_requests':
+                    return _listMyOf('sc_req_item', 5);
+                case 'search_incidents':
+                    return _searchIncidents(String(args.query || ''));
+                case 'lookup_user':
+                    return _lookupUser(String(args.query || ''));
+                case 'list_attachments':
+                    return _listAttachments(_normNum(args.ticket_number));
+                case 'read_text_attachment':
+                    return _readTextAttachment(_normNum(args.ticket_number), String(args.attachment_name || ''));
+                case 'summarize_ticket':
+                    return _summarizeTicket(_normNum(args.ticket_number));
+                case 'send_message_to_user':
+                    return _sendMessage(String(args.recipient_name || ''), String(args.message || ''));
+                case 'tell_joke':
+                    return _tellJoke();
+                // ------- v14 advanced tools -------
+                case 'daily_briefing':
+                    return _dailyBriefing();
+                case 'workload_summary':
+                    return _workloadSummary();
+                case 'create_problem':
+                    return _createProblem(String(args.short_description || ''), String(args.impact || '3'));
+                case 'create_change':
+                    return _createChange(String(args.short_description || ''), String(args.change_type || 'normal'));
+                case 'list_overdue':
+                    return _listOverdue();
+                case 'set_focus_ticket':
+                    return _setFocusTicket(_normNum(args.ticket_number));
+                case 'recall_focus':
+                    return _recallFocus();
+                case 'add_to_watchlist':
+                    return _addToWatchlist(_normNum(args.ticket_number));
+                case 'remove_from_watchlist':
+                    return _removeFromWatchlist(_normNum(args.ticket_number));
+                case 'list_watchlist':
+                    return _listWatchlist();
+                case 'add_work_note':
+                    return _addWorkNote(_normNum(args.ticket_number), String(args.note || ''));
+                case 'team_workload':
+                    return _teamWorkload();
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
@@ -429,6 +787,257 @@
             gs.error('[NetraGemini] tool ' + name + ' threw: ' + e);
             return { ok: false, error: String(e.message || e) };
         }
+    }
+
+    /* ===================================================================
+     *  v11 extended tool implementations
+     * =================================================================== */
+    function _getIncident(num) {
+        var gr = new GlideRecord('incident');
+        if (!gr.get('number', num)) return null;
+        return gr;
+    }
+
+    function _changePriority(num, p) {
+        var gr = _getIncident(num);
+        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        gr.priority = p;
+        gr.update();
+        return { ok: true, message: 'Priority of ' + num + ' changed to ' + p + '.' };
+    }
+
+    function _escalateTicket(num) {
+        var gr = _getIncident(num);
+        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        var cur = parseInt(String(gr.priority), 10) || 4;
+        if (cur <= 1) return { ok: false, error: 'Already at maximum priority' };
+        gr.priority = cur - 1;
+        gr.work_notes = '[Netra] Escalated by voice from priority ' + cur + ' to ' + (cur - 1) + '.';
+        gr.update();
+        return { ok: true, message: 'Escalated ' + num + ' from priority ' + cur + ' to ' + (cur - 1) + '.', from: cur, to: cur - 1 };
+    }
+
+    function _assignToGroup(num, groupName) {
+        if (!groupName) return { ok: false, error: 'Group name is required' };
+        var gr = _getIncident(num);
+        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        var gg = new GlideRecord('sys_user_group');
+        gg.addQuery('active', true);
+        gg.addEncodedQuery('nameLIKE' + groupName);
+        gg.setLimit(1);
+        gg.query();
+        if (!gg.next()) return { ok: false, error: 'No group matching "' + groupName + '"' };
+        gr.assignment_group = String(gg.sys_id);
+        gr.work_notes = '[Netra] Assigned to group ' + gg.name + ' by voice.';
+        gr.update();
+        return { ok: true, message: num + ' assigned to ' + gg.name + '.' };
+    }
+
+    function _assignToUser(num, userName) {
+        if (!userName) return { ok: false, error: 'User name is required' };
+        var gr = _getIncident(num);
+        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        var u = new GlideRecord('sys_user');
+        u.addQuery('active', true);
+        u.addEncodedQuery('nameLIKE' + userName + '^ORuser_nameLIKE' + userName + '^ORemailLIKE' + userName);
+        u.setLimit(1);
+        u.query();
+        if (!u.next()) return { ok: false, error: 'No user matching "' + userName + '"' };
+        gr.assigned_to = String(u.sys_id);
+        gr.work_notes = '[Netra] Assigned to ' + u.name + ' by voice.';
+        gr.update();
+        return { ok: true, message: num + ' assigned to ' + u.name + '.' };
+    }
+
+    function _listMyOf(table, limit) {
+        var gr = new GlideRecord(table);
+        gr.addQuery('opened_by', user);
+        gr.addQuery('active', true);
+        gr.orderByDesc('sys_updated_on');
+        gr.setLimit(limit);
+        gr.query();
+        var out = [];
+        while (gr.next()) {
+            var stateDisp;
+            try { stateDisp = String(gr.state.getDisplayValue()); }
+            catch (e) { stateDisp = String(gr.state); }
+            out.push({
+                number: String(gr.number),
+                short_description: String(gr.short_description),
+                state: stateDisp
+            });
+        }
+        return { ok: true, table: table, count: out.length, items: out };
+    }
+
+    function _searchIncidents(query) {
+        if (!query) return { ok: false, error: 'Query is required' };
+        var gr = new GlideRecord('incident');
+        gr.addEncodedQuery('short_descriptionLIKE' + query + '^ORdescriptionLIKE' + query);
+        gr.orderByDesc('sys_updated_on');
+        gr.setLimit(5);
+        gr.query();
+        var out = [];
+        while (gr.next()) {
+            var stateDisp;
+            try { stateDisp = String(gr.state.getDisplayValue()); }
+            catch (e) { stateDisp = String(gr.state); }
+            out.push({
+                number: String(gr.number),
+                short_description: String(gr.short_description),
+                state: stateDisp
+            });
+        }
+        return { ok: true, query: query, count: out.length, items: out };
+    }
+
+    function _lookupUser(query) {
+        if (!query) return { ok: false, error: 'Query is required' };
+        var gr = new GlideRecord('sys_user');
+        gr.addQuery('active', true);
+        gr.addEncodedQuery('nameLIKE' + query + '^ORuser_nameLIKE' + query + '^ORemailLIKE' + query);
+        gr.setLimit(3);
+        gr.query();
+        var out = [];
+        while (gr.next()) {
+            out.push({
+                name: String(gr.name),
+                email: String(gr.email),
+                username: String(gr.user_name),
+                title: String(gr.title || '')
+            });
+        }
+        return { ok: true, count: out.length, users: out };
+    }
+
+    function _listAttachments(num) {
+        var gr = _getIncident(num);
+        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        var att = new GlideRecord('sys_attachment');
+        att.addQuery('table_name', 'incident');
+        att.addQuery('table_sys_id', String(gr.sys_id));
+        att.setLimit(20);
+        att.query();
+        var out = [];
+        while (att.next()) {
+            out.push({
+                name: String(att.file_name),
+                size_bytes: String(att.size_bytes),
+                content_type: String(att.content_type)
+            });
+        }
+        return { ok: true, ticket: num, count: out.length, attachments: out };
+    }
+
+    function _readTextAttachment(num, attachmentName) {
+        var gr = _getIncident(num);
+        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        var att = new GlideRecord('sys_attachment');
+        att.addQuery('table_name', 'incident');
+        att.addQuery('table_sys_id', String(gr.sys_id));
+        if (attachmentName) att.addEncodedQuery('file_nameLIKE' + attachmentName);
+        att.orderByDesc('sys_created_on');
+        att.setLimit(1);
+        att.query();
+        if (!att.next()) return { ok: false, error: 'No matching attachment on ' + num };
+        var fname = String(att.file_name);
+        var ctype = String(att.content_type || '').toLowerCase();
+        var isText = /^text\/|json|xml|csv|markdown/.test(ctype) ||
+                     /\.(txt|md|csv|log|json|xml|yaml|yml|ini|conf)$/i.test(fname);
+        if (!isText) return { ok: false, error: 'Attachment "' + fname + '" is not text (' + ctype + '). I can only read text files.', file_name: fname };
+        try {
+            var sa = new GlideSysAttachment();
+            var content = sa.getContent(att);
+            if (!content) return { ok: false, error: 'Could not read content of ' + fname };
+            var truncated = false;
+            if (content.length > 2400) { content = content.substring(0, 2400); truncated = true; }
+            return { ok: true, ticket: num, file_name: fname, content: content, truncated: truncated };
+        } catch (e) {
+            return { ok: false, error: 'Read failed: ' + (e.message || e) };
+        }
+    }
+
+    function _summarizeTicket(num) {
+        var gr = _getIncident(num);
+        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        var dv = function (f) {
+            try { return String(gr[f].getDisplayValue ? gr[f].getDisplayValue() : gr[f]); }
+            catch (e) { return ''; }
+        };
+        return {
+            ok: true,
+            number: String(gr.number),
+            short_description: String(gr.short_description),
+            description: String(gr.description || '').substring(0, 400),
+            state: dv('state'),
+            priority: dv('priority'),
+            urgency: dv('urgency'),
+            impact: dv('impact'),
+            category: dv('category'),
+            assigned_to: dv('assigned_to'),
+            assignment_group: dv('assignment_group'),
+            caller_id: dv('caller_id'),
+            opened_at: String(gr.opened_at),
+            updated_at: String(gr.sys_updated_on),
+            recent_comments: String(gr.comments || '').substring(0, 400),
+            recent_work_notes: String(gr.work_notes || '').substring(0, 400)
+        };
+    }
+
+    function _sendMessage(recipient, message) {
+        if (!recipient || !message) return { ok: false, error: 'Both recipient and message are required' };
+        var u = new GlideRecord('sys_user');
+        u.addQuery('active', true);
+        u.addEncodedQuery('nameLIKE' + recipient + '^ORuser_nameLIKE' + recipient + '^ORemailLIKE' + recipient);
+        u.setLimit(1);
+        u.query();
+        if (!u.next()) return { ok: false, error: 'No user matching "' + recipient + '"' };
+        var inc = new GlideRecord('incident');
+        inc.initialize();
+        inc.short_description = '[Netra message] ' + message.substring(0, 100);
+        inc.description = 'Voice message from ' + gs.getUserDisplayName() + ':\n\n' + message;
+        inc.caller_id = gs.getUserID();
+        inc.assigned_to = String(u.sys_id);
+        inc.urgency = 3;
+        inc.impact = 3;
+        inc.state = 1;
+        var sid = inc.insert();
+        if (!sid) return { ok: false, error: 'Could not create message record' };
+        var fresh = new GlideRecord('incident');
+        fresh.get(sid);
+        return {
+            ok: true,
+            recipient: String(u.name),
+            tracking_ticket: String(fresh.number),
+            message: 'Message sent to ' + u.name + ', tracked as ' + fresh.number + '.'
+        };
+    }
+
+    function _tellJoke() {
+        var jokes = [
+            'Why did the developer go broke? Because he used up all his cache.',
+            'Why do programmers prefer dark mode? Because light attracts bugs.',
+            'There are only ten types of people in the world, those who understand binary, and those who do not.',
+            'How many software engineers does it take to change a light bulb? None, that is a hardware problem.',
+            'A S Q L query walks into a bar, walks up to two tables and asks, can I join you?',
+            'Why is the firewall always invited to parties? Because it blocks the bad stuff.',
+            'What is a programmer\'s favourite music? Algorithms.',
+            'Why did the laptop go to therapy? It had too many issues.',
+            'Why did the Service Now admin get cold? Someone left the form view open.',
+            'Why was the password sad? It had too many failed attempts.',
+            'How does an incident introduce itself? Hi, I am critical, but I am working on it.',
+            'Why did the ticket cross the road? To get to the other queue.',
+            'Why don\'t servers ever get tired? They have plenty of cache.',
+            'What is a sysadmin\'s favourite snack? Restart-os.',
+            'My code does not work, I have no idea why. My code does work, I have no idea why.',
+            'Why do servers love yoga? They get good uptime.',
+            'Why was the change request put on hold? Lack of CAB attendance.',
+            'What did the I T manager say to the cloud? Stop being so distant.',
+            'How do you know an incident is happy? It is closed.',
+            'Why was the user upset with the password policy? Too many strong feelings required.'
+        ];
+        var pick = jokes[Math.floor(Math.random() * jokes.length)];
+        return { ok: true, joke: pick };
     }
 
     function _normNum(s) {
@@ -439,6 +1048,361 @@
         var prefix = m[1], digits = m[2];
         while (digits.length < 7) digits = '0' + digits;
         return prefix + digits;
+    }
+
+    /* ===================================================================
+     *  v14 advanced tool implementations
+     * =================================================================== */
+
+    // Generic count: query a table by encoded query and return count
+    function _countActiveBy(table, qStr) {
+        try {
+            var gr = new GlideRecord(table);
+            gr.addActiveQuery();
+            if (qStr) gr.addEncodedQuery(qStr);
+            gr.query();
+            return gr.getRowCount();
+        } catch (e) { return 0; }
+    }
+
+    function _dailyBriefing() {
+        var meId = gs.getUserID();
+        var myInc      = _countActiveBy('incident',        'assigned_to=' + meId);
+        var myReqOpen  = _countActiveBy('sc_req_item',     'request.requested_for=' + meId + '^stateNOT IN3,4,7');
+        var myChg      = _countActiveBy('change_request',  'assigned_to=' + meId);
+        var myPrb      = _countActiveBy('problem',         'assigned_to=' + meId);
+        var myAppr     = _countActiveBy('sysapproval_approver', 'approver=' + meId + '^state=requested');
+        var watchCount = _countActiveBy(SCOPE + '_watchlist', 'user=' + meId);
+
+        // Time-of-day greeting
+        var hour = new GlideDateTime().getDisplayValue().substring(11, 13);
+        var hrNum = parseInt(hour, 10) || 12;
+        var greet = hrNum < 12 ? 'Good morning' : (hrNum < 17 ? 'Good afternoon' : 'Good evening');
+
+        var line = greet + ', ' + gs.getUserDisplayName().split(' ')[0] + '. ';
+        var bits = [];
+        if (myInc)      bits.push(myInc      + ' incident'    + (myInc      === 1 ? '' : 's'));
+        if (myPrb)      bits.push(myPrb      + ' problem'     + (myPrb      === 1 ? '' : 's'));
+        if (myChg)      bits.push(myChg      + ' change'      + (myChg      === 1 ? '' : 's'));
+        if (myReqOpen)  bits.push(myReqOpen  + ' request'     + (myReqOpen  === 1 ? '' : 's'));
+        if (myAppr)     bits.push(myAppr     + ' approval'    + (myAppr     === 1 ? '' : 's') + ' pending');
+        if (watchCount) bits.push(watchCount + ' watched ticket' + (watchCount === 1 ? '' : 's'));
+        if (!bits.length) {
+            line += 'Your queue is clear. Nothing on your plate today.';
+        } else {
+            line += 'You have ' + bits.join(', ') + '.';
+        }
+
+        return {
+            ok: true, briefing: line,
+            counts: { incidents: myInc, problems: myPrb, changes: myChg, requests: myReqOpen, approvals: myAppr, watching: watchCount },
+            greeting: greet
+        };
+    }
+
+    function _workloadSummary() {
+        var meId = gs.getUserID();
+        return {
+            ok: true,
+            workload: {
+                open_incidents: _countActiveBy('incident',        'assigned_to=' + meId),
+                open_problems:  _countActiveBy('problem',         'assigned_to=' + meId),
+                open_changes:   _countActiveBy('change_request',  'assigned_to=' + meId),
+                my_requests:    _countActiveBy('sc_req_item',     'request.requested_for=' + meId + '^stateNOT IN3,4,7'),
+                approvals:      _countActiveBy('sysapproval_approver', 'approver=' + meId + '^state=requested')
+            }
+        };
+    }
+
+    function _createProblem(desc, impact) {
+        if (!desc) return { ok: false, error: 'short description is required' };
+        try {
+            var gr = new GlideRecord('problem');
+            gr.initialize();
+            gr.short_description = desc;
+            gr.impact            = impact || '3';
+            gr.urgency           = impact || '3';
+            gr.opened_by         = gs.getUserID();
+            gr.assigned_to       = gs.getUserID();
+            var sid = gr.insert();
+            gr.get(sid);
+            return { ok: true, number: String(gr.number), sys_id: sid, message: 'Logged problem ' + gr.number + '.' };
+        } catch (e) {
+            return { ok: false, error: String(e.message || e) };
+        }
+    }
+
+    function _createChange(desc, changeType) {
+        if (!desc) return { ok: false, error: 'short description is required' };
+        try {
+            var gr = new GlideRecord('change_request');
+            gr.initialize();
+            gr.short_description = desc;
+            gr.type              = changeType || 'normal';
+            gr.opened_by         = gs.getUserID();
+            gr.requested_by      = gs.getUserID();
+            var sid = gr.insert();
+            gr.get(sid);
+            return { ok: true, number: String(gr.number), sys_id: sid, message: 'Created ' + (changeType || 'normal') + ' change ' + gr.number + '.' };
+        } catch (e) {
+            return { ok: false, error: String(e.message || e) };
+        }
+    }
+
+    function _listOverdue() {
+        try {
+            var meId = gs.getUserID();
+            var gr = new GlideRecord('incident');
+            gr.addActiveQuery();
+            gr.addQuery('assigned_to', meId);
+            // SLA-ish: p1 >4h, p2 >1d, p3+ >3d since opened
+            gr.addEncodedQuery(
+              '(priority=1^opened_at<=javascript:gs.daysAgoStart(0))^OR(priority=2^opened_at<=javascript:gs.daysAgoStart(1))^OR(priority>=3^opened_at<=javascript:gs.daysAgoStart(3))'
+            );
+            gr.setLimit(8);
+            gr.orderBy('priority');
+            gr.query();
+            var list = [];
+            while (gr.next()) {
+                list.push({
+                    number: String(gr.number),
+                    priority: String(gr.priority),
+                    short_description: String(gr.short_description),
+                    opened_at: String(gr.opened_at)
+                });
+            }
+            return { ok: true, overdue: list, count: list.length };
+        } catch (e) { return { ok: false, error: String(e.message || e) }; }
+    }
+
+    function _setFocusTicket(num) {
+        if (!num) return { ok: false, error: 'ticket number required' };
+        try {
+            var table = _tableForNumber(num);
+            if (!table) return { ok: false, error: 'Unrecognised number prefix: ' + num };
+            var gr = new GlideRecord(table);
+            if (!gr.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+
+            // Upsert into Netra Context
+            var ctx = new GlideRecord(SCOPE + '_context');
+            ctx.addQuery('user', gs.getUserID());
+            ctx.query();
+            if (!ctx.next()) {
+                ctx.initialize();
+                ctx.user = gs.getUserID();
+            }
+            ctx.focus_table   = table;
+            ctx.focus_number  = num;
+            ctx.focus_sys_id  = gr.getUniqueValue();
+            ctx.focus_set_at  = new GlideDateTime();
+            ctx.last_utterance = num;
+            ctx.update();
+            return { ok: true, message: 'Focused on ' + num + '. Subsequent commands will act on this ticket.', table: table, number: num };
+        } catch (e) { return { ok: false, error: String(e.message || e) }; }
+    }
+
+    function _recallFocus() {
+        try {
+            var ctx = new GlideRecord(SCOPE + '_context');
+            ctx.addQuery('user', gs.getUserID());
+            ctx.query();
+            if (!ctx.next() || !ctx.focus_number) {
+                return { ok: true, focus: null, message: 'No ticket is in focus right now.' };
+            }
+            return { ok: true, focus: { table: String(ctx.focus_table), number: String(ctx.focus_number) },
+                     message: 'In focus: ' + ctx.focus_number };
+        } catch (e) { return { ok: false, error: String(e.message || e) }; }
+    }
+
+    function _tableForNumber(num) {
+        if (!num) return null;
+        var p = num.substring(0, 3);
+        if (p === 'INC') return 'incident';
+        if (p === 'CHG') return 'change_request';
+        if (p === 'PRB') return 'problem';
+        if (p === 'REQ') return 'sc_request';
+        if (p === 'RIT' || num.indexOf('RITM') === 0) return 'sc_req_item';
+        if (p === 'SCT' || num.indexOf('SCTASK') === 0) return 'sc_task';
+        if (p === 'KB0') return 'kb_knowledge';
+        return null;
+    }
+
+    function _addToWatchlist(num) {
+        if (!num) return { ok: false, error: 'ticket number required' };
+        var table = _tableForNumber(num);
+        if (!table) return { ok: false, error: 'Unrecognised number: ' + num };
+        var rec = new GlideRecord(table);
+        if (!rec.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+
+        // De-dupe
+        var existing = new GlideRecord(SCOPE + '_watchlist');
+        existing.addQuery('user', gs.getUserID());
+        existing.addQuery('record_number', num);
+        existing.query();
+        if (existing.next()) return { ok: true, message: num + ' is already on your watchlist.' };
+
+        var w = new GlideRecord(SCOPE + '_watchlist');
+        w.initialize();
+        w.user             = gs.getUserID();
+        w.record_table     = table;
+        w.record_number    = num;
+        w.record_sys_id    = rec.getUniqueValue();
+        w.insert();
+        return { ok: true, message: 'Added ' + num + ' to your watchlist. I will notify you of any changes.' };
+    }
+
+    function _removeFromWatchlist(num) {
+        if (!num) return { ok: false, error: 'ticket number required' };
+        var w = new GlideRecord(SCOPE + '_watchlist');
+        w.addQuery('user', gs.getUserID());
+        w.addQuery('record_number', num);
+        w.query();
+        if (!w.next()) return { ok: false, error: num + ' is not on your watchlist.' };
+        w.deleteRecord();
+        return { ok: true, message: 'Removed ' + num + ' from your watchlist.' };
+    }
+
+    function _listWatchlist() {
+        var w = new GlideRecord(SCOPE + '_watchlist');
+        w.addQuery('user', gs.getUserID());
+        w.orderByDesc('sys_created_on');
+        w.setLimit(15);
+        w.query();
+        var list = [];
+        while (w.next()) {
+            list.push({ number: String(w.record_number), table: String(w.record_table) });
+        }
+        return { ok: true, watchlist: list, count: list.length,
+                 message: list.length ? 'Watching ' + list.length + ' ticket' + (list.length === 1 ? '' : 's') + '.'
+                                      : 'Your watchlist is empty.' };
+    }
+
+    function _addWorkNote(num, note) {
+        if (!num || !note) return { ok: false, error: 'ticket number and note are required' };
+        var table = _tableForNumber(num);
+        if (!table) return { ok: false, error: 'Unrecognised number: ' + num };
+        var gr = new GlideRecord(table);
+        if (!gr.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+        gr.work_notes = '[Netra] ' + note;
+        gr.update();
+        return { ok: true, message: 'Internal note added to ' + num + '.' };
+    }
+
+    function _teamWorkload() {
+        try {
+            var meId = gs.getUserID();
+            // groups user is a member of
+            var gm = new GlideRecord('sys_user_grmember');
+            gm.addQuery('user', meId);
+            gm.setLimit(10);
+            gm.query();
+            var rows = [];
+            while (gm.next()) {
+                var groupId = String(gm.group);
+                var gg = new GlideRecord('sys_user_group');
+                if (!gg.get(groupId)) continue;
+                if (gg.active != true && String(gg.active) !== 'true') continue;
+                var openInc = _countActiveBy('incident', 'assignment_group=' + groupId);
+                rows.push({ group: String(gg.name), open_incidents: openInc });
+            }
+            // Sort by load
+            rows.sort(function(a, b) { return b.open_incidents - a.open_incidents; });
+            return { ok: true, teams: rows };
+        } catch (e) { return { ok: false, error: String(e.message || e) }; }
+    }
+
+    /* ===================================================================
+     *  Vocab miner - pull domain-specific words from ServiceNow tables
+     *  into the client's SpeechGrammarList. Cached 6 hours.
+     * =================================================================== */
+    function _getVocab() {
+        try {
+            var cached = gs.getProperty(SCOPE + '.vocab_cache');
+            var cachedTs = parseInt(gs.getProperty(SCOPE + '.vocab_cache_ts', '0'), 10);
+            var ageMs = new Date().getTime() - cachedTs;
+            if (cached && ageMs < 6 * 60 * 60 * 1000) {
+                return JSON.parse(cached);
+            }
+        } catch (e) { /* fall through to refresh */ }
+
+        var v = { groups: [], apps: [], categories: [], kb_titles: [], catalog_items: [], built_at: '' };
+
+        // Assignment groups
+        try {
+            var gr = new GlideRecord('sys_user_group');
+            gr.addQuery('active', true);
+            gr.orderBy('name');
+            gr.setLimit(80);
+            gr.query();
+            while (gr.next()) {
+                var n = String(gr.name || '').trim();
+                if (n && n.length < 40) v.groups.push(n);
+            }
+        } catch (eG) {}
+
+        // Applications (CMDB)
+        try {
+            var gr2 = new GlideRecord('cmdb_ci_appl');
+            gr2.addQuery('install_status', '1');
+            gr2.orderBy('name');
+            gr2.setLimit(60);
+            gr2.query();
+            while (gr2.next()) {
+                var na = String(gr2.name || '').trim();
+                if (na && na.length < 40) v.apps.push(na);
+            }
+        } catch (eA) {}
+
+        // Incident category choices
+        try {
+            var gc = new GlideRecord('sys_choice');
+            gc.addQuery('name', 'incident');
+            gc.addQuery('element', 'category');
+            gc.setLimit(30);
+            gc.query();
+            while (gc.next()) {
+                var lbl = String(gc.label || gc.value || '').trim();
+                if (lbl && lbl.length < 40) v.categories.push(lbl);
+            }
+        } catch (eC) {}
+
+        // Recent published KB titles
+        try {
+            var gk = new GlideRecord('kb_knowledge');
+            gk.addQuery('workflow_state', 'published');
+            gk.orderByDesc('sys_updated_on');
+            gk.setLimit(40);
+            gk.query();
+            while (gk.next()) {
+                var t = String(gk.short_description || '').trim();
+                if (t && t.length < 60) v.kb_titles.push(t);
+            }
+        } catch (eK) {}
+
+        // Top catalog items
+        try {
+            var gci = new GlideRecord('sc_cat_item');
+            gci.addQuery('active', true);
+            gci.orderBy('name');
+            gci.setLimit(40);
+            gci.query();
+            while (gci.next()) {
+                var ci = String(gci.name || '').trim();
+                if (ci && ci.length < 50) v.catalog_items.push(ci);
+            }
+        } catch (eCi) {}
+
+        v.built_at = String(new GlideDateTime());
+
+        try {
+            gs.setProperty(SCOPE + '.vocab_cache', JSON.stringify(v));
+            gs.setProperty(SCOPE + '.vocab_cache_ts', String(new Date().getTime()));
+        } catch (eS) {}
+
+        gs.info('[NetraGemini] vocab refreshed - groups=' + v.groups.length +
+                ' apps=' + v.apps.length + ' cats=' + v.categories.length +
+                ' kb=' + v.kb_titles.length + ' catItems=' + v.catalog_items.length);
+        return v;
     }
 
     /* ===================================================================
