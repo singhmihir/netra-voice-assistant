@@ -48,8 +48,8 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     };
 
     c.$onDestroy = function () {
-        try { wakeRec && wakeRec.stop(); } catch (e) {}
-        try { cmdRec && cmdRec.stop(); } catch (e) {}
+        try { if (wakeRec) wakeRec.stop(); } catch (e) {}
+        try { if (cmdRec) cmdRec.stop(); } catch (e) {}
         if (pollTimer) $timeout.cancel(pollTimer);
         if (TTS) TTS.cancel();
     };
@@ -59,7 +59,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     // ============================================================
     c.toggleRecording = function () {
         if (c.status === 'listening') {
-            try { cmdRec && cmdRec.stop(); } catch (e) {}
+            try { if (cmdRec) cmdRec.stop(); } catch (e) {}
         } else if (!c.busy) {
             startCommandRecognition();
         }
@@ -68,7 +68,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     c.toggleWake = function () {
         c.wakeOn = !c.wakeOn;
         if (c.wakeOn) startWakeWord();
-        else { try { wakeRec && wakeRec.stop(); } catch (e) {} }
+        else { try { if (wakeRec) wakeRec.stop(); } catch (e) {} }
         announce(c.wakeOn ? 'Wake word on.' : 'Wake word off.');
     };
 
@@ -105,7 +105,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     // ============================================================
     function startWakeWord() {
         if (!hasSR || !c.wakeOn) return;
-        try { wakeRec && wakeRec.stop(); } catch (e) {}
+        try { if (wakeRec) wakeRec.stop(); } catch (e) {}
 
         wakeRec = new SR();
         wakeRec.continuous = true;
@@ -141,7 +141,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
     // ============================================================
     function startCommandRecognition() {
         if (c.busy) return;
-        try { wakeRec && wakeRec.stop(); } catch (e) {}
+        try { if (wakeRec) wakeRec.stop(); } catch (e) {}
         if (TTS) TTS.cancel();
 
         cmdRec = new SR();
@@ -154,7 +154,7 @@ api.controller = function ($scope, $http, $timeout, $window, spUtil) {
         cmdRec.onstart  = function () { c.status = 'listening'; announce('Listening.'); $scope.$applyAsync(); };
         cmdRec.onresult = function (ev) { captured = ev.results[0][0].transcript; };
         cmdRec.onerror  = function (ev) { c.lastResponse = 'I did not catch that. (' + ev.error + ')'; announce(c.lastResponse); resetToIdle(); };
-        cmdRec.onend    = function () { captured ? handleCommand(captured) : resetToIdle(); };
+        cmdRec.onend    = function () { if (captured) { handleCommand(captured); } else { resetToIdle(); } };
 
         speak('Yes?', function () {
             try { cmdRec.start(); } catch (e) { resetToIdle(); }
