@@ -962,4 +962,605 @@ These were considered and explicitly deferred:
 
 ---
 
+## 18. Technical reference (code-based)
+
+This section pins every concept the system depends on to an exact value or shape pulled directly from source. Use it as the cheat-sheet when extending or auditing.
+
+### 18.1 Client-side constants
+
+All declared in `client.js` near the top of the AngularJS controller body.
+
+| Constant | File:line | Value | Purpose |
+|---|---|---|---|
+| `DEV_DEFAULT_ON` | `client.js:53` | `true` | Dev panel visible on first load |
+| `ALWAYS_LISTEN` | `client.js:54` | `true` | No wake-word gating; sleep only on "stop listening" / Esc |
+| `WAKE_TIMEOUT_MS` | `client.js:55` | `8000` | Legacy wake-armed window (when `ALWAYS_LISTEN=false`) |
+| `MIN_CONFIDENCE` | `client.js:56` | `0.35` | Reject final transcripts below this confidence |
+| `MIN_LENGTH` | `client.js:57` | `3` | Reject utterances shorter than 3 chars |
+| `RESTART_DELAY` | `client.js:58` | `250` (ms) | Wait before reopening SpeechRecognition after `onend` |
+| `TTS_GUARD_MS` | `client.js:59` | `350` (ms) | Ignore mic finals this long after TTS ends — prevents Netra hearing herself |
+| `REMOTE_TTS_DEFAULT` | `client.js:60` | `true` | Use remote TTS (StreamElements) over browser TTS by default |
+| `REMOTE_TTS_VOICE` | `client.js:61` | `'Raveena'` | StreamElements Indian English female voice |
+| `VOICE_RING_MULTIPLIERS` | `client.js:110-114` | 24-element `[0.40..0.50]` jitter array | Per-bar spike strength; small variation gives the ring a "living" feel |
+| `VOICE_RING_BASE_IDLE` | `client.js:117` | `58` | Idle/listening base radius (sphere is 50) |
+| `VOICE_RING_BASE_SPEAKING` | `client.js:118` | `74` | Speaking-state base radius |
+| `VOICE_RING_SPIKE_SPEAKING` | `client.js:119` | `1.75` | Multiplier on the audio-level impact while speaking |
+| `VOICE_RING_SIN/COS` | `client.js:120-126` | 24-element precomputed arrays | sin/cos of `i * 15°` for i in [0..23] — avoids 48 trig calls per frame |
+| `DRAG_THRESHOLD` | `client.js:1117` | `4` (px) | Minimum movement before drag suppresses the tap |
+| `EDGE_WSS_URL` | `client.js:2140` | `wss://speech.platform.bing.com/.../edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4` | Edge Neural TTS endpoint |
+| `EDGE_VOICES` | `client.js:2142` | 6-voice list (Neerja/Aashi/Ananya/Swara + JennyNeural/AriaNeural) | Voice catalogue cycled via dev panel |
+| `GEMINI_VOICES` | `client.js:2165` | `[Kore, Puck, Charon, Aoede, Fenrir, Leda, Orus, Zephyr]` | Gemini-native TTS voice catalogue |
+| `FILLER_PHRASES` | `client.js:2404` | 18 phrases | Thinking-cue filler clips preloaded at boot |
+| `POLL_MS` | `client.js:2783` | `9000` | Notification poll interval (9 seconds) |
+| `WAKE_WORDS` | `client.js:518-539` | 70+ phonetic variants of "Netra" | Permissive match for non-native speakers + ASR mishearings |
+| `SALUTATION_PREFIXES` | `client.js:541` | `['hey','ok','okay','hi','hello','yo','listen','dear','arre','arrey','accha','acha']` | Words that precede a Netra-variant in a greeting (not a command) |
+| `STATE_LABEL` | `client.js:456-464` | Map `state → spoken label` | Status pill text in dev panel |
+
+### 18.2 Server-side constants
+
+| Constant | File:line | Value | Purpose |
+|---|---|---|---|
+| `SCOPE` | `server.js:34` | `'x_196061_netra_v1'` | Scoped-app namespace prefix |
+| `REQUIRED_FIELDS` | `server.js:1802-1806` | `{incident: [short_description], problem: [short_description], change_request: [short_description, type]}` | Mandatory fields per draft record type |
+| `FIELD_PROMPTS` | `server.js:1808-1815` | Map `field → friendly prompt` | Natural-language asks Netra makes when a required field is missing |
+| `MEM_CAP` | `server.js:2158` | `100` | Max conversation turns held in `last_utterance.mem` |
+| `UPDATE_ALLOW` | `server.js:2361` | Inlined per-table allow-list of mutable fields | R2.4 safety boundary on `update_field`, inlined because scoped-app `var` scoping is unreliable |
+| `FIELD_SYNONYM` | `server.js:2372` | Inlined synonym map (e.g. `severity → urgency`, `desc → description`) | Forgives spoken variation |
+| `SCRIPT_TABLES` | `server.js:2503` | 10 tables (`sys_script_include`, `sys_script`, `sys_ui_script`, `sys_script_client`, `sysauto_script`, `sys_processor`, `sys_ws_operation`, `sys_script_email`, `sys_ui_action`, `sp_widget`) | Code tables `read_script` / `list_scripts` can target |
+| `COMMON_VOCAB` | `server.js:2702-2727` | ~110-word array (record actions, IT terms, Netra verbs) | Always seeds the speech-recognition vocab hints |
+| **Gemini model fallback chain** | `server.js:408-414` | `gemini-2.5-flash` → `gemini-flash-latest` → `gemini-2.5-flash-lite` → `gemini-flash-lite-latest` → `gemini-2.0-flash` → `gemini-2.0-flash-lite` → `gemini-2.5-pro` | Tried in order on 429/503/UNAVAILABLE |
+| **History sanitisation thresholds** | `server.js:230-282` | Keep last 12 turns; truncate any tool-response > 1500 chars to 800-char digest; strip `inlineData`; hard cap 60 KB | Prevents Gemini 400 errors after long sessions |
+| **Generation config** | `server.js:466-468` | `temperature=0.7, maxOutputTokens=512, topP=0.95` | Concise replies, low chattiness |
+| **Safety thresholds** | `server.js:479-484` | All four categories at `BLOCK_ONLY_HIGH` | Corporate-assistant tuning (the safest filter that still allows directory lookups) |
+| **HTTP timeout** | `server.js:492` | `30000` (ms) | Gemini call ceiling |
+| **TTS sample rate** | `server.js:117` (Gemini TTS handler) | `audio/L16;rate=24000` | 24 kHz mono PCM16, wrapped in WAV client-side |
+| **Tool-loop iteration cap** | `server.js:303` | `5` | Maximum number of Gemini → tool → Gemini round-trips per user turn |
+
+### 18.3 Custom table schemas (live)
+
+#### `x_196061_netra_v1_context` — per-user state (one row per user)
+
+| Column | Type | Max | Reference | Notes |
+|---|---|---:|---|---|
+| `sys_id` | GUID | 32 | – | Primary key |
+| `user` | reference → `sys_user` | 32 | sys_user | The owning user; one row per `gs.getUserID()` |
+| `last_utterance` | string | **250 000** | – | Holds the unified Context blob as `"CTX:" + JSON.stringify({draft, mem, vocab, aliases})`. Raised from 32 000 in R2.9.1 to accommodate `MEM_CAP=100` |
+| `focus_number` | string | 40 | – | Convenience denormalisation of the focus ticket number |
+| `focus_table` | string | 40 | – | Convenience denormalisation (e.g. `incident`, `problem`) |
+| `focus_sys_id` | string | 40 | – | Convenience denormalisation of the focus record sys_id |
+| `focus_set_at` | glide_date_time | – | – | When the focus was set |
+| `sys_*` | (audit) | – | – | Standard ServiceNow audit columns |
+
+#### `x_196061_netra_v1_notification` — proactive notifications queue
+
+| Column | Type | Max | Reference | Notes |
+|---|---|---:|---|---|
+| `sys_id` | GUID | 32 | – | Primary key |
+| `user` | reference → `sys_user` | 32 | sys_user | Who should hear this notification |
+| `kind` | string | 40 | – | `comment` (from BR), `assignment` (from scanner), `approval` (from scanner) |
+| `ticket_number` | string | 32 | – | The INC/CHG/PRB/RITM number |
+| `ticket_sys_id` | string | 32 | – | The source-record sys_id |
+| `message` | string | 99 999 | – | Spoken-form text, pre-phoneticised |
+| `delivered` | boolean | – | – | `false` until the widget's `poll` action delivers it |
+| `delivered_at` | glide_date_time | – | – | When the widget acknowledged delivery |
+| `sys_*` | (audit) | – | – | Standard audit |
+
+### 18.4 Voice ring SVG filters — verbatim from `template.html`
+
+#### Idle / listening (`#netra-violet-glow`)
+
+```xml
+<filter id="netra-violet-glow" x="-50%" y="-50%" width="200%" height="200%">
+  <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur1"/>
+  <feFlood flood-color="#a050f0" flood-opacity="0.75" result="violet"/>
+  <feComposite in="violet" in2="blur1" operator="in" result="violetGlow"/>
+  <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur2"/>
+  <feFlood flood-color="#be5aeb" flood-opacity="0.45" result="magenta"/>
+  <feComposite in="magenta" in2="blur2" operator="in" result="magentaGlow"/>
+  <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur3"/>
+  <feFlood flood-color="#ffaa50" flood-opacity="0.30" result="amber"/>
+  <feComposite in="amber" in2="blur3" operator="in" result="amberGlow"/>
+  <feMerge>
+    <feMergeNode in="amberGlow"/>
+    <feMergeNode in="magentaGlow"/>
+    <feMergeNode in="violetGlow"/>
+    <feMergeNode in="SourceGraphic"/>
+  </feMerge>
+</filter>
+```
+
+Three layered Gaussian blurs (stdDev 1.5 / 4 / 8) flooded with violet / magenta / amber and composited back over the source.
+
+#### Speaking (`#netra-violet-glow-speaking`)
+
+Same structure with **four** layers (stdDev 2 / 6 / 11 / 18), wider filter region (`-80% -80% 260% 260%`), bumped opacities (0.90 / 0.60 / 0.40 / 0.18). The fourth layer is a deep-violet far halo at stdDev=18 that gives the speaking aura its visibly larger reach.
+
+#### Stroke linear gradient (case-hardened palette)
+
+```xml
+<linearGradient id="netra-voice-stroke-gradient" gradientUnits="userSpaceOnUse"
+                x1="0" y1="0" x2="120" y2="120">
+  <stop offset="0%"   stop-color="#6920b8"/>
+  <stop offset="25%"  stop-color="#8b3df0"/>
+  <stop offset="48%"  stop-color="#c660ff"/>
+  <stop offset="62%"  stop-color="#ffb84d"/>
+  <stop offset="80%"  stop-color="#a040e8"/>
+  <stop offset="100%" stop-color="#5a1aa0"/>
+</linearGradient>
+```
+
+Six stops, deep violet → bright violet → magenta → amber heat-treatment patch → violet → deep violet — the mottled multi-tone look of case-hardened steel.
+
+#### Fill radial gradient
+
+```xml
+<radialGradient id="netra-voice-gradient" cx="50%" cy="50%" r="50%">
+  <stop offset="0%"   stop-color="rgba(0,0,0,0)"/>
+  <stop offset="48%"  stop-color="rgba(0,0,0,0)"/>
+  <stop offset="50%"  stop-color="rgba(139, 61, 240, 0.95)"/>
+  <stop offset="60%"  stop-color="rgba(190, 90, 235, 0.80)"/>
+  <stop offset="72%"  stop-color="rgba(255, 170,  80, 0.55)"/>
+  <stop offset="86%"  stop-color="rgba(160,  64, 232, 0.35)"/>
+  <stop offset="100%" stop-color="rgba(90,  26, 160, 0)"/>
+</radialGradient>
+```
+
+Transparent inside the sphere (offset 0-48%); from 50% outward, the case-hardened palette fades through bright violet, magenta, amber, then back to violet, then transparent.
+
+### 18.5 Golden-ratio geometry
+
+φ = 1.61803398… ; φ² = 2.61803… ; φ³ = 4.23607…
+
+| Element | Formula | Value (viewBox units) | Code reference |
+|---|---|---|---|
+| Sphere radius | base | 50 | `template.html` `.netra-eye-sphere r="50"` |
+| Limbal ring | 50 / φ | 30.90 | `template.html` `.netra-eye-limbal r="30.9"` |
+| Iris radius | 50 / φ² | 19.10 | `template.html` `.netra-eye-iris r="19.1"` |
+| Pupil radius | 50 / φ³ | 11.81 | `template.html` `.netra-eye-pupil r="11.8"` |
+| Halo pulse cycle | φ² seconds | 3.618 s | `stylesheet.scss` `@keyframes netra-halo-pulse` |
+| Pentagram rotation | 21 s/turn (7 × 3, ÷φ ≈ 13) | 21 s | `@keyframes netra-pentagram-spin` |
+| Drop-shadow offset | 12 / φ | 7.42 px | `.netra-eye-svg filter: drop-shadow(0 7.4px 12px ...)` |
+| Catchlight 1 | φ-based (45.92, 47.10) | | golden-section point inside iris |
+| Catchlight 2 | φ-based (74.08, 72.90) | | complementary golden-section |
+| Hover scale | 1 + 1/(φ × 10) | 1.0618× | `.netra-orb:hover transform: scale(1.0618)` |
+| Shrunk mode | 72 / φ | 44.5 ≈ 44 px | shrunk-orb width |
+| Width transition | 1 - 1/φ seconds | 0.382 s | `.netra-orb transition: width 0.382s ease` |
+
+### 18.6 Algorithms (pseudocode for the non-obvious ones)
+
+#### Levenshtein distance (`client.js:543-560`)
+
+Classic two-row dynamic-programming variant. Used for wake-word fuzzy match.
+
+```
+levenshtein(a, b):
+    if a == b: return 0
+    if !a: return len(b)
+    if !b: return len(a)
+    prev = [0..len(b)]
+    for i in 1..len(a):
+        curr = [i, 0, ..., 0]
+        for j in 1..len(b):
+            cost = (a[i-1] == b[j-1]) ? 0 : 1
+            curr[j] = min(curr[j-1]+1, prev[j]+1, prev[j-1]+cost)
+        swap(prev, curr)
+    return prev[len(b)]
+```
+
+`isWakeWord` (`client.js:562-575`) accepts the exact `WAKE_WORDS` list directly, then falls back to `levenshtein(lw, 'netra') <= 1` for any 4-8 char word that starts with `[nm][aeiouhy]`.
+
+#### Speech alternative scoring (`client.js:302-317`)
+
+```
+_scoreAlternative(transcript, confidence):
+    score = confidence * 1.0
+    hits = 0
+    for word in transcript.toLowerCase().split(' '):
+        word = stripPunctuation(word)
+        if word.length >= 3 AND personalVocab[word]:
+            hits++
+            score += 0.12
+    if aliases[whole_transcript.trim()]:
+        score += 0.30
+    return {score, vocabHits: hits}
+```
+
+Picks Chrome's top-5 alternatives by `(confidence + 0.12 × known-word hits + 0.30 if whole utterance is an alias key)`. Bias each successful command's words into `personalVocab` so frequently-used names self-reinforce.
+
+#### Gemini chat loop (`server.js:215-396`)
+
+```
+_chat(userMessage, history):
+    apiKey = sys_property(SCOPE + '.gemini_api_key')
+    if !apiKey: return "configure key"
+    model = sys_property(SCOPE + '.gemini_model', 'gemini-2.5-flash')
+
+    contents = sanitiseHistory(history)
+        # keep last 12 turns
+        # strip inlineData from past turns
+        # truncate tool-response bodies > 1500 chars to 800-char digest
+        # hard cap total payload at 60000 chars (drop oldest)
+
+    if input.image_b64: contents[-1].prepend(inlineData)
+
+    for iter in 0..4:
+        resp = _callGemini(apiKey, model, contents, tools, _systemPrompt())
+        if resp.error:
+            if 429: friendly "rate limit"
+            if 401/403: friendly "auth issue"
+            if 400: friendly "trimming memory" + force_history_reset=true
+            if 404: friendly "model unavailable"
+            if "exhausted": friendly "models busy"
+            return {ok:false, friendly}
+
+        candidate = resp.candidates[0]
+        for part in candidate.parts:
+            collect functionCall[] and text[]
+
+        if functionCall[].length:
+            contents.append({role:model, parts:original parts})
+            for fc in functionCall[]:
+                result = _runTool(fc.name, fc.args)
+                if result.navigate_url|click_button_label|open_url:
+                    add to clientDirectives
+                contents.append({role:user, parts:[functionResponse(result)]})
+            continue   # loop back to Gemini
+
+        # No more tool calls -> final natural-language reply
+        finalText = text[].join(' ')
+        ctx.setLastUtterance(finalText)
+        contents.append({role:model, parts:[{text: finalText}]})
+        _memAppend(userMessage, finalText)
+        return {ok:true, message:finalText, history:contents,
+                model_used, tools_called, directives}
+
+    return {ok:false, message:"thinking too much, try simpler"}
+```
+
+#### Context blob safety truncate (`server.js:1856-1877`)
+
+```
+_ctxWriteBlob(blob):
+    ctx = _ctxLoadGr()
+    payload = {draft, mem, vocab, aliases} from blob
+    maxLen = 250000   # matches column max_length
+    ser = "CTX:" + JSON.stringify(payload)
+    while ser.length > maxLen AND payload.mem.length > 5:
+        payload.mem = payload.mem.slice(floor(payload.mem.length / 4))
+        ser = "CTX:" + JSON.stringify(payload)
+    ctx.last_utterance = ser
+    ctx.update()
+```
+
+The truncate is deliberately aggressive (drops the oldest 25% each pass) so even very long verbose entries can't bust the column.
+
+#### Voice-ring polygon (`client.js:127-149`)
+
+```
+_recomputeVoiceRing():
+    lvl = c.audioLevel || 0
+    st = c.state || ''
+    if lvl === lastLvl AND st === lastState: return   # change guard
+    lastLvl, lastState = lvl, st
+    speaking = (st === 'speaking')
+    base = speaking ? 74 : 58
+    spike = speaking ? 1.75 : 1.0
+    pts = ''
+    for i in 0..23:
+        dist = base + lvl * VOICE_RING_MULTIPLIERS[i] * spike
+        x = 60 + dist * VOICE_RING_SIN[i]      # precomputed
+        y = 60 - dist * VOICE_RING_COS[i]
+        pts += x.toFixed(2) + ',' + y.toFixed(2) + ' '
+    c.voiceRingPoints = pts.trim()
+```
+
+The 24 vertices are placed at angles `i × 15°` (i = 0..23). The precomputed `VOICE_RING_SIN/COS` arrays skip 48 trig calls per frame.
+
+#### Output amplitude analyser (`client.js:2040-2096`)
+
+```
+attachOutputAnalyser(audioEl):
+    ctx = _micCtx || new AudioContext()
+    if audioEl.__netraSrc:
+        analyser = audioEl.__netraSrc.netraAnalyser  # cached (Web Audio: createMediaElementSource at most once per element)
+    else:
+        src = ctx.createMediaElementSource(audioEl)
+        analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        analyser.smoothingTimeConstant = 0.6
+        src.connect(analyser)
+        analyser.connect(ctx.destination)        # still play through speakers
+        audioEl.__netraSrc = src
+        src.netraAnalyser = analyser
+
+    cancelAnimationFrame(prev rAF if any)
+    data = new Uint8Array(analyser.frequencyBinCount)   # 256 floats
+    lastLevel = -1
+    tick():
+        if audioEl.paused OR audioEl.ended:
+            if c.audioLevel != 0: c.audioLevel = 0; recompute; $apply
+            return                                  # stop the loop
+        analyser.getByteTimeDomainData(data)
+        sum = 0
+        for v in data: sum += ((v - 128) / 128)^2
+        rms = sqrt(sum / data.length)
+        level = min(100, round(rms * 520))           # R2.9.1 gain
+        if level != lastLevel:
+            lastLevel = level
+            c.audioLevel = level
+            _recomputeVoiceRing()
+            $scope.$applyAsync()
+        requestAnimationFrame(tick)
+    tick()
+```
+
+`detachOutputAnalyser` (`client.js:2097-2105`) disconnects both nodes when the audio ends — fixes the R2.9 leak where each utterance retained its analyser in the AudioContext.
+
+### 18.7 SSML pause-tag rules (Edge TTS only) (`client.js:2016-2038`)
+
+`_buildHumanSSML(text, voice)` injects break tags to mimic human breath cadence:
+
+| Pattern | Break inserted |
+|---|---|
+| Sentence end (`.`, `!`, `?` followed by whitespace or EOS) | `<break time="180ms"/>` |
+| Comma | `<break time="80ms"/>` |
+| Em-dash (` - `, ` -- `, ` — `) | `<break time="120ms"/>` (Indian-English thinking pause) |
+
+Voice tag uses `xml:lang='en-IN'`, `<prosody rate='+15%' pitch='+1st'>` for slightly brisk warm cadence.
+
+### 18.8 Web Audio analyser parameters
+
+| Analyser | fftSize | smoothing | frequencyBinCount (Uint8 length) | Used by |
+|---|---:|---:|---:|---|
+| Mic level meter | 1024 | 0.5 | 512 | `startMicLevelMeter` (`client.js:859`) |
+| Output amplitude | 512 | 0.6 | 256 | `attachOutputAnalyser` (`client.js:2040`) |
+
+Both feed RMS via `getByteTimeDomainData()`, which returns time-domain data as Uint8 [0..255] centred on 128. RMS formula: `sqrt(mean((v-128)/128)^2)` for v in the array.
+
+Mic gain `rms * 300`; output gain `rms * 520` (R2.9.1; was 320). Output is louder gain because PCM streamed by Gemini/Edge is softer than raw mic input.
+
+### 18.9 Tool input / output contracts
+
+Every tool follows the shape `_xxx(args) → result`, where `result` is JSON-serialisable and at minimum contains `{ok: boolean, message?: string}`. Below are the precise contracts for tools with non-trivial I/O.
+
+#### `create_ticket(short_description, urgency?)` → `_runTool` → `NetraTools.createTicket`
+
+```
+input: { short_description: string, urgency: '1'|'2'|'3' (default '3') }
+output: {
+    ok: true,
+    number: 'INC0001234',
+    short_description,
+    state: 'new',
+    sys_id: '32-hex',
+    message: 'Done. I have logged ticket I N C zero zero zero one two three four for you.'
+}
+```
+
+#### `update_field(ticket_number, field, value)` → `_updateField` (`server.js:2392`)
+
+```
+input: { ticket_number, field, value }
+table  = _tableForNumber(ticket_number)
+allow  = UPDATE_ALLOW[table]               # inlined per-table allow-list
+field  = FIELD_SYNONYM[field] || field     # resolve "desc" → "description" etc.
+if field not in allow:
+    return { ok: false, error: "Field <X> is not allowed for direct update on <table>." }
+gr = GlideRecord(table); gr.get('number', ticket_number)
+old_value = gr[field]
+gr[field] = value
+gr.update()
+return {
+    ok: true,
+    ticket: ticket_number,
+    field, old_value, new_value: value,
+    message: 'Done, System. I have updated the <field> of <phonetic-num> from "<old>" to "<new>".'
+}
+```
+
+#### `start_record_draft(record_type, initial_short_description?)`
+
+```
+input: { record_type: 'incident'|'problem'|'change_request', initial_short_description?: string }
+output: {
+    ok: true,
+    record_type,
+    fields: { short_description?: ... },
+    missing: ['short_description', ...],     # per REQUIRED_FIELDS
+    prompt: FIELD_PROMPTS[missing[0]],
+    message: 'Right. Lets draft this <type>. <FIELD_PROMPTS[missing[0]]>?'
+}
+```
+
+#### `set_record_field(field, value)`
+
+```
+input: { field, value }
+draft = _draftRead()
+if !draft: return { ok: false, error: 'No draft in progress' }
+draft.fields[field] = value     # spoken-form-tolerant: "high" -> "2" for urgency
+_draftWrite(draft)
+missing = REQUIRED_FIELDS[draft.record_type] - keys(draft.fields)
+return {
+    ok: true,
+    field, value,
+    fields: draft.fields,
+    missing,
+    next_prompt: missing[0] ? FIELD_PROMPTS[missing[0]] : null,
+    message: missing.length
+        ? 'Got it. <FIELD_PROMPTS[missing[0]]>?'
+        : 'All fields filled. Shall I create it?'
+}
+```
+
+#### `summarize_ticket(ticket_number)` → `_summarizeTicket` (`server.js:1375`)
+
+```
+output: {
+    ok: true,
+    number, short_description,
+    description (≤ 400 char),
+    state, priority, urgency, impact, category,
+    assigned_to, assignment_group, caller_id,
+    opened_at, updated_at,
+    recent_comments (≤ 400 char),
+    recent_work_notes (≤ 400 char)
+}
+```
+
+#### `lookup_user(query)` → `_lookupUser` (`server.js:1309`)
+
+```
+output: {
+    ok: true,
+    count, matches: [
+        { sys_id, name, user_name, email, title } (≤ 3 entries)
+    ]
+}
+```
+
+System prompt explicitly disables refusal — corporate directory lookup is always safe.
+
+#### `recall_past_conversations(keyword?, limit?)` → `_recallPastConversations`
+
+```
+input: { keyword?: string, limit?: number (default 10, max 50 — bumped from 20 in R2.9.1) }
+output: {
+    ok: true, count, total_remembered (= mem.length, up to MEM_CAP=100),
+    keyword, exchanges: [
+        { t: timestamp, u: user msg ≤ 240 char, n: Netra reply ≤ 480 char }
+    ]
+}
+```
+
+#### `read_script(query)` → `_readScript` (`server.js:2515`)
+
+```
+input: { query: string (name OR 32-hex sys_id) }
+Iterate SCRIPT_TABLES until first GlideRecord match. If none, return {ok:false}.
+output (single hit): {
+    ok: true,
+    table, name, sys_id, active, description,
+    source_code: first 8 KB of the script field
+                 (for sp_widget, separate sections for template / client / server / SCSS)
+}
+```
+
+#### `search_web(query)` → `_searchWeb` (`server.js:2227`)
+
+```
+1. POST DuckDuckGo Instant Answer (no key)
+2. If empty: GET Wikipedia REST summary
+output: {
+    ok: true,
+    query, results: [{title, snippet (≤ 220 char), source: 'duckduckgo'|'wikipedia'}],
+    count
+}
+```
+
+#### `analyze_screenshot(question?)` → `_analyzeScreenshot`
+
+**Signal-only.** Returns `{ok: true, instruction: '...'} ` immediately. The client captures the screenshot via `html2canvas` and **re-submits the same turn** with `input.image_b64` populated; the server merges that into the next `contents` block as `inlineData`. Gemini 2.5-flash is multimodal and answers based on the image.
+
+### 18.10 State machine event table
+
+Every transition that `setState()` (`client.js:2982`) performs is triggered by one of these events:
+
+| From | To | Trigger | Side effects |
+|---|---|---|---|
+| `boot` | `dormant` | initial render | none |
+| `dormant` | `idle` | `c.tap()`, `matchExplicitWakeUp()`, `Alt+Shift+N` | start SpeechRecognition, play greeting |
+| `dormant` | `idle` | wake word matched in always-listen mode | same |
+| `idle` | `thinking` | `processFinalTranscript()` (no local match), via `processCommand()` | play random filler from `FILLER_PHRASES`, start hung-server timer |
+| `thinking` | `speaking` | `handleHeard()` receives `data.response`, routes to `speak()` | mark stats.utterances++, attach output analyser |
+| `thinking` | `error` | `c.server.update()` transport reject OR 12 s no-response | cue('error'), spoken "could not reach the server" |
+| `speaking` | `idle` | `audio.onended` → `_afterTTS()` | detach analyser, reopen conversation, restart recognition if needed |
+| `speaking` | `error` | TTS engine fallback chain exhausted | speakBrowser as last resort, then idle |
+| `idle` | `dormant` | `matchSleep()` ("stop listening" / "go to sleep") OR `Esc` OR `Alt+Shift+N` | stop SpeechRecognition, dim orb |
+| any | `boot` | `c.devNuclearReset()` (`Alt+Shift+R`) | full teardown + reacquire mic + reload training data |
+
+### 18.11 Error and fallback paths
+
+| Failure | Detection | User-visible behaviour |
+|---|---|---|
+| Gemini HTTP 429 (rate limit) | `_callGemini` returns `{error: 'HTTP 429...'}` | Spoken: *"I have hit the rate limit. Kindly wait a minute and try again."* |
+| Gemini HTTP 400 (payload too large) | Same | `force_history_reset=true` sent to client; client clears history; spoken: *"My memory has grown a bit too large. Could you say it again? I have just trimmed it."* |
+| Gemini HTTP 401/403 | Same | Spoken: *"My API key is not authorised. Kindly check the configuration."* |
+| Gemini HTTP 404 (model retired) | Same | Spoken: *"The AI model is not available right now."*, also `_callGemini` tries the next model in the fallback chain |
+| All Gemini models exhausted | Last response error contains "exhausted" | Spoken: *"All AI models are busy at the moment. Kindly try again in a few seconds."* |
+| Gemini tool loop > 5 iterations | `_chat` for-loop limit reached | Spoken: *"I am thinking too much, kindly try again with a simpler request."* |
+| Gemini-TTS 12 s watchdog | `speakGemini` timeout | Fall back to `speakEdgeTTS(text, done)` |
+| Edge WSS error or 6 s watchdog | `speakEdgeTTS` error handler | Fall back to `speakStreamElements(text, done)` |
+| StreamElements 4 s watchdog or audio error | `speakStreamElements` fallback callback | Fall back to `speakBrowser(text, done)` |
+| Browser TTS unavailable | `c.hasTTS === false` | Skip TTS, fire callback immediately (text remains in chat surface) |
+| SpeechRecognition `onend` (Chrome 60 s auto-stop) | `startContinuous` onend handler | Wait `RESTART_DELAY` ms (250), re-open recognition |
+| AudioContext suspended (background tab) | 20 s mic health watchdog | Call `_micCtx.resume()` |
+| Mic stream tracks died | Same watchdog | `stopMicLevelMeter()` + `$timeout(startMicLevelMeter, 500)` |
+| `update_field` field not in `UPDATE_ALLOW` | `_updateField` guard | Return `{ok: false, error: 'Field <X> is not allowed for direct update on <table>.'}` (Gemini relays this back to user) |
+| `read_script` no match | `_readScript` exhausts `SCRIPT_TABLES` | Return `{ok: false, error: 'No script matches "<query>"'}` |
+| Attachment not text-like | `_readTextAttachment` MIME / extension guard | `{ok: false, error: 'Attachment "<name>" is not text (<mime>). I can only read text files.'}` |
+| Context blob > 250 KB | `_ctxWriteBlob` truncate loop | Silently drops oldest 25% of `mem` until it fits |
+| Popup blocked (window.open returns null) | `speak` → `c.pendingOpenUrl` populated | Reply card renders a green "Open YouTube" button as user-gesture fallback |
+
+### 18.12 Speech grammar (JSGF) shape — `attachGrammar()`
+
+The grammar string handed to `SpeechGrammarList.addFromString(grammar, 0.7)` follows this structure:
+
+```
+#JSGF V1.0;
+grammar netra;
+public <wake>      = netra | neetra | ... | hey netra | ok netra ;
+public <verb>      = open | create | log | ... | approve | reject | ... ;
+public <noun>      = ticket | tickets | incident | ... | VPN | email | ... ;
+public <modifier>  = urgent | critical | high | ... | priority one | ... ;
+public <digit>     = zero | one | two | ... | nineteen | twenty | thirty | ... | hundred | thousand ;
+public <courtesy>  = please | kindly | thanks | hi | hello | namaste | ... ;
+public <question>  = what | which | how | when | who | where | why | tell me | show me | ... ;
+public <group>     = <DYNAMIC: top 60 sys_user_group names> ;
+public <app>       = <DYNAMIC: top 50 cmdb_ci_appl names> ;
+public <category>  = <DYNAMIC: top 25 incident category choices> ;
+public <kbtitle>   = <DYNAMIC: top 30 recent kb_knowledge short_descriptions> ;
+public <catitem>   = <DYNAMIC: top 25 active sc_cat_item names> ;
+public <common>    = <DYNAMIC: COMMON_VOCAB ~110 entries> ;       # R2.9.1
+public <personal>  = <DYNAMIC: top 120 personalVocab words> ;     # per-user training
+```
+
+Chrome ignores the grammar (treats SpeechRecognition as purely acoustic), but Edge and some other engines respect it as a soft bias. Even on Chrome, the personal-vocab is consulted in `_scoreAlternative` so the bias still applies via the top-5 rerank.
+
+### 18.13 Action protocol reference
+
+Every `c.server.update()` round-trip uses this protocol (`input.action` selects the branch in `server.js:60+`):
+
+| `input.action` | Required `input` fields | Returned `data` fields | Server function |
+|---|---|---|---|
+| _(none, initial load)_ | – | `user_name, user_sys_id, has_api_key, paused, vocab, training` | top-of-file IIFE body |
+| `chat` | `message`, `history?`, `image_b64?` (with `image_mime?`) | `response`, `last_trace`, `model_used`, `tools_called`, `directives`, `force_history_reset?` | `_chat()` |
+| `poll` | – | `notifications: [{number, kind, message, ticket}]` | poll branch (`server.js:79+`) |
+| `save_training` | `vocab`, `aliases` | `training_result: {ok, vocab_count, aliases_count}` | `_trainingWrite()` |
+| `clear_training` | – | `training_result` | `_trainingWrite({}, {})` |
+| `gemini_tts` | `text`, `voice` | `gemini_tts: {ok, b64, mime: 'audio/L16;rate=24000', voice}` | gemini_tts branch (`server.js:126+`) |
+| `debug` | – | `debug_info: {instance, scope, version, has_api_key, notif_count}` | debug branch (`server.js:183+`) |
+
+The `directives` object inside a `chat` response may contain `navigate_url`, `click_button_label`, or `open_url` — the client picks these up after speaking the reply and acts on them.
+
+### 18.14 Hotkey reference
+
+All bound in `bindHotkeys()` at `client.js:2732`.
+
+| Combo | Action |
+|---|---|
+| `Alt+Shift+N` | Toggle orb wake/sleep (or unshrink) |
+| `Alt+Shift+D` | Toggle dev panel |
+| `Alt+Shift+R` | Nuclear reset — full teardown + reacquire mic + reload training |
+| `Space` (orb focused) | Push-to-talk (start recognition immediately) |
+| `Esc` | Close conversation overlay, return to dormant |
+
+### 18.15 Notification poll loop
+
+`startNotificationPolling()` (`client.js:2782`) runs every `POLL_MS = 9000` ms when the orb is alert. Each tick fires `c.server.update({action:'poll'})`. The server reads up to 5 undelivered rows from `x_196061_netra_v1_notification` for the current user, returns them as `data.notifications`, and immediately marks them `delivered=true, delivered_at=now` so the next poll won't re-announce.
+
+The client de-duplicates by `seenIds[]` (in-memory Set keyed by sys_id) and queues each new message through `speak()` one at a time so they don't overlap.
+
+---
+
 *This document supersedes all prior TDD-Rx.md files. Generated 2026-05-18 alongside NetraDeploymentV1.*
