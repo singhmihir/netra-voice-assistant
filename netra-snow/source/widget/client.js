@@ -71,6 +71,8 @@ api.controller = function ($scope, $timeout, $window) {
     c.alert       = true;        // false = dormant
     c.recRunning  = false;
     c.devOn       = DEV_DEFAULT_ON;
+    c.devTab      = 'voice';   // R2.12 - VS Code-style tabbed dev panel
+    c.devSetTab   = function (t) { c.devTab = t; };
 
     c.events      = [];
     c.interim     = '';
@@ -126,19 +128,28 @@ api.controller = function ($scope, $timeout, $window) {
     }
     var _lastVoiceRingLevel = -1;
     var _lastVoiceRingState = '';
+    var _lastVoiceRingHash  = '';
     function _recomputeVoiceRing() {
-        var lvl = c.audioLevel || 0;
-        var st  = c.state || '';
-        // Recompute whenever level OR state changes (state swap toggles the base/spike)
-        if (lvl === _lastVoiceRingLevel && st === _lastVoiceRingState) return;
-        _lastVoiceRingLevel = lvl;
+        var lvlAvg = c.audioLevel || 0;
+        var st     = c.state || '';
+        // R2.12 - per-band frequency levels (24-element array). When present,
+        // each ring vertex reads its own band — the ring ripples like a music
+        // visualiser instead of pulsing uniformly. Falls back to the single
+        // audioLevel when no band data is available (e.g. browser TTS path).
+        var bands  = c.audioLevels;
+        var hash   = bands ? bands.join(',') : (lvlAvg + '|' + st);
+        if (hash === _lastVoiceRingHash && st === _lastVoiceRingState) return;
+        _lastVoiceRingLevel = lvlAvg;
         _lastVoiceRingState = st;
+        _lastVoiceRingHash  = hash;
         var speaking = (st === 'speaking');
         var base  = speaking ? VOICE_RING_BASE_SPEAKING : VOICE_RING_BASE_IDLE;
         var spike = speaking ? VOICE_RING_SPIKE_SPEAKING : 1.0;
         var pts = '';
         for (var i = 0; i < 24; i++) {
-            var dist = base + lvl * VOICE_RING_MULTIPLIERS[i] * spike;
+            // Per-band level if available, otherwise the single audioLevel
+            var bandLvl = (bands && bands[i] !== undefined) ? bands[i] : lvlAvg;
+            var dist = base + bandLvl * VOICE_RING_MULTIPLIERS[i] * spike;
             var x = 60 + dist * VOICE_RING_SIN[i];
             var y = 60 - dist * VOICE_RING_COS[i];
             if (pts) pts += ' ';
@@ -2050,11 +2061,27 @@ api.controller = function ($scope, $timeout, $window) {
                '</voice></speak>';
     }
 
-    // Output amplitude analyser: drives c.audioLevel (and the orb's voice ring)
-    // from the currently-playing <audio> element. Web Audio requires that
-    // createMediaElementSource be called at most once per element, so we cache
-    // the source+analyser on the element itself.
+    // Output FREQUENCY analyser (R2.12): each of the 24 voice-ring vertices
+    // is driven by a separate logarithmic frequency band, so the ring
+    // ripples like a music-visualiser — bass bins move the bottom-left
+    // bars, treble bins move the top-right bars. Reads getByteFrequencyData
+    // (FFT spectrum) instead of getByteTimeDomainData (amplitude RMS).
+    //
+    // fftSize 1024 -> 512 frequency bins.  Bucket those into 24 log-spaced
+    // bands so each ring vertex hears a different slice of the spectrum.
     var _outRafId = null;
+    // Precomputed band boundaries (bin indices) for 24 log-spaced bands
+    var VOICE_RING_BAND_BOUNDS = (function () {
+        var nBins  = 512;            // matches fftSize=1024
+        var bottom = 2;              // skip the DC + first bin (rumble)
+        var top    = 256;            // ignore the very-top half (mostly noise)
+        var bands  = new Array(24 + 1);
+        for (var b = 0; b <= 24; b++) {
+            bands[b] = Math.floor(bottom * Math.pow(top / bottom, b / 24));
+        }
+        return bands;
+    })();
+
     function attachOutputAnalyser(audioEl) {
         if (!audioEl || !window.AudioContext) return;
         try {
@@ -2065,8 +2092,8 @@ api.controller = function ($scope, $timeout, $window) {
             } else {
                 var src = ctx.createMediaElementSource(audioEl);
                 analyser = ctx.createAnalyser();
-                analyser.fftSize = 512;
-                analyser.smoothingTimeConstant = 0.6;
+                analyser.fftSize = 1024;                   // 512 frequency bins
+                analyser.smoothingTimeConstant = 0.65;     // a bit of decay so bars don't snap
                 src.connect(analyser);
                 analyser.connect(ctx.destination);
                 audioEl.__netraSrc = src;
@@ -2079,23 +2106,34 @@ api.controller = function ($scope, $timeout, $window) {
                 if (audioEl.paused || audioEl.ended) {
                     if (c.audioLevel !== 0) {
                         c.audioLevel = 0;
+                        c.audioLevels = null;              // clear per-band when silent
                         _recomputeVoiceRing();
                         $scope.$applyAsync();
                     }
                     return;
                 }
-                analyser.getByteTimeDomainData(data);
-                var sum = 0;
-                for (var i = 0; i < data.length; i++) {
-                    var v = (data[i] - 128) / 128;
-                    sum += v * v;
+                // FREQUENCY-DOMAIN: getByteFrequencyData fills `data` with
+                // a normalised spectrum (0..255 per bin).  Aggregate into
+                // the 24 log-spaced bands.
+                analyser.getByteFrequencyData(data);
+                var bands = new Array(24);
+                var bandSum = 0;
+                for (var b = 0; b < 24; b++) {
+                    var lo = VOICE_RING_BAND_BOUNDS[b];
+                    var hi = VOICE_RING_BAND_BOUNDS[b + 1];
+                    if (hi <= lo) hi = lo + 1;
+                    var s = 0, n = 0;
+                    for (var k = lo; k < hi && k < data.length; k++) { s += data[k]; n++; }
+                    // Normalise 0..255 -> 0..100 with a 2.0x gain factor so
+                    // soft output still produces visible motion
+                    var v = n ? Math.min(100, (s / n) / 255 * 200) : 0;
+                    bands[b] = v;
+                    bandSum += v;
                 }
-                var rms = Math.sqrt(sum / data.length);
-                // Output PCM is typically softer than mic input, so the gain is
-                // higher (rms * 520 vs mic's rms * 300). Combined with the
-                // speaking-state base+spike boost in _recomputeVoiceRing, this
-                // makes Netra's aura visibly larger than the user's mic-driven ring.
-                var level = Math.min(100, Math.round(rms * 520));
+                c.audioLevels = bands;
+                // Average drives the existing single-value audioLevel (kept
+                // for backward-compat with anything else that reads it).
+                var level = Math.round(bandSum / 24);
                 if (level !== lastLevel) {
                     lastLevel = level;
                     c.audioLevel = level;

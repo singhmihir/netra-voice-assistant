@@ -397,6 +397,16 @@
             // R1.4 - persist exchange into long-term memory (capped at 40 turns)
             try { _memAppend(userMessage, finalText); } catch (eM) {}
 
+            // R2.12 - SENTIMENT TRACKING (algorithmic, not prompt-only)
+            //   Run a fast Gemini-reason classification on the user's turn,
+            //   store result in Context blob, return a flag the client can
+            //   surface as a proactive escalation suggestion if two
+            //   consecutive frustrated turns are detected.
+            var sentimentSignal = null;
+            try { sentimentSignal = _trackSentiment(userMessage); } catch (eSent) {
+                gs.warn('[NetraSentiment] track failed: ' + (eSent.message || eSent));
+            }
+
             return {
                 ok: true,
                 message: finalText,
@@ -404,11 +414,74 @@
                 paused: data.paused,
                 model_used: modelUsed,
                 tools_called: toolsCalled,    // R1 - for dev panel graph
-                directives: clientDirectives  // R2 - navigate_url / click_button_label
+                directives: clientDirectives, // R2 - navigate_url / click_button_label
+                sentiment: sentimentSignal    // R2.12 - {label, score, consecutive_frustrated, suggest_escalation}
             };
         }
 
         return { ok: false, message: 'I am thinking too much, kindly try again with a simpler request.' };
+    }
+
+    /* ===================================================================
+     *  R2.12 - ALGORITHMIC SENTIMENT TRACKING
+     *
+     *  Per-turn classification (positive / neutral / frustrated) stored in
+     *  the Context blob. When the rolling counter of consecutive frustrated
+     *  turns hits 2, the response flags suggest_escalation=true so the
+     *  client can render a "Want me to escalate?" affordance without
+     *  waiting for the LLM's prompt-perception to catch it.
+     * =================================================================== */
+    function _trackSentiment(userMessage) {
+        if (!userMessage || userMessage.length < 3) return null;
+        var schema = {
+            type: 'object',
+            properties: {
+                label: { type: 'string', enum: ['positive', 'neutral', 'frustrated'] },
+                score: { type: 'number', description: '0 = calm, 1 = highly frustrated' },
+                reason: { type: 'string', description: 'one short clause explaining the call' }
+            },
+            required: ['label', 'score']
+        };
+        var systemText = 'Classify the user utterance by emotional tone. Look for: sharp wording, ' +
+                         'repeated requests, "this is the third time", profanity, exasperated phrasing, ' +
+                         'urgency markers ("now!", "still broken"). Output JSON only.';
+        var resp = _reason(systemText, 'Utterance: ' + String(userMessage).substring(0, 800), schema, 200);
+        if (resp.error) return { label: 'neutral', score: 0, error: resp.error };
+
+        var parsed = resp.json || {};
+        var label  = parsed.label || 'neutral';
+        var score  = typeof parsed.score === 'number' ? parsed.score : 0;
+
+        // Persist in Context blob as a rolling list (last 10 turns)
+        try {
+            var blob = _ctxReadBlob();
+            blob.sentiment = blob.sentiment || { history: [], consecutive_frustrated: 0 };
+            blob.sentiment.history.push({
+                t: new GlideDateTime().toString(),
+                label: label,
+                score: score
+            });
+            if (blob.sentiment.history.length > 10) {
+                blob.sentiment.history = blob.sentiment.history.slice(-10);
+            }
+            // Update the consecutive-frustrated counter
+            if (label === 'frustrated') {
+                blob.sentiment.consecutive_frustrated =
+                    (blob.sentiment.consecutive_frustrated || 0) + 1;
+            } else {
+                blob.sentiment.consecutive_frustrated = 0;
+            }
+            _ctxWriteBlob(blob);
+            return {
+                label: label,
+                score: score,
+                reason: parsed.reason || '',
+                consecutive_frustrated: blob.sentiment.consecutive_frustrated,
+                suggest_escalation: blob.sentiment.consecutive_frustrated >= 2
+            };
+        } catch (eC) {
+            return { label: label, score: score, error: 'persist_failed: ' + eC.message };
+        }
     }
 
     /* ===================================================================
@@ -2019,14 +2092,15 @@
     function _ctxReadBlob() {
         var ctx = _ctxLoadGr();
         var raw = String(ctx.last_utterance || '');
-        var blob = { draft: null, mem: [], vocab: {}, aliases: {} };
+        var blob = { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
         if (raw.indexOf('CTX:') === 0) {
             try {
                 var parsed = JSON.parse(raw.substring(4)) || {};
-                blob.draft   = parsed.draft   || null;
-                blob.mem     = parsed.mem     || [];
-                blob.vocab   = parsed.vocab   || {};
-                blob.aliases = parsed.aliases || {};
+                blob.draft     = parsed.draft     || null;
+                blob.mem       = parsed.mem       || [];
+                blob.vocab     = parsed.vocab     || {};
+                blob.aliases   = parsed.aliases   || {};
+                blob.sentiment = parsed.sentiment || null;
                 return blob;
             } catch (e) {}
         }
@@ -2042,10 +2116,11 @@
     function _ctxWriteBlob(blob) {
         var ctx = _ctxLoadGr();
         var payload = {
-            draft:   blob.draft   || null,
-            mem:     blob.mem     || [],
-            vocab:   blob.vocab   || {},
-            aliases: blob.aliases || {}
+            draft:     blob.draft     || null,
+            mem:       blob.mem       || [],
+            vocab:     blob.vocab     || {},
+            aliases:   blob.aliases   || {},
+            sentiment: blob.sentiment || null
         };
         // Safety truncate: if the serialised blob exceeds the column limit, drop
         // the oldest mem entries until it fits. The Context column is sized to

@@ -26,15 +26,28 @@
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
     <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
       <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <span class="netra-dev-ver">R2.8</span>
+      <span class="netra-dev-ver">R2.12</span>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
       <button class="netra-dev-x" ng-click="c.toggleDev()" title="Hide (Alt+D)">hide</button>
     </header>
 
+    <!-- R2.12 - VS Code-style tab bar -->
+    <nav class="netra-dev-tabs" role="tablist">
+      <span class="netra-dev-tab" ng-class="{'active': c.devTab === 'voice'}"
+            ng-click="c.devSetTab('voice')" role="tab">Voice</span>
+      <span class="netra-dev-tab" ng-class="{'active': c.devTab === 'monitor'}"
+            ng-click="c.devSetTab('monitor')" role="tab">Monitor</span>
+      <span class="netra-dev-tab" ng-class="{'active': c.devTab === 'logs'}"
+            ng-click="c.devSetTab('logs')" role="tab">Logs</span>
+      <span class="netra-dev-tab" ng-class="{'active': c.devTab === 'training'}"
+            ng-click="c.devSetTab('training')" role="tab">Training</span>
+    </nav>
+
+    <div class="netra-dev-body">
     <!-- R1.2 - LIVE MIC LEVEL METER (visual confirmation audio is reaching the browser) -->
-    <section class="netra-mic-meter">
+    <section class="netra-mic-meter" ng-show="c.devTab === 'voice' || c.devTab === 'monitor'">
       <div class="netra-mic-meter-label">
         MIC LEVEL
         <span class="netra-mic-meter-status" ng-class="{'l-err': !c.micStreamActive, 'on': c.micStreamActive}">{{c.micStreamActive ? 'LIVE' : 'no stream'}}</span>
@@ -49,7 +62,7 @@
       </div>
     </section>
 
-    <section class="netra-dev-status">
+    <section class="netra-dev-status" ng-show="c.devTab === 'monitor'">
       <div><span>state</span><b>{{c.stateLabel}}</b></div>
       <div><span>recognition</span><b ng-class="{'l-err': !c.recRunning}">{{c.recRunning ? 'RUNNING (always-on)' : 'stopped'}}</b></div>
       <div><span>mode</span><b ng-class="{'on': c.conversationOpen}">{{c.conversationOpen ? 'ALWAYS LISTENING - just speak' : 'closed (say "Netra" or "wake up")'}}</b></div>
@@ -66,7 +79,7 @@
     </section>
 
     <!-- R1 - REAL-TIME GRAPHS -->
-    <section class="netra-dev-graphs">
+    <section class="netra-dev-graphs" ng-show="c.devTab === 'monitor'">
       <div class="netra-graph-card">
         <div class="netra-graph-title">
           CONFIDENCE <span class="netra-graph-sub">(last 30 utterances)</span>
@@ -116,13 +129,13 @@
       </div>
     </section>
 
-    <section class="netra-dev-transcript">
+    <section class="netra-dev-transcript" ng-show="c.devTab === 'voice' || c.devTab === 'logs'">
       <div class="netra-dev-tx-row"><span>hearing</span><em ng-class="{'on': c.interim}">{{c.interim || '(silent)'}}</em></div>
       <div class="netra-dev-tx-row"><span>last heard</span><em>{{c.lastHeard || '(nothing yet)'}}</em></div>
       <div class="netra-dev-tx-row"><span>last spoken</span><em>{{c.spoken || '(nothing yet)'}}</em></div>
     </section>
 
-    <section class="netra-dev-input">
+    <section class="netra-dev-input" ng-show="c.devTab === 'voice'">
       <input type="text"
              ng-model="c.devText"
              placeholder="Type a command (bypass mic), press Enter"
@@ -131,7 +144,7 @@
       <button ng-click="c.devSendText()" ng-disabled="!c.devText">Send</button>
     </section>
 
-    <section class="netra-dev-actions">
+    <section class="netra-dev-actions" ng-show="c.devTab === 'voice'">
       <button ng-click="c.devListenNow()"   title="Arm command capture without saying Netra">Listen now</button>
       <button ng-click="c.devToggleSleep()" title="Toggle dormant / alert">{{c.alert ? 'Sleep' : 'Wake'}}</button>
       <button ng-click="c.devCloseConversation()" title="Close the follow-up window so wake word is required again"
@@ -151,7 +164,7 @@
     </section>
 
     <!-- R2.2 - Voice training: personal vocab + alias map -->
-    <section class="netra-dev-train">
+    <section class="netra-dev-train" ng-show="c.devTab === 'training'">
       <div class="netra-train-title">VOICE TRAINING
         <span class="netra-train-sub">{{c.vocabCount || 0}} words, {{c.aliasCount || 0}} aliases</span>
       </div>
@@ -178,7 +191,7 @@
               ng-show="c.vocabCount > 0 || c.aliasCount > 0">clear all training</button>
     </section>
 
-    <section class="netra-dev-voices" ng-show="c.voices.length">
+    <section class="netra-dev-voices" ng-show="c.voices.length && c.devTab === 'training'">
       <label>
         <span>force voice</span>
         <select ng-model="c.voicePick" ng-change="c.devPickVoice()">
@@ -188,7 +201,7 @@
       </label>
     </section>
 
-    <section class="netra-dev-log" aria-label="Event log">
+    <section class="netra-dev-log" ng-show="c.devTab === 'logs'" aria-label="Event log">
       <div class="netra-dev-log-row" ng-repeat="e in c.events track by $index"
            ng-class="'l-' + e.l">
         <span class="t">{{e.t}}</span>
@@ -197,6 +210,19 @@
       </div>
       <div class="netra-dev-log-empty" ng-show="!c.events.length">no events yet</div>
     </section>
+    </div><!-- /.netra-dev-body -->
+
+    <!-- R2.12 - VS Code-style status bar at bottom -->
+    <footer class="netra-dev-statusbar" aria-hidden="true">
+      <span class="seg"><span class="seg-icon">●</span><span class="seg-val">{{c.state}}</span></span>
+      <span class="seg" ng-class="{'err': !c.recRunning}">
+        <span class="seg-icon">🎤</span><span class="seg-val">{{c.recRunning ? 'rec' : 'off'}}</span>
+      </span>
+      <span class="seg"><span class="seg-icon">📶</span><span class="seg-val">{{c.micLevel || 0}}</span></span>
+      <span class="seg" ng-show="c.stats.lastLatencyMs"><span class="seg-icon">⏱</span><span class="seg-val">{{c.stats.lastLatencyMs}}ms</span></span>
+      <span class="seg" ng-show="c.stats.lastModel && c.stats.lastModel !== '-'"><span class="seg-icon">🤖</span><span class="seg-val">{{c.stats.lastModel}}</span></span>
+      <span class="seg" ng-show="c.stats.errors > 0" ng-class="{'warn': c.stats.errors > 0}"><span class="seg-icon">⚠</span><span class="seg-val">{{c.stats.errors}}</span></span>
+    </footer>
   </div>
 
   <!-- Dev toggle badge - shown when dev panel is hidden -->
@@ -458,12 +484,12 @@
     </svg>
   </button>
 
-  <!-- Small transcript card for sighted helpers -->
-  <!-- R1.4 - Spoken-response card. Always visible (devOn or not) while
-       there's been a recent exchange. Sticks for 12s after Netra stops
-       speaking, then fades. Drag the orb to move this card with it. -->
+  <!-- Transcript card for sighted helpers — visible only in dev mode.
+       For end users, screen-reader narration via the aria-live regions
+       above is the canonical interface; this card is purely a debugging
+       aid for sighted observers and was hidden in R2.12. -->
   <div class="netra-card"
-       ng-show="c.lastHeard || c.spoken"
+       ng-show="c.devOn && (c.lastHeard || c.spoken)"
        ng-class="{'netra-card-speaking': c.state === 'speaking'}"
        aria-hidden="true">
     <div class="netra-card-row" ng-show="c.lastHeard">
