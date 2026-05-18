@@ -332,52 +332,69 @@
 }
 
 /* ============================================================
- *  State - DORMANT (R3.1 - alive but resting: violet breathing glow)
- *  The orb is asleep, not dead. A slow indigo→violet pulse on the
- *  iris with a gentle halo bloom signals "I am here, ready to wake."
+ *  State - DORMANT (R3.2 - alive but resting: violet breathing glow)
+ *
+ *  The previous attempt set CSS variables to violet but the dark
+ *  eyelid (opacity 0.88) + dark core gradient still made the orb
+ *  read as a solid black blob. R3.2 overrides:
+ *    - --core-mid (sphere base colour) to violet
+ *    - --eye-glow strongly violet
+ *    - eyelid opacity dropped from 0.88 to 0.18 so the iris breathes
+ *      through, not behind a black curtain
+ *    - iris/pupil colours guaranteed-violet via inline fill override
+ *      using filter chains (SVG paint-order respects this)
  * ============================================================ */
 .netra-state-dormant .netra-orb {
-    --iris-bright: #b48af0;        /* soft violet */
-    --iris-mid:    #6b3da8;        /* deep violet */
-    --iris-dark:   #3a1f6b;        /* indigo */
-    --iris-deep:   #1a0d3a;        /* near-black indigo (still has tone) */
-    --eye-glow:    rgba(180, 138, 240, 0.35);
-    /* No brightness/saturate filter — keeps the colour true. */
+    --iris-bright: #c69bf2;
+    --iris-mid:    #8b4dc8;
+    --iris-dark:   #4a2a8a;
+    --iris-deep:   #2a1560;
+    --core-mid:    #b48af0;
+    --eye-glow:    rgba(180, 138, 240, 0.65);
 }
-.netra-state-dormant .netra-eye-lid-top     { opacity: 0.88; }
-.netra-state-dormant .netra-eye-glint       { opacity: 0;    }
-.netra-state-dormant .netra-eye-glint-small { opacity: 0;    }
-.netra-state-dormant .netra-eye-pentagram   { opacity: 0;    }
-/* The iris + pupil + halo each get their own slow-breathe animation
-   so the dormant state is visibly alive without being distracting. */
+/* Eyelids almost OPEN in dormant — was 0.88 covering, now 0.18 hinting */
+.netra-state-dormant .netra-eye-lid-top     { opacity: 0.18; }
+.netra-state-dormant .netra-eye-lid-bottom  { opacity: 0.18; }
+.netra-state-dormant .netra-eye-glint       { opacity: 0; }
+.netra-state-dormant .netra-eye-glint-small { opacity: 0; }
+.netra-state-dormant .netra-eye-pentagram   { opacity: 0; }
+
+/* Force-tint the iris + pupil violet at the SVG element level so the
+   colour shows even if the gradient defs miss. */
 .netra-state-dormant .netra-eye-iris {
+    fill: #8b4dc8;
     animation: netra-dormant-breathe 4.2s ease-in-out infinite;
     transform-box: fill-box;
     transform-origin: center;
-    opacity: 0.65;
+    opacity: 0.85;
 }
 .netra-state-dormant .netra-eye-pupil {
+    fill: #2a1560;
     animation: netra-dormant-pupil 4.2s ease-in-out infinite;
     transform-box: fill-box;
     transform-origin: center;
-    opacity: 0.7;
+    opacity: 0.9;
 }
 .netra-state-dormant .netra-eye-halo {
     animation: netra-dormant-halo 4.2s ease-in-out infinite;
     transform-origin: 60px 60px;
     transform-box: view-box;
 }
+.netra-state-dormant .netra-eye-sphere {
+    fill: #b48af0 !important;
+    opacity: 0.55;
+}
 @keyframes netra-dormant-breathe {
-    0%, 100% { opacity: 0.45; transform: scale(1); }
-    50%      { opacity: 0.80; transform: scale(1.04); }
+    0%, 100% { opacity: 0.70; transform: scale(1); }
+    50%      { opacity: 1.00; transform: scale(1.06); }
 }
 @keyframes netra-dormant-pupil {
-    0%, 100% { opacity: 0.55; transform: scale(0.95); }
-    50%      { opacity: 0.85; transform: scale(1); }
+    0%, 100% { opacity: 0.75; transform: scale(0.95); }
+    50%      { opacity: 1.00; transform: scale(1.02); }
 }
 @keyframes netra-dormant-halo {
-    0%, 100% { opacity: 0.20; transform: scale(0.92); }
-    50%      { opacity: 0.55; transform: scale(1.10); }
+    0%, 100% { opacity: 0.35; transform: scale(0.95); }
+    50%      { opacity: 0.80; transform: scale(1.15); }
 }
 
 /* ============================================================
@@ -1288,9 +1305,14 @@
 }
 
 .netra-dev-badge {
+    /* R3.1 - moved from top-left to BOTTOM-LEFT next to the orb. The orb
+       lives at bottom-right via .netra-root, but its drag-saved position
+       can be anywhere; the DEV badge sticks to the bottom-left corner
+       (24px from each edge) so it's predictable and never far from the
+       orb's typical resting area. */
     position: fixed;
-    top: 14px;
-    left: 14px;
+    bottom: 24px;
+    left: 24px;
     z-index: 100000;
     background: linear-gradient(160deg, rgba(36,36,56,0.92), rgba(18,18,28,0.92));
     /* R3.1 - removed `saturate(140%)` from backdrop-filter. Sass parser
