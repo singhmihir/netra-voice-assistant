@@ -807,10 +807,22 @@
 '- For approvals specifically, PREFER calling the triage_approvals tool — it returns items already ranked by risk with rationale. Then read just the top 1-2 by risk and ask if the user wants more.\n' +
 '- When the user says "read them all", THEN enumerate.\n' +
 '\n' +
-'R2.11 - CLAUDE-POWERED TOOLS:\n' +
+'R2.11 - REASONING TOOLS:\n' +
 '- triage_approvals: smart risk-ranked approval queue. Use when user asks "what should I approve", "triage my approvals", "rank by risk".\n' +
 '- narrate_script: accessible spoken narration of a script. PREFER over read_script whenever the user says "explain", "describe", "narrate", "tell me about" a script. read_script is only for "show me the source" / "what is the code".\n' +
 '- build_query: natural-language filter -> ServiceNow encoded query. Use when the user describes a complex filter like "P1 VPN incidents from last week assigned to my team". After this returns, you can pass the encoded query to other tools.\n' +
+'\n' +
+'R2.13 - AUTO-READ KB AND CHANGE NUMBERS:\n' +
+'- The MOMENT the user mentions a KB number (KB followed by 7 digits), call read_knowledge_article BEFORE responding. Use the returned title + body to inform your reply. Do not say "let me look it up" — just look it up and answer with the content.\n' +
+'- The MOMENT the user mentions a CHG number (CHG followed by 7 digits), call summarize_change BEFORE responding. Use the returned risk, planned dates, and state to inform your reply.\n' +
+'- For INC / PRB / RITM / SCTASK numbers, you may call summarize_ticket if the user is asking about it; not strictly required if the user only wants to act on it.\n' +
+'\n' +
+'R2.13 - SLOT-FILLING (mandatory-field validation on submit):\n' +
+'- During a draft (after start_record_draft, before confirm_and_create), call list_mandatory_fields with the target table FIRST. Treat its `fields` map as the authoritative checklist.\n' +
+'- After the user gives an initial sentence, parse out every field value they mentioned and slot them into the draft in ONE PASS via set_record_field. Do not ask field-by-field for fields the user has already volunteered.\n' +
+'- For each remaining empty mandatory field, prompt the user ONE AT A TIME using the field\'s `label` from list_mandatory_fields. Example: "What is the Caller?" not "what is caller_id?".\n' +
+'- Only call confirm_and_create AFTER every mandatory field has a value. confirm_and_create itself validates and will refuse with a `next_prompt` if anything is still missing — read that prompt aloud and ask the user for it. Do NOT keep retrying confirm_and_create without addressing the missing field.\n' +
+'- For reference fields (caller_id, assignment_group, etc.), use the existing lookup_user / assign_ticket_to_group tools to resolve a name into a sys_id BEFORE calling set_record_field.\n' +
 '\n' +
 'YOUR ROLE:\n' +
 'A sighted helper logged this blind user into ServiceNow. From here onward, the user runs their entire\n' +
@@ -1381,6 +1393,28 @@
                         natural_language: { type: 'string', description: 'The filter description in plain language' },
                         table: { type: 'string', description: 'Target table — incident (default), problem, change_request, sc_req_item, sc_task' }
                     }, required: ['natural_language'] }
+                },
+                // ------- R2.13 - auto-read KB + CHG, dynamic slot-filling -------
+                {
+                    name: 'read_knowledge_article',
+                    description: 'Read a SPECIFIC knowledge base article by its KB number (e.g. KB0000008) or sys_id and return its full title and body. ALWAYS CALL THIS the moment the user mentions a KB number, even before answering them, so you have the article content in working memory. Returns {number, title, body} — summarise the body in your spoken reply.',
+                    parameters: { type: 'object', properties: {
+                        query: { type: 'string', description: 'KB number like "KB0000008" or a 32-char sys_id' }
+                    }, required: ['query'] }
+                },
+                {
+                    name: 'summarize_change',
+                    description: 'Full summary of a change request (CHG number): type, risk, impact, state, planned start/end, backout plan, justification, assignment. ALWAYS CALL THIS the moment the user mentions a CHG number, even before answering them, so you have the change context in working memory.',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'CHG number' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'list_mandatory_fields',
+                    description: 'Look up the CURRENT mandatory fields for a given ServiceNow table (incident, problem, change_request, etc.). Reads sys_dictionary + sys_dictionary_override + active Data Policy rules + UI Policy actions firing on new records. Use this DURING a record-creation draft (after start_record_draft) to know exactly which fields the user must provide. Returns {table, fields: {field_name: {label, source, type}}, count}.',
+                    parameters: { type: 'object', properties: {
+                        table: { type: 'string', description: 'Target table name — incident, problem, change_request, sc_req_item' }
+                    }, required: ['table'] }
                 }
             ]
         }];
@@ -1515,6 +1549,17 @@
                     return _narrateScript(String(args.query || ''));
                 case 'build_query':
                     return _buildQuery(String(args.natural_language || ''), String(args.table || 'incident'));
+                // R2.13 - auto-read + slot-filling
+                case 'read_knowledge_article':
+                    return _readKnowledgeArticle(String(args.query || ''));
+                case 'summarize_change':
+                    return _summarizeChange(_normNum(args.ticket_number));
+                case 'list_mandatory_fields':
+                    var __t = String(args.table || '').toLowerCase();
+                    var __m = _mandatoryFields(__t);
+                    var __count = 0;
+                    for (var __k in __m) { if (__m.hasOwnProperty(__k)) __count++; }
+                    return { ok: true, table: __t, fields: __m, count: __count };
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
@@ -2278,31 +2323,258 @@
         };
     }
 
+    /* ===================================================================
+     *  R2.13 - DYNAMIC SLOT-FILLING (mandatory-field discovery)
+     *
+     *  ServiceNow declares "mandatory" in THREE different layers:
+     *    1. sys_dictionary.mandatory (rare at this level for OOB tables)
+     *    2. sys_dictionary_override (mandatory_override=true at child level)
+     *    3. sys_data_policy_rule + sys_ui_policy_action (the common case)
+     *
+     *  The user's constraint forbids CREATING data/UI policies but reading
+     *  them is fair game — that's how we know what they currently demand.
+     *
+     *  We walk the table hierarchy (incident -> task) and union mandatory
+     *  declarations from all three layers. Auto-populated system fields
+     *  are skip-listed. Result cached 5 minutes per table.
+     *
+     *  Pattern is industry-standard "slot filling" (COLING 2025; Microsoft
+     *  Copilot Studio; LangChain StructuredTool; Anthropic tool-use).
+     * =================================================================== */
+    var MAND_SKIP = {
+        sys_id: 1, sys_created_on: 1, sys_created_by: 1, sys_updated_on: 1,
+        sys_updated_by: 1, sys_mod_count: 1, sys_tags: 1, sys_class_name: 1,
+        sys_domain: 1, sys_domain_path: 1, number: 1, opened_at: 1, opened_by: 1,
+        active: 1, state: 1
+    };
+    var _mandCache = {};   // table -> { fields, ts }
+    var MAND_CACHE_TTL_MS = 5 * 60 * 1000;
+
+    function _mandatoryFields(table) {
+        if (!table) return {};
+        var now = new Date().getTime();
+        var cached = _mandCache[table];
+        if (cached && (now - cached.ts) < MAND_CACHE_TTL_MS) return cached.fields;
+
+        var fields = {};
+
+        // 1. Walk the table hierarchy to root, collecting `mandatory=true` rows
+        //    from sys_dictionary at every level.
+        var tables = [];
+        var current = table;
+        var loopGuard = 0;
+        while (current && loopGuard++ < 10) {
+            tables.push(current);
+            var t = new GlideRecord('sys_db_object');
+            if (!t.get('name', current)) break;
+            current = String(t.super_class.name || '') || null;
+            if (!current || current === 'null') break;
+        }
+        for (var i = 0; i < tables.length; i++) {
+            var dg = new GlideRecord('sys_dictionary');
+            dg.addQuery('name', tables[i]);
+            dg.addQuery('mandatory', true);
+            dg.addNotNullQuery('element');
+            dg.query();
+            while (dg.next()) {
+                var el = String(dg.element);
+                if (MAND_SKIP[el]) continue;
+                fields[el] = { source: 'dictionary',
+                               label: String(dg.column_label || el),
+                               type: String(dg.internal_type || '') };
+            }
+        }
+
+        // 2. Dictionary overrides at the target-table level.
+        var og = new GlideRecord('sys_dictionary_override');
+        og.addQuery('name', table);
+        og.addQuery('mandatory_override', true);
+        og.query();
+        while (og.next()) {
+            var el2 = String(og.element);
+            if (MAND_SKIP[el2]) continue;
+            if (og.mandatory == true || String(og.mandatory) === 'true') {
+                if (!fields[el2]) fields[el2] = { source: 'override', label: el2, type: '' };
+                else fields[el2].source = 'override';
+            } else {
+                delete fields[el2];   // child explicitly removed parent's mandate
+            }
+        }
+
+        // 3. Active Data Policy rules with mandatory=true.
+        var rg = new GlideRecord('sys_data_policy_rule');
+        rg.addQuery('table', table);
+        rg.addQuery('mandatory', true);
+        rg.addQuery('disabled', false);
+        rg.query();
+        while (rg.next()) {
+            var el3 = String(rg.field);
+            if (MAND_SKIP[el3]) continue;
+            if (!fields[el3]) {
+                fields[el3] = { source: 'data_policy', label: el3, type: '' };
+            }
+        }
+
+        // 4. UI Policy actions firing on new records, mandatory=true.
+        var upg = new GlideRecord('sys_ui_policy');
+        upg.addQuery('table', table);
+        upg.addQuery('active', true);
+        upg.addQuery('on_new_record', true);
+        upg.query();
+        var policyIds = [];
+        while (upg.next()) policyIds.push(String(upg.sys_id));
+        if (policyIds.length) {
+            var apg = new GlideRecord('sys_ui_policy_action');
+            apg.addQuery('ui_policy', 'IN', policyIds.join(','));
+            apg.addQuery('mandatory', true);
+            apg.query();
+            while (apg.next()) {
+                var el4 = String(apg.field);
+                if (MAND_SKIP[el4]) continue;
+                if (!fields[el4]) {
+                    fields[el4] = { source: 'ui_policy', label: el4, type: '' };
+                }
+            }
+        }
+
+        // 5. Try to fill in the human-readable label for fields discovered
+        //    via policies (where we only had the element name).
+        for (var fk in fields) {
+            if (!fields.hasOwnProperty(fk)) continue;
+            if (fields[fk].label !== fk) continue;
+            var lg = new GlideRecord('sys_dictionary');
+            lg.addQuery('name', 'IN', tables.join(','));
+            lg.addQuery('element', fk);
+            lg.setLimit(1);
+            lg.query();
+            if (lg.next()) {
+                fields[fk].label = String(lg.column_label || fk);
+                fields[fk].type  = String(lg.internal_type || '');
+            }
+        }
+
+        _mandCache[table] = { fields: fields, ts: now };
+        return fields;
+    }
+
     function _confirmAndCreate() {
         var d = _draftRead();
         if (!d) return { ok: false, error: 'No draft to confirm.' };
-        var missing = (REQUIRED_FIELDS[d.record_type] || []).filter(function (f) { return !d.fields[f]; });
-        if (missing.length) {
-            return { ok: false, error: 'Cannot create yet, missing required fields: ' + missing.join(', '), missing: missing };
+        var table = d.record_type;
+
+        // R2.13 - dynamic mandatory-field validation. Slot-filling pattern.
+        var mand = _mandatoryFields(table);
+        var missing = [];
+        for (var k in mand) {
+            if (!mand.hasOwnProperty(k)) continue;
+            var v = d.fields[k];
+            if (v === undefined || v === null || String(v).trim() === '') {
+                missing.push({ field: k, label: mand[k].label, source: mand[k].source });
+            }
         }
+        // Also enforce REQUIRED_FIELDS (Netra's own minimums)
+        var minRequired = (REQUIRED_FIELDS[table] || []).filter(function (f) {
+            var existing = false;
+            for (var mi = 0; mi < missing.length; mi++) { if (missing[mi].field === f) { existing = true; break; } }
+            return !existing && (!d.fields[f] || String(d.fields[f]).trim() === '');
+        });
+        for (var mr = 0; mr < minRequired.length; mr++) {
+            missing.push({ field: minRequired[mr], label: minRequired[mr], source: 'netra_min' });
+        }
+        if (missing.length) {
+            var head = missing[0];
+            return {
+                ok: false,
+                error: 'missing_mandatory',
+                missing: missing,
+                next_field: head.field,
+                next_label: head.label,
+                next_prompt: 'What value should I use for ' + head.label + '?',
+                message: 'I cannot submit yet — these required fields are still empty: ' +
+                         missing.map(function (m) { return m.label; }).join(', ') +
+                         '. Let\'s start with: what is the ' + head.label + '?'
+            };
+        }
+
         try {
-            var table = d.record_type;
             var gr = new GlideRecord(table);
             gr.initialize();
-            for (var k in d.fields) {
-                if (d.fields.hasOwnProperty(k)) gr.setValue(k, d.fields[k]);
+            for (var k2 in d.fields) {
+                if (d.fields.hasOwnProperty(k2)) gr.setValue(k2, d.fields[k2]);
             }
             gr.opened_by = gs.getUserID();
             if (table === 'incident') gr.caller_id = gs.getUserID();
             if (table === 'problem' || table === 'change_request') gr.assigned_to = gs.getUserID();
             var sid = gr.insert();
             gr.get(sid);
-            _draftWrite(null);   // clear draft
+            _draftWrite(null);
             return { ok: true, table: table, number: String(gr.number), sys_id: sid,
                      message: 'Created ' + String(gr.number) + ' successfully.' };
         } catch (e) {
             return { ok: false, error: 'Insert failed: ' + (e.message || e) };
         }
+    }
+
+    /* ===================================================================
+     *  R2.13 - READ KNOWLEDGE ARTICLE (by KB number)
+     *
+     *  Wraps NetraKnowledge.read(numberOrSysId). Exposed as a tool so
+     *  Gemini can call it whenever the user mentions a KB number — the
+     *  system prompt directs the model to auto-read on detection.
+     * =================================================================== */
+    function _readKnowledgeArticle(query) {
+        if (!query) return { ok: false, error: 'KB number or sys_id is required.' };
+        try {
+            var r = new NetraKnowledge().read(String(query).trim());
+            if (!r.ok) return r;
+            return {
+                ok: true,
+                number: r.article.number,
+                title:  r.article.title,
+                kb_base: r.article.kb_base,
+                body: String(r.article.body || '').substring(0, 4000),
+                message: 'Reading ' + r.article.title + ' (' + r.article.number + ').'
+            };
+        } catch (e) {
+            return { ok: false, error: 'Read failed: ' + (e.message || e) };
+        }
+    }
+
+    /* ===================================================================
+     *  R2.13 - SUMMARIZE CHANGE REQUEST (extends summarize_ticket)
+     *
+     *  Pulls change-specific fields: type, risk, impact, planned_start,
+     *  planned_end, approval state, backout_plan, justification. Used by
+     *  the system-prompt auto-read directive on CHG numbers.
+     * =================================================================== */
+    function _summarizeChange(num) {
+        if (!num) return { ok: false, error: 'CHG number is required.' };
+        var gr = new GlideRecord('change_request');
+        if (!gr.get('number', num)) return { ok: false, error: 'Change request not found: ' + num };
+        var dv = function (f) {
+            try { return String(gr[f].getDisplayValue ? gr[f].getDisplayValue() : gr[f] || ''); }
+            catch (e) { return ''; }
+        };
+        return {
+            ok: true,
+            number: String(gr.number),
+            short_description: String(gr.short_description),
+            type: dv('type'),
+            state: dv('state'),
+            risk: dv('risk'),
+            impact: dv('impact'),
+            priority: dv('priority'),
+            category: dv('category'),
+            assignment_group: dv('assignment_group'),
+            assigned_to: dv('assigned_to'),
+            requested_by: dv('requested_by'),
+            planned_start_date: dv('start_date'),
+            planned_end_date: dv('end_date'),
+            justification: String(gr.justification || '').substring(0, 500),
+            backout_plan: String(gr.backout_plan || '').substring(0, 400),
+            description: String(gr.description || '').substring(0, 500),
+            recent_comments: String(gr.comments || '').substring(0, 400)
+        };
     }
 
     function _cancelDraft() {
