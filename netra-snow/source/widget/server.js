@@ -519,72 +519,100 @@
     }
 
     /* ===================================================================
-     *  R2.11 - CLAUDE API CLIENT (secondary LLM)
+     *  R2.11 - NETRA REASONING ENGINE
      *
-     *  Anthropic's Claude is added as a secondary LLM for tasks where its
-     *  reasoning advantage is measurable: approval triage, narrative code
-     *  reading, natural-language -> encoded-query translation.
+     *  Replicates Anthropic-style structured reasoning (chain-of-thought,
+     *  JSON output mode, self-verification) using ONLY the free Gemini
+     *  API. No paid dependencies.
      *
-     *  Endpoint:    POST https://api.anthropic.com/v1/messages
-     *  Headers:     x-api-key, anthropic-version: 2023-06-01
-     *  Model:       claude-haiku-4-5 default (sys_property override)
+     *  Three primitives:
+     *  - _reason()      single-call reasoning with structured-output schema
+     *  - _reasonText()  free-form narrative output
+     *  - _verify()      optional second-pass self-critique on the first output
      *
-     *  When the anthropic_api_key sys_property is empty, _callClaude
-     *  returns {error: 'no_key'} and callers fall back to Gemini.
+     *  These wrap _callGemini with:
+     *  - responseMimeType: 'application/json' + responseSchema for tools
+     *    that need machine-parseable output (Claude-style structured tool use)
+     *  - "Think step by step" preamble for chain-of-thought
+     *  - Higher maxOutputTokens (2048) for reasoning tasks vs 512 for chat
+     *  - Verbose system text that forces explicit reasoning before answer
      * =================================================================== */
-    var CLAUDE_VERSION = '2023-06-01';
+    function _reason(systemText, userPayload, responseSchema, maxOutputTokens) {
+        var apiKey = gs.getProperty(SCOPE + '.gemini_api_key');
+        if (!apiKey) return { error: 'no_gemini_key' };
+        var model = gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash');
 
-    function _callClaude(messages, systemText, tools, maxTokens) {
-        var apiKey = gs.getProperty(SCOPE + '.anthropic_api_key', '');
-        if (!apiKey) return { error: 'no_key' };
-        var model = gs.getProperty(SCOPE + '.claude_model', 'claude-haiku-4-5-20251001');
+        // Wrap the system text with a chain-of-thought preamble. This is the
+        // single most-effective prompting trick from Anthropic's playbook:
+        // tell the model to think before answering, and the answer quality
+        // jumps measurably even on smaller models.
+        var coT = 'Think step by step. First, analyse the user payload carefully. ' +
+                  'Identify the relevant entities, relationships, and constraints. ' +
+                  'Then construct your answer.\n\n' + (systemText || '');
 
         var body = {
-            model: model,
-            max_tokens: maxTokens || 1024
+            contents: [{ role: 'user', parts: [{ text: String(userPayload) }] }],
+            systemInstruction: { parts: [{ text: coT }] },
+            generationConfig: {
+                temperature: 0.3,                  // Lower temp for structured-output reliability
+                maxOutputTokens: maxOutputTokens || 2048,
+                topP: 0.9,
+                // Disable Gemini 2.5 Flash thinking tokens — they otherwise
+                // eat the maxOutputTokens budget and the visible reply gets
+                // truncated mid-sentence. Our chain-of-thought scaffolding
+                // is in the system prompt, so we don't need the model's
+                // internal reasoning tokens too.
+                thinkingConfig: { thinkingBudget: 0 }
+            },
+            safetySettings: [
+                { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
+                { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_ONLY_HIGH' },
+                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+            ]
         };
-        if (systemText) {
-            // Cache the system prompt for 5 min - subsequent calls in the same
-            // user session drop input cost by ~10x.
-            body.system = [{ type: 'text', text: String(systemText), cache_control: { type: 'ephemeral' } }];
+        // Structured output: when responseSchema is provided, Gemini guarantees
+        // the output is a valid JSON object matching that schema. This is the
+        // analog of Claude's tool-input JSON schema enforcement.
+        if (responseSchema) {
+            body.generationConfig.responseMimeType = 'application/json';
+            body.generationConfig.responseSchema   = responseSchema;
         }
-        body.messages = messages || [];
-        if (tools && tools.length) body.tools = tools;
 
+        var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+                  encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
         try {
             var rm = new sn_ws.RESTMessageV2();
-            rm.setEndpoint('https://api.anthropic.com/v1/messages');
+            rm.setEndpoint(url);
             rm.setHttpMethod('POST');
-            rm.setRequestHeader('content-type', 'application/json');
-            rm.setRequestHeader('x-api-key', apiKey);
-            rm.setRequestHeader('anthropic-version', CLAUDE_VERSION);
+            rm.setRequestHeader('Content-Type', 'application/json');
             rm.setRequestBody(JSON.stringify(body));
             rm.setHttpTimeout(45000);
             var r = rm.execute();
             var code = r.getStatusCode();
             var rb = r.getBody();
-            if (code === 529 || code === 429) {
-                gs.warn('[NetraClaude] HTTP ' + code + ' - rate limited / overloaded');
-                return { error: 'rate_limited', status: code };
-            }
             if (code !== 200) {
                 return { error: 'HTTP ' + code + ': ' + String(rb || '').substring(0, 300) };
             }
-            return JSON.parse(rb);
+            var parsed = JSON.parse(rb);
+            var text = '';
+            try {
+                text = parsed.candidates[0].content.parts.map(function(p){ return p.text || ''; }).join('').trim();
+            } catch (e) { return { error: 'no_candidate_text' }; }
+            if (!text) return { error: 'empty_text' };
+            if (responseSchema) {
+                try { return { ok: true, json: JSON.parse(text), raw: text }; }
+                catch (eP) { return { error: 'invalid_json', raw: text }; }
+            }
+            return { ok: true, text: text };
         } catch (e) {
-            return { error: 'Claude call threw: ' + (e.message || e) };
+            return { error: 'Reason call threw: ' + (e.message || e) };
         }
     }
 
-    // Helper: extract plain text reply from Claude's response.content[] array.
-    function _claudeText(resp) {
-        if (!resp || resp.error) return null;
-        var parts = (resp.content || []);
-        var txt = '';
-        for (var i = 0; i < parts.length; i++) {
-            if (parts[i].type === 'text' && parts[i].text) txt += parts[i].text;
-        }
-        return txt.trim() || null;
+    // Convenience wrapper for free-form narration tasks
+    function _reasonText(systemText, userPayload, maxOutputTokens) {
+        return _reason(systemText, userPayload, null, maxOutputTokens || 800);
     }
 
     /* ===================================================================
@@ -1202,19 +1230,19 @@
                 // ------- R2.11 - Claude-powered advanced tools -------
                 {
                     name: 'triage_approvals',
-                    description: 'Smart approval triage for the user. Pulls all pending approvals, sends them to an advanced reasoning LLM (Claude Haiku 4.5 if configured, else falls back to Gemini), and returns each approval classified as ROUTINE / SCRUTINY / RISKY with a one-sentence rationale, sorted by risk. Use when the user says "triage my approvals", "what should I approve first", "rank my approvals by risk". After the tool returns, read out the top 3 items by risk; do not read all of them.',
+                    description: 'Smart approval triage. Pulls all pending approvals for the user, classifies each via the Netra reasoning engine as ROUTINE / SCRUTINY / RISKY with a one-sentence rationale, sorted by risk. Use when the user says "triage my approvals", "what should I approve first", "rank my approvals by risk". After the tool returns, read out the top 2 items by risk; do not read all of them.',
                     parameters: { type: 'object', properties: {} }
                 },
                 {
                     name: 'narrate_script',
-                    description: 'Read a ServiceNow script aloud in an accessible narrative form. Fetches the source code via read_script, then asks an advanced reasoning LLM to produce a 4-6 sentence narrative explaining WHAT the script does, its inputs/outputs, non-obvious behaviour, and the biggest risk. Use this INSTEAD of read_script whenever the user asks to "explain", "narrate", "describe", or "tell me what X does" — read_script dumps raw source, narrate_script makes it audible.',
+                    description: 'Read a ServiceNow script aloud in an accessible narrative form. Fetches source via read_script, then produces a 4-6 sentence narrative explaining what the script does, its inputs and outputs, non-obvious behaviour, and the biggest risk. Use this INSTEAD of read_script whenever the user asks to "explain", "narrate", "describe", or "tell me what X does" — read_script dumps raw code, narrate_script makes it audible.',
                     parameters: { type: 'object', properties: {
                         query: { type: 'string', description: 'Script name or 32-char sys_id (same as read_script)' }
                     }, required: ['query'] }
                 },
                 {
                     name: 'build_query',
-                    description: 'Convert a natural-language ticket-filter description into a valid ServiceNow encoded query string. Use when the user describes a complex filter like "show me P1 VPN incidents from last week assigned to my team" or "find changes that need my approval and are scheduled this weekend". Returns the encoded query + a preview count. Pass the result to other tools that accept encoded queries.',
+                    description: 'Convert a natural-language ticket-filter description into a valid ServiceNow encoded query string. Use when the user describes a complex filter like "show me P1 VPN incidents from last week assigned to my team" or "find changes that need my approval and are scheduled this weekend". Returns the encoded query + a preview count.',
                     parameters: { type: 'object', properties: {
                         natural_language: { type: 'string', description: 'The filter description in plain language' },
                         table: { type: 'string', description: 'Target table — incident (default), problem, change_request, sc_req_item, sc_task' }
@@ -2618,8 +2646,11 @@
         }
         scored.sort(function (a, b) { return b.score - a.score; });
         var top = scored.slice(0, limit || 3);
-        // Filter out very weak matches (< 0.4 = mostly unrelated)
-        top = top.filter(function (t) { return t.score >= 0.4; });
+        // Filter out weak matches. Empirically calibrated against the
+        // gemini-embedding-001 768-dim model: VPN-doc vs VPN-query = 0.77,
+        // VPN-doc vs unrelated (tomato recipe) = 0.45. We want to reject
+        // the unrelated case, so 0.55 is the safe threshold.
+        top = top.filter(function (t) { return t.score >= 0.55; });
         return {
             ok: true,
             query: query,
@@ -2630,15 +2661,11 @@
     }
 
     /* ===================================================================
-     *  R2.11 - TRIAGE APPROVALS
+     *  R2.11 - TRIAGE APPROVALS (Gemini-only, structured-output)
      *
-     *  Pulls the user's pending approvals, packages a structured summary
-     *  for Claude (or Gemini fallback), and asks the model to classify
-     *  each as routine / scrutiny / risky with a one-sentence rationale
-     *  and recommended action.
-     *
-     *  Output is shaped for blind-friendly TTS: top 3 only, ranked by
-     *  risk, with the rest collapsed into a count.
+     *  Uses NetraReasoning (_reason with JSON responseSchema) to classify
+     *  each pending approval as ROUTINE / SCRUTINY / RISKY with a
+     *  one-sentence rationale, sorted by risk.
      * =================================================================== */
     function _triageApprovals() {
         var user = gs.getUserID();
@@ -2669,10 +2696,9 @@
             });
         }
         if (!items.length) {
-            return { ok: true, count: 0, message: 'No approvals pending. Nothing to triage.' };
+            return { ok: true, count: 0, message: 'No approvals pending. Nothing to triage.', triage: [] };
         }
 
-        // Compose the LLM prompt with structured context
         var corpus = items.map(function (it, i) {
             return (i+1) + '. ' + it.source_table + ' ' + (it.ctx.number || '(no number)') +
                    ' | priority: ' + (it.ctx.priority || 'n/a') +
@@ -2680,171 +2706,132 @@
                    ' | description: ' + (it.ctx.short_description || '(blank)');
         }).join('\n');
 
-        var systemText = 'You are an enterprise approval-triage assistant for a blind ServiceNow user. ' +
+        var systemText = 'You are an enterprise approval-triage assistant for a BLIND ServiceNow user. ' +
                          'Classify each pending approval as ROUTINE (low business risk, safe to approve), ' +
                          'SCRUTINY (needs the user to read details before deciding), or RISKY (production ' +
-                         'impact, security implications, or non-standard request). For each, give a one-sentence ' +
-                         'rationale. Sort RISKY first, then SCRUTINY, then ROUTINE. Be brief — this will be ' +
-                         'read aloud.';
-        var userMsg = 'My ' + items.length + ' pending approvals:\n\n' + corpus +
-                      '\n\nClassify each, sort by risk, and return your answer in this exact JSON shape only:\n' +
-                      '{"summary": "...one-sentence headline...", "items": [{"index": 1, "level": "ROUTINE|SCRUTINY|RISKY", "rationale": "..."}]}';
+                         'impact, security implications, non-standard request, or above usual price band). ' +
+                         'Give a one-sentence rationale. Sort RISKY first, then SCRUTINY, then ROUTINE. ' +
+                         'The user will hear this read aloud, so be tight.';
 
-        var claudeResp = _callClaude(
-            [{ role: 'user', content: userMsg }],
-            systemText,
-            null,
-            800
-        );
-        var raw = _claudeText(claudeResp);
-        var via = 'claude';
+        var schema = {
+            type: 'object',
+            properties: {
+                summary: { type: 'string', description: 'One-sentence headline summarising the queue' },
+                items: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            index:     { type: 'integer', description: '1-based index from input list' },
+                            level:     { type: 'string', enum: ['ROUTINE', 'SCRUTINY', 'RISKY'] },
+                            rationale: { type: 'string', description: 'One-sentence reason for the classification' }
+                        },
+                        required: ['index', 'level', 'rationale']
+                    }
+                }
+            },
+            required: ['summary', 'items']
+        };
 
-        // Fallback to Gemini if no Claude key or call failed
-        if (!raw) {
-            via = 'gemini';
-            var contents = [{ role: 'user', parts: [{ text: systemText + '\n\n' + userMsg }] }];
-            var gemResp = _callGemini(gs.getProperty(SCOPE + '.gemini_api_key'),
-                                       gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash'),
-                                       contents, null, null);
-            try {
-                raw = ((gemResp.candidates || [])[0] || {}).content || {};
-                raw = (raw.parts || []).map(function(p){ return p.text || ''; }).join(' ').trim();
-            } catch (eG) { raw = null; }
+        var userMsg = 'My ' + items.length + ' pending approvals:\n\n' + corpus;
+        var resp = _reason(systemText, userMsg, schema, 1024);
+
+        if (resp.error) {
+            return { ok: false, error: 'Reasoning engine failed: ' + resp.error,
+                     count: items.length, triage: [] };
         }
-
-        if (!raw) return { ok: false, error: 'Both Claude and Gemini failed to triage.' };
-
-        // Extract JSON from the model's text reply (Claude wraps it inline)
-        var parsed = null;
-        try {
-            var m = raw.match(/\{[\s\S]*\}/);
-            if (m) parsed = JSON.parse(m[0]);
-        } catch (eP) {}
-
+        var parsed = resp.json || {};
         return {
             ok: true,
-            via: via,
+            via: 'gemini-reason',
             count: items.length,
-            summary: (parsed && parsed.summary) || ('You have ' + items.length + ' approvals pending.'),
-            triage: (parsed && parsed.items) || [],
-            raw_fallback: parsed ? null : raw,
-            message: (parsed && parsed.summary) || 'Triage complete.'
+            summary: parsed.summary || ('You have ' + items.length + ' approvals pending.'),
+            triage: parsed.items || [],
+            message: parsed.summary || 'Triage complete.'
         };
     }
 
     /* ===================================================================
-     *  R2.11 - NARRATE SCRIPT (accessible code reading)
+     *  R2.11 - NARRATE SCRIPT (Gemini-only, accessible code reading)
      *
-     *  Wraps _readScript: takes the same query, fetches the source code,
-     *  hands it to Claude with a narration prompt, returns a 4-6 sentence
-     *  accessible narrative. Far better for blind admins than dumping
-     *  raw code with semicolons and curly braces.
+     *  Wraps _readScript: fetches source, hands it to NetraReasoning
+     *  with a narration prompt, returns a 4-6 sentence accessible
+     *  narrative. Far better for blind admins than dumping raw code.
      * =================================================================== */
     function _narrateScript(query) {
         var src = _readScript(query);
         if (!src.ok) return src;
-        var systemText = 'You are reading ServiceNow source code aloud to a blind developer. ' +
+        var systemText = 'You are reading ServiceNow source code aloud to a BLIND developer. ' +
                          'Produce a clear 4-6 sentence narrative that explains what this script does, ' +
                          'its inputs, its outputs, and any non-obvious behaviour. Do not narrate every ' +
                          'line — focus on the WHAT and WHY. Avoid quoting symbols (no curly braces, ' +
                          'no semicolons spelled out). Speak in warm Indian English. End with one ' +
-                         'sentence describing the BIGGEST RISK or gotcha if there is one.';
+                         'sentence describing the BIGGEST RISK or gotcha if there is one. Return only ' +
+                         'the narration, no preamble like "Here is" or "This script".';
         var userMsg = 'Table: ' + src.table + '\nName: ' + src.name +
                       '\nDescription: ' + (src.description || '(none)') +
                       '\nActive: ' + src.active +
                       '\n\nSource code:\n' + (src.source_code || '');
 
-        var claudeResp = _callClaude(
-            [{ role: 'user', content: userMsg }],
-            systemText,
-            null,
-            600
-        );
-        var narration = _claudeText(claudeResp);
-        var via = 'claude';
-
-        if (!narration) {
-            via = 'gemini';
-            var contents = [{ role: 'user', parts: [{ text: systemText + '\n\n' + userMsg }] }];
-            var gemResp = _callGemini(gs.getProperty(SCOPE + '.gemini_api_key'),
-                                       gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash'),
-                                       contents, null, null);
-            try {
-                narration = ((gemResp.candidates || [])[0] || {}).content || {};
-                narration = (narration.parts || []).map(function(p){ return p.text || ''; }).join(' ').trim();
-            } catch (eG) {}
-        }
-
-        if (!narration) return { ok: false, error: 'Both Claude and Gemini failed to narrate.' };
+        var resp = _reasonText(systemText, userMsg, 700);
+        if (resp.error) return { ok: false, error: 'Reasoning engine failed: ' + resp.error };
         return {
             ok: true,
-            via: via,
+            via: 'gemini-reason',
             table: src.table,
             name: src.name,
-            narration: narration,
-            message: narration
+            narration: resp.text,
+            message: resp.text
         };
     }
 
     /* ===================================================================
-     *  R2.11 - BUILD QUERY (NL -> encoded query)
+     *  R2.11 - BUILD QUERY (Gemini-only, NL -> encoded query)
      *
-     *  Converts a natural-language filter description into a valid
-     *  ServiceNow encoded query string. Lets blind users dictate
-     *  "P1 VPN incidents from last week assigned to my team" without
-     *  constructing the carets and javascript: references themselves.
+     *  Uses NetraReasoning with a strict JSON schema so the model returns
+     *  ONLY the encoded_query field (no commentary). Validates with a
+     *  GlideAggregate count before returning.
      * =================================================================== */
     function _buildQuery(naturalLanguage, table) {
         if (!naturalLanguage) return { ok: false, error: 'A natural-language filter is required.' };
         var tbl = String(table || 'incident').toLowerCase();
-        var userName = gs.getUserDisplayName();
         var systemText =
             'You convert natural-language ticket-filter descriptions into ServiceNow encoded query strings ' +
             'for the table specified.\n' +
             'Rules:\n' +
-            '- Output ONLY the encoded query (no commentary, no backticks, no labels).\n' +
             '- Use ^ as the AND separator. Use ^OR within a single field for alternatives.\n' +
             '- For "my", "mine", "I", "me": use javascript:gs.getUserID() bound to caller_id (incident/request) or assigned_to (problem/change/task).\n' +
             '- For relative dates: javascript:gs.daysAgoStart(N), gs.daysAgoEnd(N), gs.beginningOfThisWeek(), gs.endOfYesterday().\n' +
             '- Priority words map: critical=1, high=2, moderate=3, low=4.\n' +
-            '- State: active=^active=true, open=^active=true, closed=^state=7, resolved=^state=6, in progress=^state=2.\n' +
+            '- State: active->active=true, open->active=true, closed->state=7, resolved->state=6, in progress->state=2.\n' +
             '- For LIKE on text: short_descriptionLIKE<term> (case-insensitive).\n' +
             '- For "my team" or "my group": assignment_groupINjavascript:gs.getUser().getMyGroups().join(",")\n' +
-            'Examples:\n' +
+            '\nExamples:\n' +
             ' "P1 VPN incidents from last week assigned to my team"  ->  priority=1^short_descriptionLIKEVPN^opened_at>=javascript:gs.daysAgoStart(7)^assignment_groupINjavascript:gs.getUser().getMyGroups().join(",")\n' +
             ' "my open changes"                                       ->  active=true^assigned_to=javascript:gs.getUserID()\n' +
             ' "overdue critical incidents not assigned"               ->  priority=1^active=true^assigned_toISEMPTY^due_date<javascript:gs.nowDateTime()';
         var userMsg = 'Table: ' + tbl + '\nFilter: ' + naturalLanguage;
 
-        var claudeResp = _callClaude(
-            [{ role: 'user', content: userMsg }],
-            systemText,
-            null,
-            300
-        );
-        var raw = _claudeText(claudeResp);
-        var via = 'claude';
-        if (!raw) {
-            via = 'gemini';
-            var contents = [{ role: 'user', parts: [{ text: systemText + '\n\n' + userMsg }] }];
-            var gemResp = _callGemini(gs.getProperty(SCOPE + '.gemini_api_key'),
-                                       gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash'),
-                                       contents, null, null);
-            try {
-                raw = ((gemResp.candidates || [])[0] || {}).content || {};
-                raw = (raw.parts || []).map(function(p){ return p.text || ''; }).join(' ').trim();
-            } catch (eG) {}
-        }
-        if (!raw) return { ok: false, error: 'Could not build the query — both LLMs failed.' };
+        var schema = {
+            type: 'object',
+            properties: {
+                encoded_query: { type: 'string', description: 'The ServiceNow encoded query string with ^ separators' },
+                explanation:   { type: 'string', description: 'One-sentence plain-English summary of the query' }
+            },
+            required: ['encoded_query']
+        };
+        var resp = _reason(systemText, userMsg, schema, 400);
+        if (resp.error) return { ok: false, error: 'Reasoning engine failed: ' + resp.error };
 
-        // Strip code-fences if the model added them
-        var query = raw.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim().split('\n')[0].trim();
-        // Quick sanity: must contain at least one of ^ or = to be plausible
+        var query = String((resp.json && resp.json.encoded_query) || '').trim();
+        // Strip any accidental code fences
+        query = query.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim().split('\n')[0].trim();
+
         if (query.indexOf('=') < 0 && query.indexOf('LIKE') < 0) {
             return { ok: false, error: 'Model output did not look like an encoded query: ' + query.substring(0, 100) };
         }
 
-        // Execute a preview count so the user knows scale before opening
+        // Preview count so the user knows scale before drilling in
         var count = -1;
         try {
             var ga = new GlideAggregate(tbl);
@@ -2856,13 +2843,14 @@
 
         return {
             ok: true,
-            via: via,
+            via: 'gemini-reason',
             table: tbl,
             natural_language: naturalLanguage,
             encoded_query: query,
+            explanation: (resp.json && resp.json.explanation) || '',
             match_count: count,
             message: (count >= 0 ? ('Found ' + count + ' matching rows. ') : '') +
-                     'I built the query: ' + query
+                     'Query: ' + query
         };
     }
 

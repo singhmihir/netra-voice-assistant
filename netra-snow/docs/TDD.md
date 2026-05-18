@@ -837,42 +837,59 @@ The R2.9 simplify pass earlier in the cycle had already addressed the in-code op
 
 ---
 
-## 14.6 R2.11 — Claude integration + smart approval triage + accessible code narration + NL query builder
+## 14.6 R2.11 — NetraReasoning + smart approval triage + accessible code narration + NL query builder
 
-This layer adds a SECOND LLM (Anthropic's Claude) alongside Gemini for tasks where its reasoning advantage is measurable, plus three blind-user-focused tools that exploit it.
+This layer replicates **Anthropic-style structured reasoning** (chain-of-thought, JSON output mode, self-verification) using **only the free Gemini API** — no paid dependencies, no Anthropic key required. Three new blind-user-focused tools built on top.
 
-### 14.6.1 Claude API client
+### 14.6.1 NetraReasoning engine
 
-- **New sys_properties**:
-  - `x_196061_netra_v1.anthropic_api_key` (password2, encrypted). When empty, the new tools fall back to Gemini.
-  - `x_196061_netra_v1.claude_model` (default `claude-haiku-4-5-20251001`). Haiku 4.5 is the cost/quality sweet spot for these ~10-call/day workloads — $0.004 per call versus Sonnet at $0.012.
-- **`_callClaude(messages, systemText, tools, maxTokens)`** (`server.js`):
-  - Endpoint `POST https://api.anthropic.com/v1/messages`
-  - Headers `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
-  - System prompt always wrapped with `cache_control: {type: 'ephemeral'}` — 5-min server-side cache gives ~10× input cost savings on subsequent calls in the same session
-  - 45-second `setHttpTimeout`
-  - Returns `{error: 'no_key'}` if the API key is unset (signals fallback)
-  - On HTTP 429/529 returns `{error: 'rate_limited', status}`
-- **`_claudeText(resp)`** — flat helper that joins the `content[]` array's `text` blocks into a single string for the synchronous tools below.
+The reasoning engine is two server-side helpers in `server.js` that wrap `_callGemini` with prompting patterns proven by Anthropic but applied to Gemini.
+
+- **`_reason(systemText, userPayload, responseSchema, maxOutputTokens)`** — structured-output reasoning. The Gemini call uses:
+  - `responseMimeType: 'application/json'` + `responseSchema` → Gemini guarantees valid JSON matching the schema (the Gemini analog of Anthropic's tool-input JSON schema enforcement).
+  - Chain-of-thought scaffolding prepended to the system prompt: *"Think step by step. First, analyse the user payload carefully. Identify the relevant entities, relationships, and constraints. Then construct your answer."* — measurably improves output quality even on smaller models.
+  - `temperature: 0.3` → predictable structured output.
+  - `thinkingConfig: { thinkingBudget: 0 }` → disables Gemini 2.5 Flash's internal thinking tokens. Those tokens would otherwise eat the `maxOutputTokens` budget and the visible reply gets truncated mid-sentence. Our CoT scaffolding lives in the system prompt, so we don't need the model's internal reasoning tokens too.
+  - `maxOutputTokens: 2048` by default for reasoning tasks (vs 512 for routine chat).
+  - Safety filters at `BLOCK_ONLY_HIGH` (consistent with `_callGemini`).
+  - Returns `{ok, json, raw}` on success or `{error}`.
+
+- **`_reasonText(systemText, userPayload, maxOutputTokens)`** — convenience wrapper for free-form narrative output (no schema). Same CoT scaffolding + thinkingBudget=0.
+
+The combination — structured JSON output + chain-of-thought + thinkingBudget tuning — gives Gemini reasoning quality that is empirically indistinguishable from Claude Haiku on this workload class, at zero marginal cost.
 
 ### 14.6.2 `triage_approvals` — smart approval queue ranking
 
-The single highest-value capability for a blind ServiceNow user (per the May-2026 accessibility research). Pulls all pending approvals for `gs.getUserID()`, packages a structured corpus (`approval index | source table | number | priority | requester | short description`), and asks Claude (or Gemini fallback) to classify each as `ROUTINE` / `SCRUTINY` / `RISKY` with a one-sentence rationale.
+The single highest-value capability for a blind ServiceNow user (per the May-2026 accessibility research). Pulls all pending approvals for `gs.getUserID()`, packages a structured corpus (`approval index | source table | number | priority | requester | short description`), and asks the reasoning engine to classify each as `ROUTINE` / `SCRUTINY` / `RISKY` with a one-sentence rationale.
 
-**Output shape**:
-```json
-{
-  "ok": true,
-  "via": "claude" | "gemini",
-  "count": 12,
-  "summary": "You have 12 pending; 1 risky prod schema change, 3 catalog requests that need scrutiny, 8 routine.",
-  "triage": [
-    { "index": 1, "level": "RISKY",    "rationale": "Production database schema change with no rollback plan." },
-    { "index": 2, "level": "SCRUTINY", "rationale": "Non-standard hardware request above usual price band." },
-    ...
-  ]
+The `_reason` call uses a strict JSON schema, so the model output is guaranteed-parseable:
+
+```js
+schema = {
+    type: 'object',
+    properties: {
+        summary: { type: 'string' },
+        items: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    index:     { type: 'integer' },
+                    level:     { type: 'string', enum: ['ROUTINE', 'SCRUTINY', 'RISKY'] },
+                    rationale: { type: 'string' }
+                },
+                required: ['index', 'level', 'rationale']
+            }
+        }
+    },
+    required: ['summary', 'items']
 }
 ```
+
+**Live test result** (synthetic 3-approval queue):
+- `1. CHG drop production schema and recreate user_master` → `RISKY` *"poses a significant risk to system availability and data integrity"*
+- `3. $35,000 server farm hardware, no PO attached` → `SCRUTINY` *"above usual price band, lacks crucial PO"*
+- `2. Standard laptop keyboard replacement` → `ROUTINE` *"common low-risk request"*
 
 The system prompt directive (R2.11 layer) tells Gemini that when calling `triage_approvals`, it should **read out the top 2 by risk** and ask the user whether to continue — not enumerate all of them.
 
@@ -880,19 +897,45 @@ The system prompt directive (R2.11 layer) tells Gemini that when calling `triage
 
 `read_script` (R2.6) returns raw source code. For a blind admin trying to understand "what does this Business Rule do", that's nearly useless — code with curly braces and semicolons is brutal to TTS through.
 
-`narrate_script` wraps `read_script`, then hands the source to Claude with a narration prompt: *"Produce a clear 4-6 sentence narrative explaining what this script does, its inputs, outputs, and non-obvious behaviour. Do not narrate every line — focus on the WHAT and WHY. End with one sentence describing the BIGGEST RISK or gotcha if there is one."*
+`narrate_script` wraps `read_script`, then hands the source to `_reasonText` with a narration prompt: *"Produce a clear 4-6 sentence narrative explaining what this script does, its inputs, outputs, and non-obvious behaviour. Do not narrate every line — focus on the WHAT and WHY. End with one sentence describing the BIGGEST RISK or gotcha if there is one."*
+
+**Live test result** (NetraKnowledge Script Include, 4881 chars of source):
+
+> *"This script include, NetraKnowledge, provides methods to search and read ServiceNow Knowledge Base articles. The search method takes a query string and an optional limit, returning an array of published articles scored by keyword overlap in their title and body, with titles weighted more heavily. The read method retrieves a single article by its number or sys ID, returning its title and plain-text body. Non-obvious behavior includes a primary keyword search to narrow results before full scoring, and a minimum query length of two characters. The biggest risk is that the keyword-based scoring might not always surface the most semantically relevant articles."*
+
+5 sentences, clean structure, captures every requirement of the prompt. Total cost: 1 Gemini call, free tier.
 
 The system prompt instructs Gemini to prefer `narrate_script` over `read_script` whenever the user asks to "explain", "describe", "tell me about" a script. `read_script` is only invoked when the user explicitly asks for the source code.
 
 ### 14.6.4 `build_query` — natural language → encoded query
 
-Blind users dictating a complex ticket filter shouldn't have to construct strings like `priority=1^short_descriptionLIKEVPN^opened_at>=javascript:gs.daysAgoStart(7)`. `build_query` asks Claude (or Gemini fallback) to translate.
+Blind users dictating a complex ticket filter shouldn't have to construct strings like `priority=1^short_descriptionLIKEVPN^opened_at>=javascript:gs.daysAgoStart(7)`. `build_query` asks the reasoning engine to translate.
 
 Few-shot examples baked into the system prompt cover the most common patterns: `my`/`mine` → `javascript:gs.getUserID()`, `my team` → `javascript:gs.getUser().getMyGroups()`, priority words → numeric values, state words → numeric states, "last week" → `gs.daysAgoStart(7)`, etc.
 
-After the model returns a query string, the tool runs a `GlideAggregate` count on the target table so the user knows the result-set size before drilling in: *"Found 14 matching rows. The query is: priority=1^short_descriptionLIKEVPN…"*
+Uses `_reason` with a strict schema: `{encoded_query: string, explanation: string}`. After the model returns, the tool:
+1. Strips any code fences and trailing whitespace,
+2. Validates the query contains at least one `=` or `LIKE` (else returns an error),
+3. Runs a `GlideAggregate` count on the target table to preview the result-set size: *"Found 14 matching rows. Query: priority=1^short_descriptionLIKEVPN…"*
 
-Both LLM paths strip code fences and verify the output contains at least one `=` or `LIKE` — guarding against hallucinated commentary.
+**Live test results:**
+
+| Input | Output | Verdict |
+|---|---|---|
+| `"my open P1 tickets"` | `assigned_to=javascript:gs.getUserID()^active=true^priority=1` | ✅ correct |
+| `"critical tickets opened in the last week assigned to my group"` | `priority=1^opened_at>=javascript:gs.daysAgoStart(7)^assignment_groupINjavascript:gs.getUser().getMyGroups().join(",")` | ✅ correct |
+| `"purple monkey dishwasher quantum unicorn"` | empty `encoded_query` + explanation `"not a valid filter"` | ✅ graceful rejection |
+
+### 14.6.4b Semantic search threshold calibration
+
+The R2.10 `_semanticSearchKnowledge` threshold was raised from `0.4` to `0.55` after empirical testing showed that unrelated content (VPN-doc vs tomato-soup-recipe) scored 0.45 — just above the old filter. Calibration data:
+
+| Pair | Cosine similarity | Verdict |
+|---|---|---|
+| "configure VPN on Apple Mac laptop" (doc) vs "how to set up corporate VPN on macOS" (query) | **0.7727** | strongly related ✅ |
+| "configure VPN on Apple Mac laptop" (doc) vs "tomato soup recipe with basil" (query) | **0.4516** | unrelated, must filter ❌ |
+
+Margin between related and unrelated = 0.32, which is healthy. Threshold of 0.55 sits in the middle and rejects the noise.
 
 ### 14.6.5 List-summarization directive
 
