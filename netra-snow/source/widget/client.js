@@ -109,19 +109,24 @@ api.controller = function ($scope, $timeout, $window) {
     c.voiceRingPoints = '';
 
     // Per-bar multiplier; jitter so the ring feels alive rather than uniform.
-    // R2.12.2 - bumped 0.36-0.50 -> 0.55-0.85 so the ring vibrates more
-    // dramatically. The frequency-domain band data also drives each vertex
-    // individually now, which compounds the visible motion.
+    // R2.12.3 - calibrated for viewBox 120×120 with hard distance cap.
+    // The previous R2.12.2 values (0.55-0.85, spike 2.4) produced polygon
+    // vertices at dist=278 which exploded past the viewBox and rendered
+    // as ugly yellow blobs offscreen.
     var VOICE_RING_MULTIPLIERS = [
-        0.60, 0.72, 0.55, 0.82, 0.58, 0.68, 0.62, 0.78,
-        0.55, 0.85, 0.58, 0.70, 0.62, 0.74, 0.56, 0.80,
-        0.58, 0.66, 0.60, 0.76, 0.55, 0.85, 0.58, 0.72
+        0.42, 0.50, 0.40, 0.56, 0.44, 0.48, 0.42, 0.54,
+        0.40, 0.58, 0.44, 0.48, 0.42, 0.50, 0.40, 0.55,
+        0.44, 0.46, 0.42, 0.52, 0.40, 0.58, 0.44, 0.50
     ];
     var VOICE_RING_BASE_IDLE      = 58;
-    var VOICE_RING_BASE_SPEAKING  = 74;
-    // R2.12.2 - spike boost when speaking, 1.75 -> 2.4. Combined with the
-    // higher base and bigger multipliers, Netra's aura is now dramatic.
-    var VOICE_RING_SPIKE_SPEAKING = 2.4;
+    var VOICE_RING_BASE_SPEAKING  = 72;
+    // R2.12.3 - spike 2.4 -> 1.85. Visible motion without explosion.
+    var VOICE_RING_SPIKE_SPEAKING = 1.85;
+    // R2.12.3 - hard ceiling on the per-vertex distance. ViewBox is 120, orb
+    // centre is (60,60), sphere edge is r=50. Capping at 95 keeps the ring
+    // safely within the visible SVG area even on max-amplitude spikes, so
+    // the case-hardened fill renders correctly instead of overflowing.
+    var VOICE_RING_DIST_MAX = 95;
     var VOICE_RING_SIN = new Array(24);
     var VOICE_RING_COS = new Array(24);
     for (var _vi = 0; _vi < 24; _vi++) {
@@ -167,6 +172,9 @@ api.controller = function ($scope, $timeout, $window) {
             // Per-band level if available, otherwise the single audioLevel
             var bandLvl = (bands && bands[i] !== undefined) ? bands[i] : lvlAvg;
             var dist = base + bandLvl * VOICE_RING_MULTIPLIERS[i] * spike;
+            // R2.12.3 - hard distance cap keeps the polygon vertices inside
+            // the 120×120 viewBox even on max-amplitude bursts.
+            if (dist > VOICE_RING_DIST_MAX) dist = VOICE_RING_DIST_MAX;
             var x = 60 + dist * VOICE_RING_SIN[i];
             var y = 60 - dist * VOICE_RING_COS[i];
             if (pts) pts += ' ';
@@ -943,7 +951,7 @@ api.controller = function ($scope, $timeout, $window) {
                             if (hi <= lo) hi = lo + 1;
                             var s2 = 0, n2 = 0;
                             for (var k = lo; k < hi && k < freqData.length; k++) { s2 += freqData[k]; n2++; }
-                            bands[b] = n2 ? Math.min(100, (s2 / n2) / 255 * 380) : 0;
+                            bands[b] = n2 ? Math.min(100, (s2 / n2) / 255 * 260) : 0;
                         }
                         c.audioLevels = bands;
                         // Speaker-cone pulse from the bass band when user is speaking
@@ -2161,9 +2169,11 @@ api.controller = function ($scope, $timeout, $window) {
                     if (hi <= lo) hi = lo + 1;
                     var s = 0, n = 0;
                     for (var k = lo; k < hi && k < data.length; k++) { s += data[k]; n++; }
-                    // R2.12.2 - gain bumped 200 -> 360 so the ring vibration is
-                    // visibly intense even on softer Gemini PCM output.
-                    var v = n ? Math.min(100, (s / n) / 255 * 360) : 0;
+                    // R2.12.3 - tuned gain: 220 produces visible motion without
+                    // saturating every band to 100 at once (which caused the
+                    // R2.12.2 polygon explosion). Distance cap is the final
+                    // safety net inside _recomputeVoiceRing.
+                    var v = n ? Math.min(100, (s / n) / 255 * 220) : 0;
                     bands[b] = v;
                     bandSum += v;
                 }

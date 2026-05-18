@@ -66,13 +66,13 @@
 .netra-orb:hover  { transform: scale(1.0618); }   /* 1 + 1/phi*0.1 */
 .netra-orb:active { cursor: grabbing; transform: scale(0.95); }
 
-/* R2.12.2 - SPEAKER-CONE PULSE.  The whole SVG sphere breathes with the
+/* R2.12.3 - SPEAKER-CONE PULSE. The whole SVG sphere breathes with the
    bass band — driven by --orb-pulse, a 0..1 value set per-frame from
-   the lowest frequency bucket. Speaker-cone feel without rebuilding the
-   geometry. */
+   the lowest frequency bucket. Scale factor 0.18 -> 0.10 in R2.12.3
+   so the orb doesn't bash into the voice ring on bass spikes. */
 .netra-orb .netra-eye-svg {
     transition: transform 80ms cubic-bezier(0.22, 1, 0.36, 1);
-    transform: scale(calc(1 + var(--orb-pulse, 0) * 0.18));
+    transform: scale(calc(1 + var(--orb-pulse, 0) * 0.10));
     transform-origin: 50% 50%;
     will-change: transform;
 }
