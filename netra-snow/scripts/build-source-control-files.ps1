@@ -1,19 +1,22 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-  Generate ServiceNow Source Control XML files into the snowstarting repo so
-  the Netra app can be populated by pulling from GitHub in Studio.
+  Generate ServiceNow Source Control XML files into the Netra SNOW Config
+  repo so the Netra app can be populated by pulling from GitHub in Studio.
 
 .DESCRIPTION
   Reads the freshly-built Fix Script from install/setup-netra.js, wraps it
   in a sys_script_fix <record_update> XML, and writes it to:
-    snowstarting/<APP_FOLDER>/sys_script_fix/sys_script_fix_<sysId>.xml
+    netra-snow-config/<APP_FOLDER>/sys_script_fix/sys_script_fix_<sysId>.xml
+
+  The destination repo was renamed from "snowstarting" to
+  "netra-snow-config" in May 2026.
 #>
 
 $ErrorActionPreference = 'Stop'
 
 $repo  = Split-Path -Parent $PSScriptRoot
-$snow  = "C:\Users\priya\snowstarting"
+$snow  = "C:\Users\priya\netra-snow-config"
 $appFolder = Join-Path $snow 'cbb86f0f93b0cf10936af0a75d03d662'
 $appSysId  = 'cbb86f0f93b0cf10936af0a75d03d662'   # the netra_v1 app
 

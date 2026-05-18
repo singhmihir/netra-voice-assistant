@@ -1,15 +1,17 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-  Populate the singhmihir/snowstarting repo as a clean manual-deployment
-  reference: every Netra artifact as a plain source file with a README
-  telling the user exactly what to create in ServiceNow.
+  Populate the singhmihir/netra-snow-config repo (the "Netra SNOW Config"
+  manual-deployment reference): every Netra artifact as a plain source
+  file with a README telling the user exactly what to create in ServiceNow.
+
+  Repo was renamed from "snowstarting" to "netra-snow-config" in May 2026.
 #>
 
 $ErrorActionPreference = 'Stop'
 
 $src   = "C:\Users\priya\servicenow-voice-assistant\netra-snow\source"
-$dest  = "C:\Users\priya\snowstarting"
+$dest  = "C:\Users\priya\netra-snow-config"
 $scope = "x_196061_netra_v1"
 $app   = "Netra_V1"
 
