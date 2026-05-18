@@ -431,8 +431,53 @@
      *  client can render a "Want me to escalate?" affordance without
      *  waiting for the LLM's prompt-perception to catch it.
      * =================================================================== */
+    // Fast keyword cues that warrant a real LLM classification call. We only
+    // burn a Gemini call when one of these is present — otherwise the turn
+    // is treated as 'neutral' with no API cost. Keeps free-tier quota usable.
+    var SENTIMENT_CUES = [
+        'damn', 'stupid', 'still not', 'still broken', "why isn't", "why isnt",
+        'why is it not', 'why is this not', 'this is the third', 'this is the fourth',
+        'i already', 'i told you', 'i said', 'are you kidding', 'come on',
+        'frustrating', 'annoying', 'useless', 'ridiculous', 'urgent', '!!!',
+        'urgently', 'asap', 'right now', "doesn't work", 'does not work',
+        'not working', 'wrong', "won't work", 'wont work'
+    ];
+
     function _trackSentiment(userMessage) {
         if (!userMessage || userMessage.length < 3) return null;
+
+        // R2.12.1 - two-stage sentiment classification:
+        // (1) Fast keyword + ALL-CAPS pre-filter (free, no API call)
+        // (2) Gemini classifier ONLY when stage 1 flags potential frustration
+        var lc = String(userMessage).toLowerCase();
+        var raw = String(userMessage);
+        var hasCue = false;
+        for (var i = 0; i < SENTIMENT_CUES.length && !hasCue; i++) {
+            if (lc.indexOf(SENTIMENT_CUES[i]) >= 0) hasCue = true;
+        }
+        // SHOUTING ALL CAPS for >5 chars (excluding ticket numbers, etc.)
+        if (!hasCue && raw.length > 5) {
+            var letters = raw.replace(/[^a-zA-Z]/g, '');
+            if (letters.length > 5 && letters.toUpperCase() === letters && letters.toLowerCase() !== letters) {
+                hasCue = true;
+            }
+        }
+
+        // Stage 1 verdict: NEUTRAL — bypass Gemini, just bookkeeping
+        if (!hasCue) {
+            try {
+                var b = _ctxReadBlob();
+                b.sentiment = b.sentiment || { history: [], consecutive_frustrated: 0 };
+                b.sentiment.history.push({ t: new GlideDateTime().toString(), label: 'neutral', score: 0 });
+                if (b.sentiment.history.length > 10) b.sentiment.history = b.sentiment.history.slice(-10);
+                b.sentiment.consecutive_frustrated = 0;
+                _ctxWriteBlob(b);
+                return { label: 'neutral', score: 0, consecutive_frustrated: 0,
+                         suggest_escalation: false, source: 'keyword_filter' };
+            } catch (eN) { return { label: 'neutral', score: 0, error: 'persist_failed' }; }
+        }
+
+        // Stage 2: LLM classifier (only when cues present)
         var schema = {
             type: 'object',
             properties: {
@@ -477,7 +522,8 @@
                 score: score,
                 reason: parsed.reason || '',
                 consecutive_frustrated: blob.sentiment.consecutive_frustrated,
-                suggest_escalation: blob.sentiment.consecutive_frustrated >= 2
+                suggest_escalation: blob.sentiment.consecutive_frustrated >= 2,
+                source: 'llm'
             };
         } catch (eC) {
             return { label: label, score: score, error: 'persist_failed: ' + eC.message };
@@ -553,8 +599,14 @@
             systemInstruction: systemInstruction,
             generationConfig: {
                 temperature: 0.7,
-                maxOutputTokens: 512,    // R2 - smaller, faster, forces concise replies
-                topP: 0.95
+                // R2.12.1 - bumped 512 -> 1024 AND disabled internal thinking.
+                // Gemini 2.5 Flash with thinking enabled was eating the entire
+                // 512-token budget on hidden reasoning tokens, leaving the
+                // visible reply EMPTY ("I got an empty response"). Disabling
+                // thinking + giving more output budget restores chat replies.
+                maxOutputTokens: 1024,
+                topP: 0.95,
+                thinkingConfig: { thinkingBudget: 0 }
             },
             // R2 - encourage Gemini to call multiple tools in ONE turn rather
             // than chain them across iterations - that halves latency for
