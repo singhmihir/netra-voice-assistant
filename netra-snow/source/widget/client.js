@@ -942,20 +942,33 @@ api.controller = function ($scope, $timeout, $window) {
                     if (level > c.micLevelPeak) c.micLevelPeak = level;
                     if (c.state !== 'speaking') {
                         c.audioLevel = level;
-                        // FFT band pass for the ring rippling
-                        _micAnalyser.getByteFrequencyData(freqData);
-                        var bands = new Array(24);
-                        for (var b = 0; b < 24; b++) {
-                            var lo = VOICE_RING_BAND_BOUNDS[b];
-                            var hi = VOICE_RING_BAND_BOUNDS[b + 1];
-                            if (hi <= lo) hi = lo + 1;
-                            var s2 = 0, n2 = 0;
-                            for (var k = lo; k < hi && k < freqData.length; k++) { s2 += freqData[k]; n2++; }
-                            bands[b] = n2 ? Math.min(100, (s2 / n2) / 255 * 260) : 0;
+                        // R2.12.4 - NOISE GATE.  Below the threshold, snap the
+                        // ring back to a smooth idle circle (no bands data ->
+                        // _recomputeVoiceRing uses the single audioLevel=0).
+                        // Otherwise persistent ambient hum produces stuck
+                        // spikes that never decay.
+                        if (level < 5) {
+                            c.audioLevels = null;
+                            _setOrbPulse(0);
+                        } else {
+                            // Real signal — run the FFT band pass
+                            _micAnalyser.getByteFrequencyData(freqData);
+                            var bands = new Array(24);
+                            for (var b = 0; b < 24; b++) {
+                                var lo = VOICE_RING_BAND_BOUNDS[b];
+                                var hi = VOICE_RING_BAND_BOUNDS[b + 1];
+                                if (hi <= lo) hi = lo + 1;
+                                var s2 = 0, n2 = 0;
+                                for (var k = lo; k < hi && k < freqData.length; k++) { s2 += freqData[k]; n2++; }
+                                var raw = n2 ? (s2 / n2) / 255 * 260 : 0;
+                                // R2.12.4 - per-band noise gate: kill quiet
+                                // frequencies so ambient room tone doesn't
+                                // create visible jitter.
+                                bands[b] = (raw < 15) ? 0 : Math.min(100, raw);
+                            }
+                            c.audioLevels = bands;
+                            _setOrbPulse(((bands[0] + bands[1] + bands[2]) / 3) / 100);
                         }
-                        c.audioLevels = bands;
-                        // Speaker-cone pulse from the bass band when user is speaking
-                        _setOrbPulse(((bands[0] + bands[1] + bands[2]) / 3) / 100);
                         _recomputeVoiceRing();
                     }
                     $scope.$applyAsync();
@@ -2169,21 +2182,26 @@ api.controller = function ($scope, $timeout, $window) {
                     if (hi <= lo) hi = lo + 1;
                     var s = 0, n = 0;
                     for (var k = lo; k < hi && k < data.length; k++) { s += data[k]; n++; }
-                    // R2.12.3 - tuned gain: 220 produces visible motion without
-                    // saturating every band to 100 at once (which caused the
-                    // R2.12.2 polygon explosion). Distance cap is the final
-                    // safety net inside _recomputeVoiceRing.
-                    var v = n ? Math.min(100, (s / n) / 255 * 220) : 0;
+                    var raw = n ? (s / n) / 255 * 220 : 0;
+                    // R2.12.4 - per-band noise gate: zero out quiet
+                    // frequencies (< 15) so brief gaps in speech don't
+                    // produce stuck spikes from ambient PCM noise.
+                    var v = (raw < 15) ? 0 : Math.min(100, raw);
                     bands[b] = v;
                     bandSum += v;
                 }
-                c.audioLevels = bands;
-                // R2.12.2 - speaker-cone pulse: drive --orb-pulse from the
-                // BASS bands (first 3). The whole SVG breathes to the beat.
-                var bass = (bands[0] + bands[1] + bands[2]) / 3;   // 0..100
-                _setOrbPulse(bass / 100);
-                // Average drives the existing single-value audioLevel (kept
-                // for backward-compat with anything else that reads it).
+                // R2.12.4 - if the overall band sum is tiny (audio is in a
+                // pause between words), null out the bands so the ring
+                // snaps to a smooth circle instead of holding the last
+                // spike pattern.
+                if (bandSum < 30) {
+                    c.audioLevels = null;
+                    _setOrbPulse(0);
+                } else {
+                    c.audioLevels = bands;
+                    var bass = (bands[0] + bands[1] + bands[2]) / 3;
+                    _setOrbPulse(bass / 100);
+                }
                 var level = Math.round(bandSum / 24);
                 if (level !== lastLevel) {
                     lastLevel = level;
