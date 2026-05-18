@@ -180,6 +180,22 @@
         } catch (eG) {
             data.gemini_tts = { ok: false, error: String(eG.message || eG) };
         }
+    } else if (action === 'rewind_mem') {
+        // R2.10 - conversational repair: pop the last conversation exchange from
+        // the unified Context blob. Client also drops the last 2 entries from
+        // geminiHistory so the next chat call starts clean.
+        try {
+            var blob = _ctxReadBlob();
+            var rewinded = false;
+            if (blob.mem && blob.mem.length) {
+                blob.mem.pop();
+                _ctxWriteBlob(blob);
+                rewinded = true;
+            }
+            data.rewind_result = { ok: true, popped: rewinded, mem_length: (blob.mem || []).length };
+        } catch (eR) {
+            data.rewind_result = { ok: false, error: String(eR.message || eR) };
+        }
     } else if (action === 'debug') {
         try {
             var key = gs.getProperty(SCOPE + '.gemini_api_key') || '';
@@ -534,6 +550,26 @@
 '- INDIAN ENGLISH IDIOMS: still warmly used, but sparingly. "Done", "Right", "No issues", "On it" are fine. Avoid every reply ending with "Kindly do the needful".\n' +
 '- NEVER markdown, asterisks, code blocks, bullets - they break TTS.\n' +
 '\n' +
+'R2.10 - LANGUAGE MIRRORING:\n' +
+'- Detect the language the user spoke in (Hindi, Spanish, French, German, Tamil, Telugu, Marathi, etc.) and REPLY IN THAT LANGUAGE.\n' +
+'- Default to Indian English when the user speaks English.\n' +
+'- If the user mixes languages (Hinglish: English with Hindi words), match their mix — do not force one or the other.\n' +
+'- Ticket numbers, system names, and field names stay in English even in a non-English reply (they are technical identifiers).\n' +
+'- When the user explicitly says "speak Hindi" / "switch to Spanish" / "in Tamil please", switch from that turn onwards.\n' +
+'\n' +
+'R2.10 - SENTIMENT-AWARE BEHAVIOUR:\n' +
+'- READ THE USER\'S TONE every turn. If they sound frustrated (sharp wording, repeating the same ask, "this is the third time", "why isn\'t this working", profanity, exasperated sighs), DROP THE PLEASANTRIES and become CONCISE.\n' +
+'- After two consecutive frustrated turns on the same topic, PROACTIVELY OFFER an escalation OR a human handoff: "Want me to escalate this to your manager?" / "Should I get a human on the line — I can ping the service desk?". Never wait to be asked.\n' +
+'- If the user is calm or positive, your warm Indian-English tone is the default.\n' +
+'- If the user is BRIEF and TRANSACTIONAL ("resolve INC0008001"), reply BRIEF and TRANSACTIONAL ("Done."). Do not pad with extra warmth.\n' +
+'- If the user is CHATTY ("how was your morning, Netra?"), be slightly more conversational back.\n' +
+'- NEVER mention that you are detecting tone — just behave accordingly.\n' +
+'\n' +
+'R2.10 - RAG / SEMANTIC SEARCH:\n' +
+'- For knowledge-base questions phrased as natural-language ("how do I", "what to do when", "explain", "fix"), call semantic_search_knowledge — it uses Gemini embeddings to find by MEANING.\n' +
+'- For knowledge-base lookups with a specific keyword the article must contain ("articles about VPN", "find KB0000008"), call search_knowledge.\n' +
+'- After either tool returns, summarise the TOP article in your own words; do not read the full body verbatim. Mention the KB number once at the end so the user can ask for the full reading separately.\n' +
+'\n' +
 'YOUR ROLE:\n' +
 'A sighted helper logged this blind user into ServiceNow. From here onward, the user runs their entire\n' +
 'workflow through you, by voice. They will ask you to open tickets, update them, resolve them,\n' +
@@ -742,10 +778,22 @@
                 },
                 {
                     name: 'search_knowledge',
-                    description: 'Search published knowledge base articles by keyword.',
+                    description: 'Search published knowledge base articles by literal keyword (LIKE match on title + body). Use this only when the user asks with a specific term that must appear in the article text. For natural-language questions like "how do I configure VPN" or "what to do when Outlook is stuck", prefer semantic_search_knowledge — it finds articles by MEANING not just keyword.',
                     parameters: {
                         type: 'object',
                         properties: { query: { type: 'string' } },
+                        required: ['query']
+                    }
+                },
+                {
+                    name: 'semantic_search_knowledge',
+                    description: 'Find knowledge base articles by MEANING using Gemini text embeddings (RAG). Returns the top 3 most semantically-similar published articles with cosine-similarity scores. PREFER THIS over search_knowledge whenever the user asks a natural-language question about how to do something or what an error means. Example queries: "how do I get on the corporate Wi-Fi", "fix Outlook keeps asking for password", "explain the new MFA rollout".',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            query: { type: 'string', description: 'The natural-language question' },
+                            limit: { type: 'number', description: 'Max articles to return (default 3, max 8)' }
+                        },
                         required: ['query']
                     }
                 },
@@ -1094,6 +1142,8 @@
                     return tools.getStatus(_normNum(args.ticket_number));
                 case 'search_knowledge':
                     return new NetraKnowledge().search(String(args.query || ''), 4);
+                case 'semantic_search_knowledge':
+                    return _semanticSearchKnowledge(String(args.query || ''), Math.min(8, parseInt(args.limit, 10) || 3));
                 case 'list_approvals':
                     return tools.listPendingApprovals();
                 case 'decide_approval':
@@ -2316,6 +2366,159 @@
         } catch (e2) {}
 
         return { ok: false, error: 'No information found for "' + query + '". The internet did not return a clear answer.' };
+    }
+
+    /* ===================================================================
+     *  R2.10 - SEMANTIC KNOWLEDGE SEARCH (RAG)
+     *
+     *  Uses Gemini's embedding model (gemini-embedding-001, free tier) to
+     *  find KB articles semantically related to the user's query — far
+     *  better than the LIKE-based search_knowledge for natural questions
+     *  like "how do I get on the corporate Wi-Fi" matching "VPN setup".
+     *
+     *  Embeddings are computed once per KB article and cached in
+     *  x_196061_netra_v1_kb_embedding. The query is embedded on each call.
+     *  Cosine similarity selects the top-K matches.
+     * =================================================================== */
+    var EMBED_MODEL = 'gemini-embedding-001';
+    var EMBED_DIMS  = 768;
+    var EMBED_CACHE_TABLE = SCOPE + '_kb_embedding';
+
+    function _embedText(text, taskType) {
+        var apiKey = gs.getProperty(SCOPE + '.gemini_api_key');
+        if (!apiKey) return { error: 'API key not configured' };
+        var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+                  EMBED_MODEL + ':embedContent?key=' + encodeURIComponent(apiKey);
+        var body = {
+            model: 'models/' + EMBED_MODEL,
+            content: { parts: [{ text: String(text || '').substring(0, 4000) }] },
+            taskType: taskType || 'RETRIEVAL_QUERY',
+            outputDimensionality: EMBED_DIMS
+        };
+        try {
+            var rm = new sn_ws.RESTMessageV2();
+            rm.setEndpoint(url);
+            rm.setHttpMethod('POST');
+            rm.setRequestHeader('Content-Type', 'application/json');
+            rm.setRequestBody(JSON.stringify(body));
+            rm.setHttpTimeout(15000);
+            var r = rm.execute();
+            if (r.getStatusCode() !== 200) {
+                return { error: 'HTTP ' + r.getStatusCode() + ' from embed endpoint: ' + String(r.getBody() || '').substring(0, 200) };
+            }
+            var parsed = JSON.parse(r.getBody() || '{}');
+            var values = parsed && parsed.embedding && parsed.embedding.values;
+            if (!values || !values.length) return { error: 'Empty embedding returned' };
+            // Sub-3072 dimensions are NOT auto-normalised; L2-normalise here.
+            var norm = 0;
+            for (var i = 0; i < values.length; i++) norm += values[i] * values[i];
+            norm = Math.sqrt(norm);
+            if (norm > 0) for (var j = 0; j < values.length; j++) values[j] /= norm;
+            return { values: values };
+        } catch (e) {
+            return { error: 'Embedding call threw: ' + (e.message || e) };
+        }
+    }
+
+    function _cosineSim(a, b) {
+        if (!a || !b || a.length !== b.length) return 0;
+        var dot = 0;
+        for (var i = 0; i < a.length; i++) dot += a[i] * b[i];
+        return dot;   // both vectors already L2-normalised so cosine === dot
+    }
+
+    function _kbBodyDigest(htmlBody) {
+        // Strip HTML, collapse whitespace, take first 1500 chars
+        var plain = String(htmlBody || '')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return plain.substring(0, 1500);
+    }
+
+    function _lazyEmbedKb(grKb) {
+        // grKb is a positioned GlideRecord on kb_knowledge
+        var srcSysId = String(grKb.sys_id);
+        var cache = new GlideRecord(EMBED_CACHE_TABLE);
+        cache.addQuery('source_sys_id', srcSysId);
+        cache.addQuery('model', EMBED_MODEL);
+        cache.query();
+        if (cache.next()) {
+            try {
+                return { ok: true, embedding: JSON.parse(String(cache.embedding)), cached: true,
+                         title: String(cache.title), number: String(cache.source_number) };
+            } catch (e) { /* fall through to re-embed */ }
+        }
+        var title  = String(grKb.short_description || '');
+        var digest = _kbBodyDigest(grKb.text);
+        var embedText = title + ' \n ' + digest;
+        var res = _embedText(embedText, 'RETRIEVAL_DOCUMENT');
+        if (res.error) return { ok: false, error: res.error };
+        try {
+            var newRow = new GlideRecord(EMBED_CACHE_TABLE);
+            newRow.initialize();
+            newRow.source_table  = 'kb_knowledge';
+            newRow.source_sys_id = srcSysId;
+            newRow.source_number = String(grKb.number);
+            newRow.title         = title.substring(0, 240);
+            newRow.body_digest   = digest;
+            newRow.embedding     = JSON.stringify(res.values);
+            newRow.model         = EMBED_MODEL;
+            newRow.embedded_at   = new GlideDateTime().toString();
+            newRow.insert();
+        } catch (eW) { gs.warn('[NetraRAG] cache write failed: ' + eW.message); }
+        return { ok: true, embedding: res.values, cached: false,
+                 title: title, number: String(grKb.number) };
+    }
+
+    function _semanticSearchKnowledge(query, limit) {
+        if (!query) return { ok: false, error: 'Query is required.' };
+        var qRes = _embedText(query, 'RETRIEVAL_QUERY');
+        if (qRes.error) {
+            // Fall back to LIKE search on embedding-failure
+            gs.warn('[NetraRAG] query embed failed: ' + qRes.error + ' - falling back to LIKE');
+            return new NetraKnowledge().search(query, limit || 3);
+        }
+        var qVec = qRes.values;
+        // Iterate published KB articles, embed lazily, score, keep top-K
+        var gr = new GlideRecord('kb_knowledge');
+        gr.addQuery('workflow_state', 'published');
+        gr.addQuery('active', true);
+        gr.setLimit(200);   // safety cap for very large KBs
+        gr.query();
+        var scored = [];
+        var embedded = 0;
+        var cached   = 0;
+        while (gr.next()) {
+            var docRes = _lazyEmbedKb(gr);
+            if (!docRes.ok) continue;
+            if (docRes.cached) cached++; else embedded++;
+            var score = _cosineSim(qVec, docRes.embedding);
+            scored.push({
+                sys_id:  String(gr.sys_id),
+                number:  docRes.number,
+                title:   docRes.title,
+                snippet: _kbBodyDigest(gr.text).substring(0, 220),
+                score:   score
+            });
+        }
+        scored.sort(function (a, b) { return b.score - a.score; });
+        var top = scored.slice(0, limit || 3);
+        // Filter out very weak matches (< 0.4 = mostly unrelated)
+        top = top.filter(function (t) { return t.score >= 0.4; });
+        return {
+            ok: true,
+            query: query,
+            articles: top,
+            count: top.length,
+            stats: { embedded_now: embedded, cached_hits: cached, total_articles_seen: scored.length }
+        };
     }
 
     /* ===================================================================

@@ -715,6 +715,11 @@ api.controller = function ($scope, $timeout, $window) {
         if (/^(cool|nice|great|awesome|perfect|wonderful|bahut khoob|wah)\.?$/i.test(lc) && lc.length < 25) {
             return { intent: 'praise', reply: 'Thank you. Happy to help.' };
         }
+        // R2.10 - conversational repair: rewind / undo last
+        if (/^(scratch that|forget that|undo( that)?|rewind|go back|cancel that|never mind|chod do)\.?$/i.test(lc)) {
+            return { intent: 'rewind', _action: 'rewind_mem',
+                     reply: 'Undone. We are back to before that. What would you like to do?' };
+        }
         return null;
     }
 
@@ -1813,6 +1818,19 @@ api.controller = function ($scope, $timeout, $window) {
         var local = matchLocal(lower);
         if (local) {
             logEvent('local', 'intent=' + local.intent);
+            // R2.10 - intent may carry a server-side _action (e.g. rewind_mem)
+            // Pop the last 2 turns from local geminiHistory (user + model)
+            // and ping the server to drop the last mem entry.
+            if (local._action === 'rewind_mem') {
+                if (geminiHistory.length >= 2) {
+                    geminiHistory.splice(geminiHistory.length - 2, 2);
+                    logEvent('local', 'popped 2 history turns');
+                }
+                try {
+                    c.data.action = 'rewind_mem';
+                    c.server.update();   // fire-and-forget
+                } catch (eR) { logEvent('warn', 'rewind_mem server call failed: ' + eR.message); }
+            }
             setState('speaking');
             speak(local.reply, function () {
                 if (c.alert) {

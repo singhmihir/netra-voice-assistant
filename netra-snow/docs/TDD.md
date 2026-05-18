@@ -837,6 +837,60 @@ The R2.9 simplify pass earlier in the cycle had already addressed the in-code op
 
 ---
 
+## 14.5 R2.10 — RAG + sentiment + multilingual + conversational repair
+
+Four new AI capabilities added on top of R2.9.1:
+
+### 14.5.1 RAG over the knowledge base (Gemini embeddings)
+
+Replaces / augments the LIKE-based `search_knowledge` with a semantic match using Google's free `gemini-embedding-001` model.
+
+- **New custom table** `x_196061_netra_v1_kb_embedding` (sys_id `b7a103e7937c8350936af0a75d03d66a`):
+  - `source_table` / `source_sys_id` / `source_number` — identifies which `kb_knowledge` row this embeds
+  - `title` (240 char), `body_digest` (1500 char plain-text strip of `text`)
+  - `embedding` (string 32000) — JSON-encoded array of 768 floats
+  - `model` (e.g. `gemini-embedding-001`), `embedded_at` (timestamp)
+- **`_embedText(text, taskType)`** (`server.js`): POSTs to `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent` with `outputDimensionality=768`. Uses `RETRIEVAL_QUERY` for the user's voice query and `RETRIEVAL_DOCUMENT` for KB articles (asymmetric task typing materially improves retrieval). The returned vector is L2-normalised client-side (Google does NOT auto-normalise sub-3072 dims).
+- **`_cosineSim(a, b)`** — both vectors already L2-normalised, so cosine reduces to a dot product.
+- **`_lazyEmbedKb(grKb)`** — on the first semantic query, scans the published KB, embeds each article on-the-fly, persists the vector to the cache table. Subsequent queries hit the cache.
+- **`_semanticSearchKnowledge(query, limit)`** — embeds the query, iterates `kb_knowledge` (cap 200), retrieves or computes each article embedding, scores by cosine, returns top-K with `{sys_id, number, title, snippet, score}`. Filters out very weak matches (score < 0.4). Falls back to the LIKE search if the embedding call itself errors.
+- **New tool declaration** `semantic_search_knowledge` (`server.js` tool catalogue): `{query, limit?}`. The description explicitly tells Gemini to PREFER this over `search_knowledge` for natural-language questions.
+
+**Empirical timings (live dev instance):** the gemini-embedding-001 endpoint returns a 768-dim vector in ~0.7 seconds. With 10 KB articles cached, a query takes ~1 query-embed call + 10 cosine-similarity multiplies = ~0.8 s total. On the first run for any new article, it pays an additional ~0.7 s × N for the warm-up; cached subsequent calls are O(N) scalar math.
+
+**Free-tier headroom:** ~100 RPM / 1000 RPD on the project key. A KB of 1000 articles costs 1000 embedding calls (one-time, ~17 minutes elapsed if rate-limited), then steady-state is 1 call per user query.
+
+### 14.5.2 Sentiment-aware behaviour (system-prompt directive)
+
+Added a new block to `_systemPrompt()` instructing Gemini to:
+
+- Read the user's tone on every turn.
+- If frustration is detected (sharp wording, repetition, "this is the third time", profanity), drop pleasantries and become concise.
+- After two consecutive frustrated turns on the same topic, **proactively offer** an escalation or human handoff.
+- If the user is brief and transactional, reply brief and transactional.
+- If the user is chatty, be slightly more conversational back.
+- Never mention that tone-detection is happening.
+
+Zero new tools, zero new code paths — pure prompt engineering. The directive runs every chat turn.
+
+### 14.5.3 Multilingual mirroring (system-prompt directive)
+
+Added a new block telling Gemini to detect the user's language (Hindi, Spanish, French, German, Tamil, Telugu, Marathi, Hinglish mix, etc.) and **reply in that language**. Ticket numbers, system names, and field names stay in English even inside a non-English reply since they are technical identifiers.
+
+When the user explicitly says *"speak Hindi"* / *"switch to Spanish"* / *"in Tamil please"*, the switch persists for subsequent turns.
+
+### 14.5.4 Conversational repair / rewind
+
+Pure accessibility win — blind users can't scroll back and click "Edit" on a previous turn, so they need a voice-native way to say "scratch that".
+
+- **Client-side `matchLocal()` regex** (`client.js`): catches `^(scratch that|forget that|undo( that)?|rewind|go back|cancel that|never mind|chod do)\.?$`. Returns `{intent: 'rewind', _action: 'rewind_mem', reply: 'Undone. We are back to before that. ...'}`.
+- **Client-side handler** in `processFinalTranscript()`: when `local._action === 'rewind_mem'`, pops the last 2 entries from `geminiHistory` (the user message + model reply pair) and fires `c.server.update({action: 'rewind_mem'})`.
+- **Server-side new action `rewind_mem`** (`server.js`): reads the Context blob, pops the last entry from `mem`, writes it back. Returns `{ok, popped, mem_length}`.
+
+The user can chain repairs ("scratch that... scratch that again") because each call pops one more mem entry until the array is empty.
+
+---
+
 ## 15. R2.9.1 deltas (the most recent layer)
 
 | Change | Reference |
