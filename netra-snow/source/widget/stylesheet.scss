@@ -83,10 +83,22 @@
     width: 22px;
     height: 22px;
 }
+/* R3.1 - kill ALL focus / outline rings on the orb. The default browser
+   button focus outline (green rectangle) was leaking through because we
+   only disabled :focus-visible, not :focus. */
+.netra-orb,
+.netra-orb:hover,
+.netra-orb:active,
+.netra-orb:focus,
+.netra-orb:focus-visible,
+.netra-orb:focus-within {
+    outline: none !important;
+    box-shadow: none;
+    -webkit-tap-highlight-color: transparent;
+}
 .netra-orb:hover  { transform: scale(1.05); }
 .netra-orb:active { transform: scale(0.98); }
 .netra-orb:focus-visible {
-    outline: none;
     --eye-glow: rgba(138, 180, 248, 0.65);
 }
 
@@ -320,22 +332,53 @@
 }
 
 /* ============================================================
- *  State - DORMANT (eyelids closed, dimmed)
+ *  State - DORMANT (R3.1 - alive but resting: violet breathing glow)
+ *  The orb is asleep, not dead. A slow indigo→violet pulse on the
+ *  iris with a gentle halo bloom signals "I am here, ready to wake."
  * ============================================================ */
 .netra-state-dormant .netra-orb {
-    --iris-bright: #6a7480;
-    --iris-mid:    #404a58;
-    --iris-dark:   #1e2530;
-    --iris-deep:   #0a1018;
-    --eye-glow:    rgba(80, 90, 105, 0.25);
-    filter: brightness(0.65) saturate(0.6);
+    --iris-bright: #b48af0;        /* soft violet */
+    --iris-mid:    #6b3da8;        /* deep violet */
+    --iris-dark:   #3a1f6b;        /* indigo */
+    --iris-deep:   #1a0d3a;        /* near-black indigo (still has tone) */
+    --eye-glow:    rgba(180, 138, 240, 0.35);
+    /* No brightness/saturate filter — keeps the colour true. */
 }
-.netra-state-dormant .netra-eye-lid-top   { opacity: 0.92; }
-.netra-state-dormant .netra-eye-glint     { opacity: 0;    }
-.netra-state-dormant .netra-eye-glint-small { opacity: 0;  }
-.netra-state-dormant .netra-eye-iris      { opacity: 0.35; }
-.netra-state-dormant .netra-eye-pupil     { opacity: 0.4;  }
-.netra-state-dormant .netra-eye-pentagram { opacity: 0;    }
+.netra-state-dormant .netra-eye-lid-top     { opacity: 0.88; }
+.netra-state-dormant .netra-eye-glint       { opacity: 0;    }
+.netra-state-dormant .netra-eye-glint-small { opacity: 0;    }
+.netra-state-dormant .netra-eye-pentagram   { opacity: 0;    }
+/* The iris + pupil + halo each get their own slow-breathe animation
+   so the dormant state is visibly alive without being distracting. */
+.netra-state-dormant .netra-eye-iris {
+    animation: netra-dormant-breathe 4.2s ease-in-out infinite;
+    transform-box: fill-box;
+    transform-origin: center;
+    opacity: 0.65;
+}
+.netra-state-dormant .netra-eye-pupil {
+    animation: netra-dormant-pupil 4.2s ease-in-out infinite;
+    transform-box: fill-box;
+    transform-origin: center;
+    opacity: 0.7;
+}
+.netra-state-dormant .netra-eye-halo {
+    animation: netra-dormant-halo 4.2s ease-in-out infinite;
+    transform-origin: 60px 60px;
+    transform-box: view-box;
+}
+@keyframes netra-dormant-breathe {
+    0%, 100% { opacity: 0.45; transform: scale(1); }
+    50%      { opacity: 0.80; transform: scale(1.04); }
+}
+@keyframes netra-dormant-pupil {
+    0%, 100% { opacity: 0.55; transform: scale(0.95); }
+    50%      { opacity: 0.85; transform: scale(1); }
+}
+@keyframes netra-dormant-halo {
+    0%, 100% { opacity: 0.20; transform: scale(0.92); }
+    50%      { opacity: 0.55; transform: scale(1.10); }
+}
 
 /* ============================================================
  *  State - PAUSED
@@ -469,8 +512,13 @@
     border-radius: 14px;
     padding: 14px 16px;
     box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4), 0 0 18px rgba(127, 255, 176, 0.18);
-    backdrop-filter: blur(14px) saturate(140%);
-    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    /* R3.1 - removed `saturate(140%)` from backdrop-filter. Sass parser
+       was treating it as the built-in Sass color function `saturate($color,
+       $amount)` and complaining about the missing $color argument
+       (Performance Analyzer flagged 2 errors). Drop-only fix; the blur
+       still gives the glass effect. */
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
     color: #ebedf2;
     display: flex;
     flex-direction: column;
@@ -1245,8 +1293,13 @@
     left: 14px;
     z-index: 100000;
     background: linear-gradient(160deg, rgba(36,36,56,0.92), rgba(18,18,28,0.92));
-    backdrop-filter: blur(14px) saturate(140%);
-    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    /* R3.1 - removed `saturate(140%)` from backdrop-filter. Sass parser
+       was treating it as the built-in Sass color function `saturate($color,
+       $amount)` and complaining about the missing $color argument
+       (Performance Analyzer flagged 2 errors). Drop-only fix; the blur
+       still gives the glass effect. */
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
     color: #aecbfa;
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 999px;
