@@ -822,11 +822,76 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     /* ============================================================
+     *  R3.3 - PWA installer. Injects a web manifest + apple-touch-icon
+     *  so iOS Safari and Android Chrome treat the Service Portal as
+     *  an installable app. Icon is fetched from a ServiceNow
+     *  sys_attachment (no base64 bloat in client.js).
+     * ============================================================ */
+    var PWA_ICON_URL  = '/sys_attachment.do?sys_id=a73423ab9370c350936af0a75d03d62e';
+    var PWA_BADGE_URL = '/sys_attachment.do?sys_id=1144e32393b0c350936af0a75d03d62d';
+    function _installPWA() {
+        try {
+            if (document.querySelector('link[data-netra-pwa]')) return;
+            var manifest = {
+                name: 'Netra - Voice for ServiceNow',
+                short_name: 'Netra',
+                description: 'Voice-first ServiceNow assistant for blind and low-vision users.',
+                start_url: '/sp?id=index',
+                scope: '/sp',
+                display: 'standalone',
+                orientation: 'portrait',
+                background_color: '#0a0a14',
+                theme_color: '#b48af0',
+                lang: 'en-IN',
+                categories: ['productivity', 'business', 'accessibility'],
+                icons: [
+                    { src: PWA_ICON_URL,  sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+                    { src: PWA_BADGE_URL, sizes: '192x192', type: 'image/png', purpose: 'any' }
+                ]
+            };
+            var blob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
+            var manifestUrl = URL.createObjectURL(blob);
+            var link = document.createElement('link');
+            link.rel  = 'manifest';
+            link.href = manifestUrl;
+            link.setAttribute('data-netra-pwa', '1');
+            document.head.appendChild(link);
+
+            // iOS Safari respects apple-touch-icon + apple-mobile-web-app-* meta tags
+            var apple = document.createElement('link');
+            apple.rel  = 'apple-touch-icon';
+            apple.href = PWA_ICON_URL;
+            apple.setAttribute('data-netra-pwa', '1');
+            document.head.appendChild(apple);
+
+            var metas = [
+                ['apple-mobile-web-app-capable', 'yes'],
+                ['apple-mobile-web-app-status-bar-style', 'black-translucent'],
+                ['apple-mobile-web-app-title', 'Netra'],
+                ['theme-color', '#b48af0'],
+                ['mobile-web-app-capable', 'yes']
+            ];
+            metas.forEach(function (pair) {
+                var m = document.createElement('meta');
+                m.name    = pair[0];
+                m.content = pair[1];
+                m.setAttribute('data-netra-pwa', '1');
+                document.head.appendChild(m);
+            });
+
+            logEvent('pwa', 'manifest injected via blob URL; icon=' + PWA_ICON_URL);
+        } catch (e) {
+            logEvent('pwa', 'install failed: ' + (e && e.message ? e.message : e));
+        }
+    }
+
+    /* ============================================================
      *  LIFECYCLE
      * ============================================================ */
     c.$onInit = function () {
         setState('boot');
         logEvent('init', 'controller v8 booting, SR=' + c.hasSR + ' TTS=' + c.hasTTS + ' GrammarList=' + !!SGL);
+        _installPWA();
 
         if (c.hasTTS) {
             TTS.getVoices();
