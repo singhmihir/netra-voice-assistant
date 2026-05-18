@@ -1,0 +1,3 @@
+[submodule "netra-snow-config"]
+	path = netra-snow-config
+	url = https://github.com/singhmihir/netra-snow-config.git
