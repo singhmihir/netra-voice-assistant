@@ -1,8 +1,9 @@
 # Netra — Technical Design Document
 
-**Version**: R2.9.1 (NetraDeploymentV1)
+**Version**: **R3** (Netra_Version_1 update set, sys_id `9cfc5f639370c350936af0a75d03d688`)
 **Last updated**: 2026-05-18
 **Audience**: ServiceNow architects, accessibility engineers, future maintainers
+**Update set**: `update-set/Netra_Version_1.xml` (2.27 MB, 245 update_xml rows — canonical merge of all prior sets: Netra_V1 + Netra_V2 + NetraDeploymentV1 + System Administrator + Release 3)
 
 This document is the authoritative reference for every script in the Netra widget. It explains *what every file does, every function does, every tool does, every CSS layer does, and how all of it fits together*. Read it cold and you should be able to maintain or extend the system without reading the code first.
 
@@ -1751,3 +1752,125 @@ The client de-duplicates by `seenIds[]` (in-memory Set keyed by sys_id) and queu
 ---
 
 *This document supersedes all prior TDD-Rx.md files. Generated 2026-05-18 alongside NetraDeploymentV1.*
+
+---
+
+# 19. R3 — Release Notes (2026-05-18)
+
+R3 is the **canonical production release** of Netra. It freezes the dev panel, halves the orb's rendered size, validates mandatory fields dynamically before any submit, auto-reads KB/CHG numbers, and ships as a single merged update set named `Netra_Version_1`.
+
+## 19.1 What R3 includes
+
+Every layer from R1 through R2.13, plus:
+
+| Change | Detail |
+|---|---|
+| Orb 50% smaller | `.netra-orb` width/height 72px → **36px**. Shrunk-mode 44px → 22px. Internal SVG `viewBox` stays 120×120, so all golden-ratio geometry inside the orb is preserved — only the outer container halved. |
+| Dev panel frozen for end users | `DEV_DEFAULT_ON = false`. End users no longer see the VS Code dev console on page load. Admins can still toggle with `Alt+Shift+D`. |
+| R3 version pill | Header pill text shows `R3` instead of `R2.12`. |
+| All Anthropic dependencies gone | Confirmed via REST: `sys_properties.anthropic_api_key` does not exist on the instance. Pure-Gemini, fully free-tier. |
+| Update set consolidation | `Netra_Version_1` is the new single source of truth. 245 of 248 update_xml rows merged from 5 prior sets (3 system-protected meta-rows excluded). |
+
+## 19.2 R2.13 — slot-filling + auto-read (the layer just before R3)
+
+Two capabilities documented here for completeness, since they're not in earlier sections.
+
+### `read_knowledge_article(query)` + `summarize_change(ticket_number)`
+
+Two new tools so Gemini has direct read-by-number access. The system prompt (R2.13 layer) directs the model to call them PROACTIVELY the moment any KB or CHG number appears in user input — Netra builds an understanding of the article/change *before* it speaks.
+
+### Dynamic slot-filling — mandatory-field validation without UI Policy / Data Policy / Client Script
+
+Industry-pattern name: **"slot filling"** (COLING 2025, Microsoft Copilot Studio, LangChain `StructuredTool`, Anthropic tool-use). Standard form-agent loop: discover required slots at runtime → ask for the empty ones one at a time → submit only when complete.
+
+ServiceNow declares "mandatory" across three layers; `_mandatoryFields(table)` unions all three:
+
+1. **`sys_dictionary.mandatory = true`** — walks the table hierarchy via `sys_db_object.super_class` (so `incident` inherits from `task`).
+2. **`sys_dictionary_override`** with `mandatory_override = true` — per-child-table overrides.
+3. **`sys_data_policy_rule` + `sys_ui_policy_action`** with `mandatory = true` (UI policies are filtered to those firing `on_new_record = true`). On the dev instance, the incident table's user-visible mandatories (`caller_id`, `short_description`, `parent_incident`, `hold_reason`) all come from this layer — virtually none from the dictionary itself.
+
+Auto-populated system fields (`sys_id`, `sys_created_*`, `number`, `state`, etc.) are skip-listed. Results cached 5 minutes per table. `GlideTableDescriptor` is forbidden in scoped apps; we use plain `GlideRecord` over the three dictionary/policy tables.
+
+`_confirmAndCreate` enumerates mandatories for the draft's target table, compares against `draft.fields`, and returns `{error: 'missing_mandatory', missing: [...], next_prompt: '...'}` when anything is empty. The widget's `_runTool` dispatches this to Gemini, which reads the `next_prompt` aloud. The user fills in the slot, the loop continues, and the record is created only when every mandatory has a value.
+
+Tool catalogue addition: `list_mandatory_fields(table)` exposes the same discovery to Gemini, so the model can introspect requirements DURING the draft and slot-fill multiple values from one user sentence (research-recommended optimisation — "skip questions where info could be identified in the user query").
+
+The user's constraint — *no new UI Policies, Data Policies, or Client Scripts* — is honoured. Netra READS existing policies (which is fair game) to know what's currently mandatory; it does not create any.
+
+## 19.3 R2.12.x cumulative fixes (between R2.11 and R3)
+
+| Patch | What it fixed |
+|---|---|
+| R2.12 | Audio-reactive frequency-domain voice ring (24 bands), VS Code dev panel restyle, NETRA card hidden |
+| R2.12.1 | Empty-response bug — `_callGeminiOnce` added `thinkingConfig.thinkingBudget = 0` + `maxOutputTokens 512 → 1024`. Gemini 2.5 Flash was eating the visible-output budget on internal thinking tokens. |
+| R2.12.1 | Sentiment fast-path — keyword pre-filter (`SENTIMENT_CUES`) + ALL-CAPS detector. LLM classifier only runs on real cues. Free-tier quota stays usable. |
+| R2.12.2 | Transcript card removed entirely. Status-bar emoji glyphs replaced with text labels (mono fonts don't carry emoji). Speaker-cone pulse (`--orb-pulse` CSS variable, bass-driven SVG scale). Mic loop runs both time-domain RMS + frequency-domain FFT per frame so user input also ripples the ring per-band. |
+| R2.12.3 | Polygon explosion fix — `VOICE_RING_DIST_MAX = 95` clamp inside `_recomputeVoiceRing`. R2.12.2 had pushed vertex distance to 278 in a viewBox of 120 (yellow blob bug). |
+| R2.12.4 | Noise gate — when mic level `< 5` or output band sum `< 30`, `c.audioLevels = null` so the ring snaps back to a smooth idle circle. Per-band threshold `< 15 → 0` kills ambient hum. Fixes the stuck-spike-when-silent bug. |
+| R2.12.5 | Speed-first — default `gemini_model = 'gemini-flash-lite-latest'` (alias to Google's current fastest lite). Chain reordered fastest-first. HTTP timeout `30s → 12s` (chat) and `45s → 15s` (reason). Empirical latency: 1.0s typical vs 17.6s on cold-start. |
+
+## 19.4 Architecture diagram (R3 final state)
+
+```mermaid
+flowchart TB
+    subgraph Browser["BROWSER — Service Portal"]
+        T["template.html<br/>SVG orb 36×36 (R3)<br/>4-tab VS Code dev panel"]
+        S["stylesheet.scss<br/>Violet case-hardened ring<br/>--orb-pulse speaker cone<br/>Frequency-domain band rendering"]
+        C["client.js — AngularJS controller<br/>Web Speech API + Web Audio FFT<br/>3 TTS engines (Gemini / Edge / Stream)<br/>Mic + output dual-pass analyser<br/>Noise gate (level<5, raw<15)"]
+        T -.->|ng-bind| C
+        S -.-> T
+    end
+    subgraph SN["SERVICENOW — scope x_196061_netra_v1"]
+        Srv["server.js — sp_widget.server_script<br/>Dispatch: chat/poll/training/tts/debug/rewind_mem<br/>_chat with model fallback chain<br/>_runTool — 61 tool dispatcher<br/>_reason — NetraReasoning structured output<br/>_mandatoryFields — slot-fill discovery<br/>_trackSentiment — keyword + LLM"]
+        Tbl["Custom tables<br/>x_196061_netra_v1_context (250 KB blob)<br/>x_196061_netra_v1_kb_embedding<br/>x_196061_netra_v1_notification"]
+        SI["Script Includes<br/>NetraTools, NetraKnowledge"]
+        BR["Business Rule + Scheduled Job"]
+    end
+    subgraph Ext["External APIs (free)"]
+        Gem["Google Gemini<br/>chat: gemini-flash-lite-latest<br/>tts: gemini-2.5-flash-preview-tts<br/>embed: gemini-embedding-001"]
+        Edge["Microsoft Edge Neural TTS<br/>(WSS, free)"]
+        Stream["StreamElements TTS<br/>(REST, free)"]
+        DDG["DuckDuckGo + Wikipedia"]
+    end
+    C -->|c.server.update| Srv
+    Srv -->|HTTPS 12s timeout| Gem
+    Srv -->|HTTPS| DDG
+    Srv <--> Tbl
+    Srv --> SI
+    BR --> Tbl
+    C -->|WSS| Edge
+    C -->|HTTPS| Stream
+```
+
+## 19.5 Deployment: Netra_Version_1
+
+A single update set, `Netra_Version_1`, captures everything. To deploy on a fresh instance:
+
+1. **System Update Sets → Retrieved Update Sets → Import Update Set from XML**
+2. Upload `netra-snow/update-set/Netra_Version_1.xml` (2.27 MB)
+3. Preview — no collisions expected on a clean instance
+4. Commit
+5. Set `x_196061_netra_v1.gemini_api_key` to a free key from https://aistudio.google.com/apikey
+6. The widget auto-mounts on the SP landing + 9 other routes via the included `sp_instance` rows
+
+That's the complete installation.
+
+## 19.6 What's NOT in R3 (deferred)
+
+These were on the R2.12 roadmap but explicitly NOT shipped in R3:
+
+| Capability | Why deferred |
+|---|---|
+| Spoken form diffs (DOM mutation watcher) | Needs more browser-side machinery than the current widget exposes |
+| Audio breadcrumb / context anchor | Requires a tracked-focus subsystem that doesn't exist yet |
+| Validation-failure pre-flight | Overlaps with the new slot-filling (R2.13); slot-filling is the chosen primary mechanism |
+| Workflow orchestration with confirmation gates | Multi-turn plan execution; needs careful design for safety |
+| Gemini Live audio API | Rewrites the entire TTS path; significant scope |
+| PDF / binary attachment reading | Needs PDF text-extraction inside the scoped sandbox |
+| Streaming chat reply | Service Portal `c.server.update` is one-shot; would need a WSS/SSE path |
+
+These remain in the R2.12.x roadmap for a future release if the user prioritises them.
+
+---
+
+*R3 is the production-grade release. All chargeable dependencies removed. 245 update_xml rows merged into Netra_Version_1.xml.*

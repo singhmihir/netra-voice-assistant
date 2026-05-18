@@ -42,10 +42,11 @@
  * ============================================================ */
 .netra-orb {
     position: relative;
-    /* R2.5 - golden-ratio sizing: 72px x 72px (square = ratio 1:1, the orb
-       inside is the golden form). Hover scales by phi-1 = 0.618 of step. */
-    width: 72px;
-    height: 72px;
+    /* R3 - 50% smaller (72 -> 36). Internal SVG viewBox stays 120x120, so
+       every golden-ratio relationship inside the orb is preserved — only
+       the outer rendered size is halved. */
+    width: 36px;
+    height: 36px;
     border: 0;
     cursor: grab;
     background: transparent;
@@ -77,10 +78,10 @@
     will-change: transform;
 }
 
-/* Shrunk mode - 72 / phi = 44.5 ~ 44 px (golden-ratio shrink) */
+/* Shrunk mode - 36 / phi = 22.2 ~ 22 px (golden-ratio shrink from R3 base 36) */
 .netra-shrunk .netra-orb {
-    width: 44px;
-    height: 44px;
+    width: 22px;
+    height: 22px;
 }
 .netra-orb:hover  { transform: scale(1.05); }
 .netra-orb:active { transform: scale(0.98); }
@@ -1268,7 +1269,7 @@
  * ============================================================ */
 @media (max-width: 480px) {
     .netra-root { right: 16px; bottom: 16px; }
-    .netra-orb  { width: 72px; height: 72px; }
+    .netra-orb  { width: 36px; height: 36px; }   /* R3 - halved */
     .netra-dev  { width: calc(100vw - 24px); }
     .netra-dev-actions { grid-template-columns: repeat(2, 1fr); }
 }

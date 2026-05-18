@@ -50,7 +50,7 @@
 api.controller = function ($scope, $timeout, $window) {
     var c = this;
 
-    var DEV_DEFAULT_ON      = true;   // dev panel visible by default
+    var DEV_DEFAULT_ON      = false;  // R3 - dev panel hidden by default; Alt+Shift+D toggles for admins
     var ALWAYS_LISTEN       = true;   // v12 - no wake word ever; sleep with "stop listening"
     var WAKE_TIMEOUT_MS     = 8000;   // legacy wake-armed window (only used if ALWAYS_LISTEN is false)
     var MIN_CONFIDENCE      = 0.35;   // below this, ignore as chatter
