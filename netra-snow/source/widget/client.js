@@ -108,17 +108,20 @@ api.controller = function ($scope, $timeout, $window) {
     c.audioLevel = 0;
     c.voiceRingPoints = '';
 
-    // Per-bar multiplier; small jitter so the ring feels alive rather than uniform
+    // Per-bar multiplier; jitter so the ring feels alive rather than uniform.
+    // R2.12.2 - bumped 0.36-0.50 -> 0.55-0.85 so the ring vibrates more
+    // dramatically. The frequency-domain band data also drives each vertex
+    // individually now, which compounds the visible motion.
     var VOICE_RING_MULTIPLIERS = [
-        0.40, 0.44, 0.38, 0.48, 0.36, 0.42, 0.40, 0.46,
-        0.38, 0.50, 0.36, 0.42, 0.40, 0.44, 0.38, 0.48,
-        0.36, 0.42, 0.40, 0.46, 0.38, 0.50, 0.36, 0.44
+        0.60, 0.72, 0.55, 0.82, 0.58, 0.68, 0.62, 0.78,
+        0.55, 0.85, 0.58, 0.70, 0.62, 0.74, 0.56, 0.80,
+        0.58, 0.66, 0.60, 0.76, 0.55, 0.85, 0.58, 0.72
     ];
-    // Idle/listening base radius; speaking state gets a bigger floor + spike
-    // boost so Netra's aura is visibly larger than the user's mic-driven ring.
-    var VOICE_RING_BASE_IDLE     = 58;
-    var VOICE_RING_BASE_SPEAKING = 74;
-    var VOICE_RING_SPIKE_SPEAKING = 1.75;   // multiplier on top of audioLevel impact
+    var VOICE_RING_BASE_IDLE      = 58;
+    var VOICE_RING_BASE_SPEAKING  = 74;
+    // R2.12.2 - spike boost when speaking, 1.75 -> 2.4. Combined with the
+    // higher base and bigger multipliers, Netra's aura is now dramatic.
+    var VOICE_RING_SPIKE_SPEAKING = 2.4;
     var VOICE_RING_SIN = new Array(24);
     var VOICE_RING_COS = new Array(24);
     for (var _vi = 0; _vi < 24; _vi++) {
@@ -129,6 +132,20 @@ api.controller = function ($scope, $timeout, $window) {
     var _lastVoiceRingLevel = -1;
     var _lastVoiceRingState = '';
     var _lastVoiceRingHash  = '';
+    // R2.12.2 - speaker-cone pulse: writes a 0..1 CSS variable on the
+    // orb root so the SVG transform: scale(1 + var * 0.18) breathes.
+    var _orbRootEl = null;
+    var _lastOrbPulse = -1;
+    function _setOrbPulse(v) {
+        var pulse = Math.max(0, Math.min(1, v));
+        if (Math.abs(pulse - _lastOrbPulse) < 0.02) return;   // skip imperceptible updates
+        _lastOrbPulse = pulse;
+        if (!_orbRootEl) {
+            _orbRootEl = document.querySelector('.netra-root');
+            if (!_orbRootEl) return;
+        }
+        _orbRootEl.style.setProperty('--orb-pulse', pulse.toFixed(3));
+    }
     function _recomputeVoiceRing() {
         var lvlAvg = c.audioLevel || 0;
         var st     = c.state || '';
@@ -897,21 +914,40 @@ api.controller = function ($scope, $timeout, $window) {
             var data = new Uint8Array(_micAnalyser.frequencyBinCount);
 
             var lastMicLevel = -1;
+            var freqData = new Uint8Array(_micAnalyser.frequencyBinCount);   // R2.12.2
             var loop = function () {
+                // R2.12.2 - run BOTH passes per frame:
+                //  1. time-domain RMS  -> mic-level meter (single 0..100)
+                //  2. frequency-domain -> 24-band ripple on the voice ring
                 _micAnalyser.getByteTimeDomainData(data);
                 var sum = 0;
                 for (var i = 0; i < data.length; i++) {
-                    var v = (data[i] - 128) / 128;
-                    sum += v * v;
+                    var vv = (data[i] - 128) / 128;
+                    sum += vv * vv;
                 }
                 var rms = Math.sqrt(sum / data.length);
-                var level = Math.min(100, Math.round(rms * 300));
+                var level = Math.min(100, Math.round(rms * 360));   // gain bumped
+
                 if (level !== lastMicLevel) {
                     lastMicLevel = level;
                     c.micLevel = level;
                     if (level > c.micLevelPeak) c.micLevelPeak = level;
                     if (c.state !== 'speaking') {
                         c.audioLevel = level;
+                        // FFT band pass for the ring rippling
+                        _micAnalyser.getByteFrequencyData(freqData);
+                        var bands = new Array(24);
+                        for (var b = 0; b < 24; b++) {
+                            var lo = VOICE_RING_BAND_BOUNDS[b];
+                            var hi = VOICE_RING_BAND_BOUNDS[b + 1];
+                            if (hi <= lo) hi = lo + 1;
+                            var s2 = 0, n2 = 0;
+                            for (var k = lo; k < hi && k < freqData.length; k++) { s2 += freqData[k]; n2++; }
+                            bands[b] = n2 ? Math.min(100, (s2 / n2) / 255 * 380) : 0;
+                        }
+                        c.audioLevels = bands;
+                        // Speaker-cone pulse from the bass band when user is speaking
+                        _setOrbPulse(((bands[0] + bands[1] + bands[2]) / 3) / 100);
                         _recomputeVoiceRing();
                     }
                     $scope.$applyAsync();
@@ -2107,6 +2143,7 @@ api.controller = function ($scope, $timeout, $window) {
                     if (c.audioLevel !== 0) {
                         c.audioLevel = 0;
                         c.audioLevels = null;              // clear per-band when silent
+                        _setOrbPulse(0);                   // collapse the speaker cone
                         _recomputeVoiceRing();
                         $scope.$applyAsync();
                     }
@@ -2124,13 +2161,17 @@ api.controller = function ($scope, $timeout, $window) {
                     if (hi <= lo) hi = lo + 1;
                     var s = 0, n = 0;
                     for (var k = lo; k < hi && k < data.length; k++) { s += data[k]; n++; }
-                    // Normalise 0..255 -> 0..100 with a 2.0x gain factor so
-                    // soft output still produces visible motion
-                    var v = n ? Math.min(100, (s / n) / 255 * 200) : 0;
+                    // R2.12.2 - gain bumped 200 -> 360 so the ring vibration is
+                    // visibly intense even on softer Gemini PCM output.
+                    var v = n ? Math.min(100, (s / n) / 255 * 360) : 0;
                     bands[b] = v;
                     bandSum += v;
                 }
                 c.audioLevels = bands;
+                // R2.12.2 - speaker-cone pulse: drive --orb-pulse from the
+                // BASS bands (first 3). The whole SVG breathes to the beat.
+                var bass = (bands[0] + bands[1] + bands[2]) / 3;   // 0..100
+                _setOrbPulse(bass / 100);
                 // Average drives the existing single-value audioLevel (kept
                 // for backward-compat with anything else that reads it).
                 var level = Math.round(bandSum / 24);

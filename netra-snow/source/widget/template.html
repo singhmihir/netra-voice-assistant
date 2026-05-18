@@ -212,16 +212,18 @@
     </section>
     </div><!-- /.netra-dev-body -->
 
-    <!-- R2.12 - VS Code-style status bar at bottom -->
+    <!-- R2.12 - VS Code-style status bar at bottom.
+         Plain text labels — monospace fonts don't carry emoji glyphs so
+         we use 2-3 char abbreviations the way VS Code itself does. -->
     <footer class="netra-dev-statusbar" aria-hidden="true">
-      <span class="seg"><span class="seg-icon">●</span><span class="seg-val">{{c.state}}</span></span>
+      <span class="seg"><span class="seg-key">STATE</span><span class="seg-val">{{c.state}}</span></span>
       <span class="seg" ng-class="{'err': !c.recRunning}">
-        <span class="seg-icon">🎤</span><span class="seg-val">{{c.recRunning ? 'rec' : 'off'}}</span>
+        <span class="seg-key">MIC</span><span class="seg-val">{{c.recRunning ? 'rec' : 'off'}}</span>
       </span>
-      <span class="seg"><span class="seg-icon">📶</span><span class="seg-val">{{c.micLevel || 0}}</span></span>
-      <span class="seg" ng-show="c.stats.lastLatencyMs"><span class="seg-icon">⏱</span><span class="seg-val">{{c.stats.lastLatencyMs}}ms</span></span>
-      <span class="seg" ng-show="c.stats.lastModel && c.stats.lastModel !== '-'"><span class="seg-icon">🤖</span><span class="seg-val">{{c.stats.lastModel}}</span></span>
-      <span class="seg" ng-show="c.stats.errors > 0" ng-class="{'warn': c.stats.errors > 0}"><span class="seg-icon">⚠</span><span class="seg-val">{{c.stats.errors}}</span></span>
+      <span class="seg"><span class="seg-key">LV</span><span class="seg-val">{{c.micLevel || 0}}</span></span>
+      <span class="seg" ng-show="c.stats.lastLatencyMs"><span class="seg-key">LAT</span><span class="seg-val">{{c.stats.lastLatencyMs}}ms</span></span>
+      <span class="seg" ng-show="c.stats.lastModel && c.stats.lastModel !== '-'"><span class="seg-key">MODEL</span><span class="seg-val">{{c.stats.lastModel}}</span></span>
+      <span class="seg" ng-show="c.stats.errors > 0" ng-class="{'warn': c.stats.errors > 0}"><span class="seg-key">ERR</span><span class="seg-val">{{c.stats.errors}}</span></span>
     </footer>
   </div>
 
@@ -484,32 +486,14 @@
     </svg>
   </button>
 
-  <!-- Transcript card for sighted helpers — visible only in dev mode.
+  <!-- Transcript card REMOVED in R2.12.2.
        For end users, screen-reader narration via the aria-live regions
-       above is the canonical interface; this card is purely a debugging
-       aid for sighted observers and was hidden in R2.12. -->
-  <div class="netra-card"
-       ng-show="c.devOn && (c.lastHeard || c.spoken)"
-       ng-class="{'netra-card-speaking': c.state === 'speaking'}"
-       aria-hidden="true">
-    <div class="netra-card-row" ng-show="c.lastHeard">
-      <span class="netra-card-label">You</span>
-      <span class="netra-card-text">{{c.lastHeard}}</span>
-    </div>
-    <div class="netra-card-row netra-card-row-bot" ng-show="c.spoken">
-      <span class="netra-card-label">Netra</span>
-      <span class="netra-card-text">{{c.spoken}}</span>
-    </div>
-    <div class="netra-card-meta" ng-show="c.stats.lastModel && c.stats.lastModel !== '-'">
-      <span>{{c.stats.lastModel}}</span>
-      <span>{{c.stats.lastLatencyMs}} ms</span>
-      <span ng-show="c.charts.toolBars.length">{{c.charts.toolBars[0].name}}</span>
-    </div>
-    <!-- R2.4 - popup-blocked fallback: clickable link -->
-    <a class="netra-card-link" ng-show="c.pendingOpenUrl"
-       ng-href="{{c.pendingOpenUrl}}" target="_blank" rel="noopener noreferrer"
-       ng-click="c.pendingOpenUrl = null">Click here to open {{c.pendingOpenUrl}}</a>
-  </div>
+       above is the canonical interface. The transcript card was the
+       yellow-marked element the user asked to remove permanently;
+       the popup-blocked fallback link moved to the dev panel only. -->
+  <a class="netra-card-link" ng-show="c.pendingOpenUrl"
+     ng-href="{{c.pendingOpenUrl}}" target="_blank" rel="noopener noreferrer"
+     ng-click="c.pendingOpenUrl = null">Click here to open {{c.pendingOpenUrl}}</a>
 
   <!-- Initial-gesture gate -->
   <button class="netra-gate"

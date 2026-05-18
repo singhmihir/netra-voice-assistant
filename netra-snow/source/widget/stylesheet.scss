@@ -66,6 +66,17 @@
 .netra-orb:hover  { transform: scale(1.0618); }   /* 1 + 1/phi*0.1 */
 .netra-orb:active { cursor: grabbing; transform: scale(0.95); }
 
+/* R2.12.2 - SPEAKER-CONE PULSE.  The whole SVG sphere breathes with the
+   bass band — driven by --orb-pulse, a 0..1 value set per-frame from
+   the lowest frequency bucket. Speaker-cone feel without rebuilding the
+   geometry. */
+.netra-orb .netra-eye-svg {
+    transition: transform 80ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform: scale(calc(1 + var(--orb-pulse, 0) * 0.18));
+    transform-origin: 50% 50%;
+    will-change: transform;
+}
+
 /* Shrunk mode - 72 / phi = 44.5 ~ 44 px (golden-ratio shrink) */
 .netra-shrunk .netra-orb {
     width: 44px;
@@ -624,10 +635,39 @@
     background: rgba(255,255,255,0.3);
     margin-right: 6px;
 }
-.netra-dev-statusbar .seg.err   { background: #f48771; padding: 0 6px; margin: -3px 0; }
-.netra-dev-statusbar .seg.warn  { color: #ffcc00; }
-.netra-dev-statusbar .seg-icon  { font-size: 11px; opacity: 0.9; }
+.netra-dev-statusbar .seg.err   { background: #c72e0f; padding: 0 6px; margin: -3px 0; }
+.netra-dev-statusbar .seg.warn  { color: #ffd34d; }
+.netra-dev-statusbar .seg-key   {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    opacity: 0.75;
+    text-transform: uppercase;
+}
 .netra-dev-statusbar .seg-val   { font-weight: 600; }
+
+/* R2.12.2 - tighten the dev panel header (IDLE / AWAKE / hide pills) */
+.netra-dev-head {
+    padding: 6px 10px 8px;
+    gap: 6px;
+    background: #252526;
+    border-bottom: 1px solid #3c3c3c;
+}
+.netra-dev-pill {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 9.5px;
+    line-height: 1.4;
+}
+.netra-dev-x {
+    background: transparent;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 10px;
+    color: #969696;
+}
+.netra-dev-x:hover { background: #094771; color: #ffffff; border-color: #007acc; }
 .netra-dev section { margin: 8px 0; }
 /* R2.12 — VS Code "Command Palette" / quickpick button style.
    Solid dark with subtle border. Hover lifts background to #094771
