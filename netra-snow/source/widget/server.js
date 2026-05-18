@@ -536,18 +536,22 @@
      *  All in Google's free tier.
      * =================================================================== */
     function _callGemini(apiKey, requestedModel, contents, tools, systemInstruction) {
-        // v14: updated chain - 1.5 models retired by Google, replaced with
-        // currently-available 2.x families plus the "latest" aliases (which
-        // Google auto-points at whichever production model is healthy).
+        // R2.12.5 - SPEED-FIRST chain, empirically calibrated May 2026:
+        //   gemini-flash-lite-latest:  ~1.0s  <-- alias to Google's current
+        //                                         best lite (3.1 / 2.5)
+        //   gemini-3.1-flash-lite:     ~1.7s
+        //   gemini-2.5-flash-lite:     ~3-5s  (variable, latest preview)
+        //   gemini-2.5-flash:          ~2-4s  (has thinking-token overhead
+        //                                     even with thinkingBudget=0)
+        // Pro models dropped — too slow for an interactive voice loop.
         var chain = [requestedModel];
-        ['gemini-2.5-flash',
-         'gemini-flash-latest',
+        ['gemini-flash-lite-latest',  // <-- new default; fastest in tests
+         'gemini-3.1-flash-lite',
          'gemini-2.5-flash-lite',
-         'gemini-flash-lite-latest',
-         'gemini-2.0-flash',
          'gemini-2.0-flash-lite',
-         'gemini-2.5-pro',
-         'gemini-pro-latest'].forEach(function (m) {
+         'gemini-flash-latest',
+         'gemini-2.5-flash',
+         'gemini-2.0-flash'].forEach(function (m) {
             if (chain.indexOf(m) < 0) chain.push(m);
         });
 
@@ -630,7 +634,10 @@
             rm.setHttpMethod('POST');
             rm.setRequestHeader('Content-Type', 'application/json');
             rm.setRequestBody(JSON.stringify(body));
-            rm.setHttpTimeout(30000);
+            // R2.12.5 - 30s -> 12s. Fail fast and fall back. The whole chain
+            // worst-case is now 6 models x 12s = 72s, but typical hit on
+            // flash-lite is 0.5-2s.
+            rm.setHttpTimeout(12000);
             var r = rm.execute();
             var code = r.getStatusCode();
             var rb = r.getBody();
@@ -712,7 +719,9 @@
             rm.setHttpMethod('POST');
             rm.setRequestHeader('Content-Type', 'application/json');
             rm.setRequestBody(JSON.stringify(body));
-            rm.setHttpTimeout(45000);
+            // R2.12.5 - 45s -> 15s. Reasoning calls are slightly larger
+            // than chat (more tokens) but still shouldn't sit forever.
+            rm.setHttpTimeout(15000);
             var r = rm.execute();
             var code = r.getStatusCode();
             var rb = r.getBody();
