@@ -129,33 +129,28 @@
 }
 .netra-voice-ring-fill {
     transition: opacity 0.3s ease;
-    opacity: 0.45;
+    opacity: 0.7;
 }
 .netra-voice-ring-stroke {
     transition: stroke-width 0.18s ease, filter 0.3s ease;
-    filter: drop-shadow(0 0 4px var(--iris-bright, rgba(127, 255, 176, 0.7)))
-            drop-shadow(0 0 10px var(--iris-bright, rgba(127, 255, 176, 0.3)));
+    filter: drop-shadow(0 0 4px rgba(160, 80, 240, 0.75)) drop-shadow(0 0 10px rgba(190, 90, 235, 0.35)) drop-shadow(0 0 18px rgba(255, 170, 80, 0.18));
 }
 @keyframes voice-ring-fade-in {
     from { opacity: 0; }
     to   { opacity: 0.95; }
 }
 
-/* When Netra is speaking, the entire aura should EXPAND and brighten.
-   Halo scales 1.4x; voice-ring fill is more opaque; stroke is thicker
-   with a wider glow. This is the "she is really talking" feel. */
+/* While speaking, the halo pulses 1.32x..1.52x; the keyframe animation
+   owns the transform, so don't set a static scale here. */
 .netra-state-speaking .netra-eye-halo {
-    transform: scale(1.42);
     transform-origin: 60px 60px;
     transform-box: view-box;
     animation: halo-pulse-speaking 1.2s ease-in-out infinite;
 }
-.netra-state-speaking .netra-voice-ring-fill   { opacity: 0.75; }
+.netra-state-speaking .netra-voice-ring-fill   { opacity: 0.95; }
 .netra-state-speaking .netra-voice-ring-stroke {
     stroke-width: 2.2;
-    filter: drop-shadow(0 0 6px var(--iris-bright, rgba(127, 255, 176, 0.85)))
-            drop-shadow(0 0 16px var(--iris-bright, rgba(127, 255, 176, 0.5)))
-            drop-shadow(0 0 26px var(--iris-bright, rgba(127, 255, 176, 0.25)));
+    filter: drop-shadow(0 0 6px rgba(160, 80, 240, 0.90)) drop-shadow(0 0 16px rgba(190, 90, 235, 0.55)) drop-shadow(0 0 26px rgba(255, 170, 80, 0.30)) drop-shadow(0 0 38px rgba(139, 61, 240, 0.15));
 }
 @keyframes halo-pulse-speaking {
     0%, 100% { transform: scale(1.32); opacity: 0.85; }

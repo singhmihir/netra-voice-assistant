@@ -1855,14 +1855,23 @@
     }
     function _ctxWriteBlob(blob) {
         var ctx = _ctxLoadGr();
-        // Always include all four keys to avoid clobbering on partial writes
         var payload = {
             draft:   blob.draft   || null,
             mem:     blob.mem     || [],
             vocab:   blob.vocab   || {},
             aliases: blob.aliases || {}
         };
-        ctx.last_utterance = 'CTX:' + JSON.stringify(payload);
+        // Safety truncate: if the serialised blob exceeds the column limit, drop
+        // the oldest mem entries until it fits. The Context column is sized to
+        // hold ~100 turns of typical-length exchanges; this guards the edge case
+        // where users hit the max with verbose entries.
+        var maxLen = 250000;   // matches the expanded sys_dictionary max_length
+        var ser = 'CTX:' + JSON.stringify(payload);
+        while (ser.length > maxLen && payload.mem.length > 5) {
+            payload.mem = payload.mem.slice(Math.floor(payload.mem.length / 4));
+            ser = 'CTX:' + JSON.stringify(payload);
+        }
+        ctx.last_utterance = ser;
         ctx.update();
     }
 
@@ -2146,6 +2155,7 @@
         b.mem = arr;
         _ctxWriteBlob(b);
     }
+    var MEM_CAP = 100;   // R2.9 - bumped from 40; safety truncate in _ctxWriteBlob protects against oversize blobs
     function _memAppend(userMsg, netraReply) {
         if (!userMsg && !netraReply) return;
         var arr = _memRead();
@@ -2154,8 +2164,7 @@
             u: String(userMsg || '').substring(0, 240),
             n: String(netraReply || '').substring(0, 480)
         });
-        // Keep last 40 turns
-        if (arr.length > 40) arr = arr.slice(arr.length - 40);
+        if (arr.length > MEM_CAP) arr = arr.slice(arr.length - MEM_CAP);
         _memWrite(arr);
     }
 
@@ -2173,7 +2182,7 @@
                        (e.n || '').toLowerCase().indexOf(kw) >= 0;
             });
         }
-        var n = Math.min(20, Math.max(1, limit || 10));
+        var n = Math.min(50, Math.max(1, limit || 10));
         var slice = filtered.slice(Math.max(0, filtered.length - n));
         return {
             ok: true,
@@ -2194,7 +2203,7 @@
             u: '[REMEMBER]',
             n: fact
         });
-        if (arr.length > 40) arr = arr.slice(arr.length - 40);
+        if (arr.length > MEM_CAP) arr = arr.slice(arr.length - MEM_CAP);
         _memWrite(arr);
         return { ok: true, message: 'Noted. I will remember that.' };
     }
@@ -2687,17 +2696,50 @@
         };
     }
 
+    // R2.9.1 - common SN/IT vocabulary that should always seed the recognizer.
+    // These don't appear in the instance's groups/apps/KB but are spoken often
+    // in voice commands ("escalate", "VPN", "MFA", "approve", etc.).
+    var COMMON_VOCAB = [
+        // Record actions
+        'create', 'open', 'close', 'resolve', 'cancel', 'escalate', 'reopen',
+        'approve', 'reject', 'submit', 'assign', 'reassign', 'watch', 'unwatch',
+        'summarise', 'summarize', 'list', 'search', 'read', 'show', 'tell',
+        // Record types
+        'incident', 'problem', 'change', 'request', 'task', 'approval',
+        'ticket', 'knowledge', 'article', 'catalog',
+        // Fields
+        'priority', 'urgency', 'impact', 'state', 'category', 'subcategory',
+        'description', 'comment', 'note', 'attachment', 'work note',
+        // Common IT terms
+        'VPN', 'MFA', 'SSO', 'AD', 'LDAP', 'DNS', 'DHCP', 'TLS', 'SSL',
+        'firewall', 'router', 'switch', 'server', 'database', 'storage',
+        'backup', 'restore', 'patch', 'update', 'upgrade', 'reboot', 'restart',
+        'Outlook', 'Teams', 'Slack', 'Zoom', 'GitHub', 'Jira', 'Confluence',
+        'ServiceNow', 'AWS', 'Azure', 'GCP', 'Kubernetes', 'Docker',
+        // Time + counting
+        'today', 'tomorrow', 'yesterday', 'now', 'later', 'soon',
+        'morning', 'afternoon', 'evening', 'minute', 'hour', 'day', 'week',
+        // Greetings / smalltalk
+        'hello', 'hi', 'hey', 'thanks', 'thank you', 'please', 'sorry',
+        // Netra-specific
+        'Netra', 'sentinel', 'sleep', 'wake', 'pause', 'resume', 'dictate',
+        'briefing', 'workload', 'focus', 'watchlist', 'remember', 'recall'
+    ];
+
     function _getVocab() {
         try {
             var cached = gs.getProperty(SCOPE + '.vocab_cache');
             var cachedTs = parseInt(gs.getProperty(SCOPE + '.vocab_cache_ts', '0'), 10);
             var ageMs = new Date().getTime() - cachedTs;
             if (cached && ageMs < 6 * 60 * 60 * 1000) {
-                return JSON.parse(cached);
+                var p = JSON.parse(cached);
+                // Always re-merge COMMON_VOCAB in case the static list grew since cache time
+                p.common = COMMON_VOCAB;
+                return p;
             }
         } catch (e) { /* fall through to refresh */ }
 
-        var v = { groups: [], apps: [], categories: [], kb_titles: [], catalog_items: [], built_at: '' };
+        var v = { groups: [], apps: [], categories: [], kb_titles: [], catalog_items: [], common: COMMON_VOCAB, built_at: '' };
 
         // Assignment groups
         try {

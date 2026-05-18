@@ -106,22 +106,41 @@ api.controller = function ($scope, $timeout, $window) {
     c.audioLevel = 0;
     c.voiceRingPoints = '';
 
-    // R2.8.2 - per-bar multiplier (doubled from R2.8; small jitter for life)
+    // Per-bar multiplier; small jitter so the ring feels alive rather than uniform
     var VOICE_RING_MULTIPLIERS = [
         0.40, 0.44, 0.38, 0.48, 0.36, 0.42, 0.40, 0.46,
         0.38, 0.50, 0.36, 0.42, 0.40, 0.44, 0.38, 0.48,
         0.36, 0.42, 0.40, 0.46, 0.38, 0.50, 0.36, 0.44
     ];
-    var VOICE_RING_BASE = 58;   // radius at audioLevel=0 (sphere edge is 50)
-    var TWO_PI = Math.PI * 2;
+    // Idle/listening base radius; speaking state gets a bigger floor + spike
+    // boost so Netra's aura is visibly larger than the user's mic-driven ring.
+    var VOICE_RING_BASE_IDLE     = 58;
+    var VOICE_RING_BASE_SPEAKING = 74;
+    var VOICE_RING_SPIKE_SPEAKING = 1.75;   // multiplier on top of audioLevel impact
+    var VOICE_RING_SIN = new Array(24);
+    var VOICE_RING_COS = new Array(24);
+    for (var _vi = 0; _vi < 24; _vi++) {
+        var _va = _vi * 15 * Math.PI / 180;
+        VOICE_RING_SIN[_vi] = Math.sin(_va);
+        VOICE_RING_COS[_vi] = Math.cos(_va);
+    }
+    var _lastVoiceRingLevel = -1;
+    var _lastVoiceRingState = '';
     function _recomputeVoiceRing() {
         var lvl = c.audioLevel || 0;
+        var st  = c.state || '';
+        // Recompute whenever level OR state changes (state swap toggles the base/spike)
+        if (lvl === _lastVoiceRingLevel && st === _lastVoiceRingState) return;
+        _lastVoiceRingLevel = lvl;
+        _lastVoiceRingState = st;
+        var speaking = (st === 'speaking');
+        var base  = speaking ? VOICE_RING_BASE_SPEAKING : VOICE_RING_BASE_IDLE;
+        var spike = speaking ? VOICE_RING_SPIKE_SPEAKING : 1.0;
         var pts = '';
         for (var i = 0; i < 24; i++) {
-            var angle = (i * 15) * Math.PI / 180;
-            var dist = VOICE_RING_BASE + lvl * VOICE_RING_MULTIPLIERS[i];
-            var x = 60 + dist * Math.sin(angle);
-            var y = 60 - dist * Math.cos(angle);
+            var dist = base + lvl * VOICE_RING_MULTIPLIERS[i] * spike;
+            var x = 60 + dist * VOICE_RING_SIN[i];
+            var y = 60 - dist * VOICE_RING_COS[i];
             if (pts) pts += ' ';
             pts += x.toFixed(2) + ',' + y.toFixed(2);
         }
@@ -668,6 +687,34 @@ api.controller = function ($scope, $timeout, $window) {
         if (/\b(version|build|which version|kaunsa version)\b/.test(lc)) {
             return { intent: 'version', reply: 'I am running Netra version nine, with always-on listening and Indian English voice.' };
         }
+        // R2.9.1 - repeat / say again
+        if (/^(repeat|repeat that|say (it|that) again|come again|once more|kya bola)\.?$/i.test(lc)) {
+            return { intent: 'repeat', reply: c.lastSpoken || 'I have not said anything yet.' };
+        }
+        // R2.9.1 - "where am I" - return current Service Portal route
+        if (/\b(where am i|which page|what page|current page|kahaan hoon)\b/.test(lc)) {
+            var pageId = '';
+            try {
+                var qp = new URLSearchParams(window.location.search);
+                pageId = qp.get('id') || 'index';
+            } catch (e) { pageId = 'unknown'; }
+            return { intent: 'where', reply: 'You are on the ' + pageId.replace(/_/g,' ') + ' page of the Service Portal.' };
+        }
+        // R2.9.1 - quiet / silence (without sleeping)
+        if (/^(quiet|silence|hush|be quiet|chup|chup ho)\.?$/i.test(lc)) {
+            return { intent: 'quiet', reply: 'Of course. I will stay silent until you speak to me again.' };
+        }
+        // R2.9.1 - speed up / slow down playback
+        if (/\b(speak (faster|quicker)|talk faster|hurry up|jaldi)\b/.test(lc)) {
+            return { intent: 'pace', reply: 'I will speak a bit quicker from now on.' };
+        }
+        if (/\b(speak (slower|slowly)|talk slower|slow down|dheere)\b/.test(lc)) {
+            return { intent: 'pace', reply: 'I will slow down a touch.' };
+        }
+        // R2.9.1 - acknowledgement variants
+        if (/^(cool|nice|great|awesome|perfect|wonderful|bahut khoob|wah)\.?$/i.test(lc) && lc.length < 25) {
+            return { intent: 'praise', reply: 'Thank you. Happy to help.' };
+        }
         return null;
     }
 
@@ -833,6 +880,7 @@ api.controller = function ($scope, $timeout, $window) {
             source.connect(_micAnalyser);
             var data = new Uint8Array(_micAnalyser.frequencyBinCount);
 
+            var lastMicLevel = -1;
             var loop = function () {
                 _micAnalyser.getByteTimeDomainData(data);
                 var sum = 0;
@@ -842,14 +890,16 @@ api.controller = function ($scope, $timeout, $window) {
                 }
                 var rms = Math.sqrt(sum / data.length);
                 var level = Math.min(100, Math.round(rms * 300));
-                c.micLevel = level;
-                if (level > c.micLevelPeak) c.micLevelPeak = level;
-                // R2.8 - feed the orb's voice bars from mic when NOT speaking
-                if (c.state !== 'speaking') {
-                    c.audioLevel = level;
-                    _recomputeVoiceRing();   // R2.8.2 polygon ring
+                if (level !== lastMicLevel) {
+                    lastMicLevel = level;
+                    c.micLevel = level;
+                    if (level > c.micLevelPeak) c.micLevelPeak = level;
+                    if (c.state !== 'speaking') {
+                        c.audioLevel = level;
+                        _recomputeVoiceRing();
+                    }
+                    $scope.$applyAsync();
                 }
-                $scope.$applyAsync();
                 _micRafId = requestAnimationFrame(loop);
             };
             loop();
@@ -1563,6 +1613,7 @@ api.controller = function ($scope, $timeout, $window) {
             var dynCats     = compactList(v.categories, 25);
             var dynKb       = compactList(v.kb_titles, 30);
             var dynCatItems = compactList(v.catalog_items, 25);
+            var dynCommon   = compactList(v.common, 120);   // R2.9.1 - SN/IT corpus
             var domain = '#JSGF V1.0; grammar netra;\n' +
                 'public <wake> = ' + wakeOptions + ' | hey netra | ok netra | hello netra | listen netra ;\n' +
                 'public <verb> = open | create | log | file | raise | report | new | start | ' +
@@ -1604,6 +1655,9 @@ api.controller = function ($scope, $timeout, $window) {
             }
             if (dynCatItems.length) {
                 domain += '\npublic <catitem> = ' + dynCatItems.join(' | ') + ' ;';
+            }
+            if (dynCommon.length) {
+                domain += '\npublic <common> = ' + dynCommon.join(' | ') + ' ;';
             }
             // R2.2 - inject the users PERSONAL VOCAB into the grammar so
             // Chrome itself biases toward those names/words during recognition.
@@ -1978,60 +2032,75 @@ api.controller = function ($scope, $timeout, $window) {
                '</voice></speak>';
     }
 
-    /* ============================================================
-     *  R2.8 - OUTPUT AUDIO LEVEL ANALYSER
-     *
-     *  Plug any <audio> element into a Web Audio AnalyserNode so we
-     *  can read its real-time amplitude and drive c.audioLevel for
-     *  the voice bars around the orb. Without this, the bars would
-     *  freeze flat while Netra speaks.
-     * ============================================================ */
-    var _outSrc = null;       // MediaElementAudioSourceNode
-    var _outAnalyser = null;
+    // Output amplitude analyser: drives c.audioLevel (and the orb's voice ring)
+    // from the currently-playing <audio> element. Web Audio requires that
+    // createMediaElementSource be called at most once per element, so we cache
+    // the source+analyser on the element itself.
     var _outRafId = null;
     function attachOutputAnalyser(audioEl) {
         if (!audioEl || !window.AudioContext) return;
         try {
-            // Reuse the mic AudioContext if it exists - one context is best
             var ctx = _micCtx || new (window.AudioContext || window.webkitAudioContext)();
-            // MediaElementSource can only be created ONCE per element; bind on first use
+            var analyser;
             if (audioEl.__netraSrc) {
-                _outAnalyser = audioEl.__netraSrc.netraAnalyser;
+                analyser = audioEl.__netraSrc.netraAnalyser;
             } else {
-                _outSrc = ctx.createMediaElementSource(audioEl);
-                _outAnalyser = ctx.createAnalyser();
-                _outAnalyser.fftSize = 512;
-                _outAnalyser.smoothingTimeConstant = 0.6;
-                _outSrc.connect(_outAnalyser);
-                _outAnalyser.connect(ctx.destination);   // still play to speakers
-                audioEl.__netraSrc = _outSrc;
-                _outSrc.netraAnalyser = _outAnalyser;
+                var src = ctx.createMediaElementSource(audioEl);
+                analyser = ctx.createAnalyser();
+                analyser.fftSize = 512;
+                analyser.smoothingTimeConstant = 0.6;
+                src.connect(analyser);
+                analyser.connect(ctx.destination);
+                audioEl.__netraSrc = src;
+                src.netraAnalyser = analyser;
             }
             if (_outRafId) cancelAnimationFrame(_outRafId);
-            var data = new Uint8Array(_outAnalyser.frequencyBinCount);
+            var data = new Uint8Array(analyser.frequencyBinCount);
+            var lastLevel = -1;
             var tick = function () {
                 if (audioEl.paused || audioEl.ended) {
-                    c.audioLevel = 0;
-                    $scope.$applyAsync();
-                    return;   // stop the loop when audio stops
+                    if (c.audioLevel !== 0) {
+                        c.audioLevel = 0;
+                        _recomputeVoiceRing();
+                        $scope.$applyAsync();
+                    }
+                    return;
                 }
-                _outAnalyser.getByteTimeDomainData(data);
+                analyser.getByteTimeDomainData(data);
                 var sum = 0;
                 for (var i = 0; i < data.length; i++) {
                     var v = (data[i] - 128) / 128;
                     sum += v * v;
                 }
                 var rms = Math.sqrt(sum / data.length);
-                c.audioLevel = Math.min(100, Math.round(rms * 320));
-                _recomputeVoiceRing();   // R2.8.2 polygon ring
-                $scope.$applyAsync();
+                // Output PCM is typically softer than mic input, so the gain is
+                // higher (rms * 520 vs mic's rms * 300). Combined with the
+                // speaking-state base+spike boost in _recomputeVoiceRing, this
+                // makes Netra's aura visibly larger than the user's mic-driven ring.
+                var level = Math.min(100, Math.round(rms * 520));
+                if (level !== lastLevel) {
+                    lastLevel = level;
+                    c.audioLevel = level;
+                    _recomputeVoiceRing();
+                    $scope.$applyAsync();
+                }
                 _outRafId = requestAnimationFrame(tick);
             };
             tick();
         } catch (e) {
-            // Already-connected source is fine - means tick is already running
             logEvent('warn', 'output analyser: ' + (e.message || e));
         }
+    }
+
+    // Web Audio nodes are otherwise retained by the AudioContext for the
+    // lifetime of the page, so each utterance would leak a source+analyser.
+    function detachOutputAnalyser(audioEl) {
+        if (!audioEl || !audioEl.__netraSrc) return;
+        var src = audioEl.__netraSrc;
+        var a = src.netraAnalyser;
+        try { if (a) a.disconnect(); } catch (e) {}
+        try { src.disconnect(); } catch (e) {}
+        audioEl.__netraSrc = null;
     }
 
     // Unified post-TTS handler: reset state, ensure mic is open, fire user callback.
@@ -2159,13 +2228,17 @@ api.controller = function ($scope, $timeout, $window) {
                 currentAudio = audio;
                 logEvent('tts', 'gemini: ' + r.voice + ' (' + Math.round(r.b64.length / 1024) + ' KB)');
                 setState('speaking');
+                // Hook the Web Audio analyser BEFORE play() so MediaElementSource
+                // is in place before audio starts streaming - otherwise the analyser
+                // reads silence and the aura never expands while Netra speaks.
+                attachOutputAnalyser(audio);
                 audio.onplaying = function () {
                     logEvent('tts', 'gemini playing');
-                    attachOutputAnalyser(audio);
                 };
                 audio.onended = function () {
                     if (resolved) return;
                     resolved = true;
+                    detachOutputAnalyser(audio);
                     URL.revokeObjectURL(url);
                     if (currentAudio === audio) currentAudio = null;
                     ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
@@ -2174,6 +2247,7 @@ api.controller = function ($scope, $timeout, $window) {
                 audio.onerror = function () {
                     if (resolved) return;
                     resolved = true;
+                    detachOutputAnalyser(audio);
                     URL.revokeObjectURL(url);
                     logEvent('warn', 'gemini audio playback error - fallback edge');
                     speakEdgeTTS(text, done);
@@ -2248,15 +2322,17 @@ api.controller = function ($scope, $timeout, $window) {
                         audio.playbackRate = 1.50;   // R2.1 - 1.5x, brisk + Claude-like
                         audio.volume = 1.0;
                         currentAudio = audio;
+                        // R2.9.1 - attach BEFORE play() so MediaElementSource binds in time
+                        attachOutputAnalyser(audio);
                         audio.onplaying = function () {
                             if (resolved) return;
                             $timeout.cancel(watchdog);
                             logEvent('tts', 'edge playing @1.50x');
-                            attachOutputAnalyser(audio);   // R2.8 voice bars
                         };
                         audio.onended = function () {
                             if (resolved) return;
                             resolved = true;
+                            detachOutputAnalyser(audio);
                             URL.revokeObjectURL(url);
                             if (currentAudio === audio) currentAudio = null;
                             ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
@@ -2265,6 +2341,7 @@ api.controller = function ($scope, $timeout, $window) {
                         audio.onerror = function () {
                             if (resolved) return;
                             resolved = true;
+                            detachOutputAnalyser(audio);
                             URL.revokeObjectURL(url);
                             logEvent('warn', 'edge audio playback error - fallback');
                             speakStreamElements(text, done);
@@ -2321,7 +2398,15 @@ api.controller = function ($scope, $timeout, $window) {
      *  Falls back silently if Edge TTS is unavailable - no filler is OK,
      *  the existing audio cue from cue('think') stays.
      * ============================================================ */
-    var FILLER_PHRASES = ['Hmm.', 'Let me see.', 'Okay so.', 'Right.', 'Mm.', 'Ahh.'];
+    // R2.9.1 - expanded filler set for more natural cadence during the Gemini
+    // round-trip. Picked from Mihir's spoken-Indian-English filler vocabulary
+    // so the thinking pause sounds conversational rather than scripted.
+    var FILLER_PHRASES = [
+        'Hmm.', 'Let me see.', 'Okay so.', 'Right.', 'Mm.', 'Ahh.',
+        'One moment.', 'Let me check.', 'I see.', 'Right so.',
+        'Hmm okay.', 'Just a moment.', 'Got it.', 'Let me think.',
+        'Alright.', 'So.', 'Mm hmm.', 'Bear with me.'
+    ];
     var fillerCache = [];   // [{url, text}]
     var lastFillerPlayedAt = 0;
     var currentFillerAudio = null;
@@ -2430,6 +2515,7 @@ api.controller = function ($scope, $timeout, $window) {
             resolved = true;
             $timeout.cancel(watchdog);
             try { audio.pause(); audio.src = ''; } catch (e) {}
+            detachOutputAnalyser(audio);
             if (currentAudio === audio) currentAudio = null;
             logEvent('warn', 'remote -> browser fallback: ' + reason);
             speakBrowser(text, done);
@@ -2438,6 +2524,7 @@ api.controller = function ($scope, $timeout, $window) {
             if (resolved) return;
             resolved = true;
             $timeout.cancel(watchdog);
+            detachOutputAnalyser(audio);
             ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
             if (currentAudio === audio) currentAudio = null;
             if (done) done();
@@ -2445,12 +2532,14 @@ api.controller = function ($scope, $timeout, $window) {
 
         var watchdog = $timeout(function () { fallback('no playback in 4s'); }, 4000);
 
+        // R2.9.1 - state must flip to speaking BEFORE the analyser ticks so the
+        // recompute picks up VOICE_RING_BASE_SPEAKING + spike. Then attach.
+        setState('speaking');
+        attachOutputAnalyser(audio);
         audio.onplaying = function () {
             if (resolved) return;
             $timeout.cancel(watchdog);
-            setState('speaking');
             logEvent('tts', 'remote playing');
-            attachOutputAnalyser(audio);   // R2.8 voice bars
         };
         audio.onended = function () { if (!resolved) { logEvent('tts', 'remote ended'); finish(); } };
         audio.onerror = function () { fallback('audio.onerror'); };

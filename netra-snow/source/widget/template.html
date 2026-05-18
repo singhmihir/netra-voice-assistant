@@ -263,14 +263,30 @@
           <stop offset="100%" stop-color="rgba(127,255,176,0)"/>
         </radialGradient>
 
-        <!-- R2.8.2 - voice ring fill gradient. Bright near the sphere edge,
-             fading out so the connected polygon reads as an energy field. -->
+        <!-- Voice ring fill: case-hardened violet patina. Brightest just outside
+             the sphere edge (deep violet), patinas through magenta to an amber
+             heat-treatment edge, fades through bright violet, then transparent. -->
         <radialGradient id="netra-voice-gradient" cx="50%" cy="50%" r="50%">
           <stop offset="0%"   stop-color="rgba(0,0,0,0)"/>
           <stop offset="48%"  stop-color="rgba(0,0,0,0)"/>
-          <stop offset="50%"  stop-color="var(--iris-bright, rgba(174,240,208,0.55))"/>
-          <stop offset="100%" stop-color="rgba(127,255,176,0.05)"/>
+          <stop offset="50%"  stop-color="rgba(139, 61, 240, 0.95)"/>
+          <stop offset="60%"  stop-color="rgba(190, 90, 235, 0.80)"/>
+          <stop offset="72%"  stop-color="rgba(255, 170,  80, 0.55)"/>
+          <stop offset="86%"  stop-color="rgba(160,  64, 232, 0.35)"/>
+          <stop offset="100%" stop-color="rgba(90,  26, 160, 0)"/>
         </radialGradient>
+        <!-- Voice ring stroke: linear gradient across the bounding box gives the
+             mottled multi-tone look of case-hardened steel (deep violet -> bright
+             magenta -> golden amber heat-treatment patch -> back to deep violet). -->
+        <linearGradient id="netra-voice-stroke-gradient" gradientUnits="userSpaceOnUse"
+                        x1="0" y1="0" x2="120" y2="120">
+          <stop offset="0%"   stop-color="#6920b8"/>
+          <stop offset="25%"  stop-color="#8b3df0"/>
+          <stop offset="48%"  stop-color="#c660ff"/>
+          <stop offset="62%"  stop-color="#ffb84d"/>
+          <stop offset="80%"  stop-color="#a040e8"/>
+          <stop offset="100%" stop-color="#5a1aa0"/>
+        </linearGradient>
 
         <!-- Rim light gradient (highlight on lower-right edge) -->
         <radialGradient id="netra-rim" cx="74%" cy="76%" r="48%">
@@ -297,6 +313,48 @@
             <feMergeNode in="SourceGraphic"/>
           </feMerge>
         </filter>
+        <!-- Case-hardened violet glow for the voice ring (SVG-native so the
+             SCSS compiler can't strip it). Three Gaussian blurs at different
+             radii give a soft inner violet, mid magenta, outer amber halo. -->
+        <filter id="netra-violet-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur1"/>
+          <feFlood flood-color="#a050f0" flood-opacity="0.75" result="violet"/>
+          <feComposite in="violet" in2="blur1" operator="in" result="violetGlow"/>
+          <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur2"/>
+          <feFlood flood-color="#be5aeb" flood-opacity="0.45" result="magenta"/>
+          <feComposite in="magenta" in2="blur2" operator="in" result="magentaGlow"/>
+          <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur3"/>
+          <feFlood flood-color="#ffaa50" flood-opacity="0.30" result="amber"/>
+          <feComposite in="amber" in2="blur3" operator="in" result="amberGlow"/>
+          <feMerge>
+            <feMergeNode in="amberGlow"/>
+            <feMergeNode in="magentaGlow"/>
+            <feMergeNode in="violetGlow"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+        <!-- Speaking-state aura: wider, more vibrant, with a fourth deep-violet outer halo. -->
+        <filter id="netra-violet-glow-speaking" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="b1"/>
+          <feFlood flood-color="#a050f0" flood-opacity="0.90" result="c1"/>
+          <feComposite in="c1" in2="b1" operator="in" result="g1"/>
+          <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="b2"/>
+          <feFlood flood-color="#be5aeb" flood-opacity="0.60" result="c2"/>
+          <feComposite in="c2" in2="b2" operator="in" result="g2"/>
+          <feGaussianBlur in="SourceGraphic" stdDeviation="11" result="b3"/>
+          <feFlood flood-color="#ffaa50" flood-opacity="0.40" result="c3"/>
+          <feComposite in="c3" in2="b3" operator="in" result="g3"/>
+          <feGaussianBlur in="SourceGraphic" stdDeviation="18" result="b4"/>
+          <feFlood flood-color="#8b3df0" flood-opacity="0.18" result="c4"/>
+          <feComposite in="c4" in2="b4" operator="in" result="g4"/>
+          <feMerge>
+            <feMergeNode in="g4"/>
+            <feMergeNode in="g3"/>
+            <feMergeNode in="g2"/>
+            <feMergeNode in="g1"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
       </defs>
 
       <!-- ALL geometry centred at 60,60 in the 120x120 viewBox so we
@@ -310,18 +368,26 @@
            of energy outside the sphere. Spike multiplier 2x the
            previous (0.40-0.50 vs 0.18-0.25). -->
       <g class="netra-voice-ring-group" ng-show="c.alert">
-        <!-- Filled waveform polygon (translucent fill) -->
+        <!-- Filled waveform polygon: case-hardened violet patina inside the
+             ring outline. Same SVG glow filter as the stroke so the fill
+             reads as a soft inner aura rather than a flat color. -->
         <polygon class="netra-voice-ring-fill"
                  ng-attr-points="{{c.voiceRingPoints}}"
                  fill="url(#netra-voice-gradient)"
-                 stroke="none"/>
-        <!-- Outer connected outline (the bright neon wave) -->
+                 stroke="none"
+                 ng-attr-filter="{{c.state === 'speaking' ? 'url(#netra-violet-glow-speaking)' : 'url(#netra-violet-glow)'}}"/>
+        <!-- Outer connected outline: case-hardened violet stroke gradient.
+             SVG `filter` attribute is the OOB-correct way to layer glows on
+             SVG geometry — the SCSS compiler can't strip this. Two filters:
+             one for the idle/listening state, swap to the speaking variant
+             via ng-attr-filter when state=speaking. -->
         <polygon class="netra-voice-ring-stroke"
                  ng-attr-points="{{c.voiceRingPoints}}"
                  fill="none"
-                 stroke="var(--iris-bright, #aef0d0)"
+                 stroke="url(#netra-voice-stroke-gradient)"
                  stroke-width="1.4"
-                 stroke-linejoin="round"/>
+                 stroke-linejoin="round"
+                 ng-attr-filter="{{c.state === 'speaking' ? 'url(#netra-violet-glow-speaking)' : 'url(#netra-violet-glow)'}}"/>
       </g>
 
       <!-- Outermost soft halo, pulses via CSS -->
