@@ -837,6 +837,96 @@ The R2.9 simplify pass earlier in the cycle had already addressed the in-code op
 
 ---
 
+## 14.6 R2.11 — Claude integration + smart approval triage + accessible code narration + NL query builder
+
+This layer adds a SECOND LLM (Anthropic's Claude) alongside Gemini for tasks where its reasoning advantage is measurable, plus three blind-user-focused tools that exploit it.
+
+### 14.6.1 Claude API client
+
+- **New sys_properties**:
+  - `x_196061_netra_v1.anthropic_api_key` (password2, encrypted). When empty, the new tools fall back to Gemini.
+  - `x_196061_netra_v1.claude_model` (default `claude-haiku-4-5-20251001`). Haiku 4.5 is the cost/quality sweet spot for these ~10-call/day workloads — $0.004 per call versus Sonnet at $0.012.
+- **`_callClaude(messages, systemText, tools, maxTokens)`** (`server.js`):
+  - Endpoint `POST https://api.anthropic.com/v1/messages`
+  - Headers `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
+  - System prompt always wrapped with `cache_control: {type: 'ephemeral'}` — 5-min server-side cache gives ~10× input cost savings on subsequent calls in the same session
+  - 45-second `setHttpTimeout`
+  - Returns `{error: 'no_key'}` if the API key is unset (signals fallback)
+  - On HTTP 429/529 returns `{error: 'rate_limited', status}`
+- **`_claudeText(resp)`** — flat helper that joins the `content[]` array's `text` blocks into a single string for the synchronous tools below.
+
+### 14.6.2 `triage_approvals` — smart approval queue ranking
+
+The single highest-value capability for a blind ServiceNow user (per the May-2026 accessibility research). Pulls all pending approvals for `gs.getUserID()`, packages a structured corpus (`approval index | source table | number | priority | requester | short description`), and asks Claude (or Gemini fallback) to classify each as `ROUTINE` / `SCRUTINY` / `RISKY` with a one-sentence rationale.
+
+**Output shape**:
+```json
+{
+  "ok": true,
+  "via": "claude" | "gemini",
+  "count": 12,
+  "summary": "You have 12 pending; 1 risky prod schema change, 3 catalog requests that need scrutiny, 8 routine.",
+  "triage": [
+    { "index": 1, "level": "RISKY",    "rationale": "Production database schema change with no rollback plan." },
+    { "index": 2, "level": "SCRUTINY", "rationale": "Non-standard hardware request above usual price band." },
+    ...
+  ]
+}
+```
+
+The system prompt directive (R2.11 layer) tells Gemini that when calling `triage_approvals`, it should **read out the top 2 by risk** and ask the user whether to continue — not enumerate all of them.
+
+### 14.6.3 `narrate_script` — accessible spoken narration of code
+
+`read_script` (R2.6) returns raw source code. For a blind admin trying to understand "what does this Business Rule do", that's nearly useless — code with curly braces and semicolons is brutal to TTS through.
+
+`narrate_script` wraps `read_script`, then hands the source to Claude with a narration prompt: *"Produce a clear 4-6 sentence narrative explaining what this script does, its inputs, outputs, and non-obvious behaviour. Do not narrate every line — focus on the WHAT and WHY. End with one sentence describing the BIGGEST RISK or gotcha if there is one."*
+
+The system prompt instructs Gemini to prefer `narrate_script` over `read_script` whenever the user asks to "explain", "describe", "tell me about" a script. `read_script` is only invoked when the user explicitly asks for the source code.
+
+### 14.6.4 `build_query` — natural language → encoded query
+
+Blind users dictating a complex ticket filter shouldn't have to construct strings like `priority=1^short_descriptionLIKEVPN^opened_at>=javascript:gs.daysAgoStart(7)`. `build_query` asks Claude (or Gemini fallback) to translate.
+
+Few-shot examples baked into the system prompt cover the most common patterns: `my`/`mine` → `javascript:gs.getUserID()`, `my team` → `javascript:gs.getUser().getMyGroups()`, priority words → numeric values, state words → numeric states, "last week" → `gs.daysAgoStart(7)`, etc.
+
+After the model returns a query string, the tool runs a `GlideAggregate` count on the target table so the user knows the result-set size before drilling in: *"Found 14 matching rows. The query is: priority=1^short_descriptionLIKEVPN…"*
+
+Both LLM paths strip code fences and verify the output contains at least one `=` or `LIKE` — guarding against hallucinated commentary.
+
+### 14.6.5 List-summarization directive
+
+Added to the system prompt. When any tool returns more than 4 items, Gemini summarises the **shape** of the list first, then offers to drill in — instead of enumerating every entry. Pattern:
+
+> *"You have 8 open tickets — 2 are P1 about Outlook, 3 are P2 across various, 3 are P4 minor. Want me to read the P1 ones first?"*
+
+This is the single biggest UX win documented in the May-2026 blind-user accessibility research for ServiceNow.
+
+---
+
+## 14.7 R2.12+ roadmap (research-validated, not yet built)
+
+The May-2026 ServiceNow-accessibility research (NV Access reports, Deque audits, ServiceNow Known Error KBs, Voice Input for Now Assist co-design with TruAbility) yielded a prioritised backlog of advanced AI-accessibility capabilities. Each entry includes the documented pain it addresses, the AI primitive it needs, and a complexity estimate.
+
+| # | Capability | Maps to documented pain | AI primitive | Complexity |
+|---|---|---|---|---|
+| R2.12.1 | **Spoken form diffs** — detect DOM mutations after a field change, summarise "8 fields updated: Assignment Group is now Network L2, Priority raised to 2, Required-Field-X now visible" | KB pain: form change feedback is silent when fields auto-populate | Client-side DOM snapshot before/after + Gemini summary | M |
+| R2.12.2 | **Reference-field resolver** — intercept the magnifier-lookup dance; user dictates "the network team in Mumbai", Netra fuzzy-resolves via existing `lookup_user` / `_assignToGroup` + RAG, returns one match | Reference field icons unannounced in classic-UI screen readers | Existing `lookup_user` + `semantic_search_knowledge` chained | S |
+| R2.12.3 | **Audio breadcrumb / context anchor** — persistent spoken "you are in: Incident INC0012345 → Work Notes field, 3 of 14 required fields filled". Survives the duplicate-`main`-landmark bug | KB pain: two `main` landmarks break navigation; tab order ≠ visual order | Client DOM scan + tracked focus + Gemini one-liner | M |
+| R2.12.4 | **Predictive next-action** — after every tool call, surface 1–2 likely next steps tied to the user's last 100 turns | Workflow speed | Pattern-match in `mem` array + Claude generative suggestion | M |
+| R2.12.5 | **Adaptive verbosity (AURA pattern)** — track per-user "scratch that" rate, replay rate, time-on-field; auto-tune TTS speech rate + Netra's verbosity. Personal-vocab layer stores the user's chosen rate | Cognitive load across long sessions | Client-side telemetry + sys_property write | M |
+| R2.12.6 | **Dialog interrupt + summarise** — detect the "Personalize List Columns" over-narration; intercept, summarise the dialog in one sentence, expose options as voice commands | KB1004989 — over-narration drowns user | DOM mutation observer + Claude summarisation | M |
+| R2.12.7 | **Validation-failure pre-flight** — before submitting a form, scan the field state and predict what will fail validation. *"Submitting will fail: CMDB CI is required for hardware incidents."* | Form change feedback silent | Client field scan + Claude pattern match against table dictionary | M |
+| R2.12.8 | **Cross-ticket pattern analysis** — `analyze_patterns(query)` runs a query across many tickets, sends them to Claude, returns narrative pattern analysis: "Of the 23 VPN tickets last month, 18 mention the new MFA rollout; recommend opening a problem record" | Workflow productivity | Direct Claude API with full RAG context | L |
+| R2.12.9 | **Risk-aware change-request review** — given a change request's full body, Claude returns structured risk analysis (impact, blast radius, rollback feasibility, scheduling) | Change-management efficiency | Direct Claude API | M |
+| R2.12.10 | **Workflow orchestration** — `orchestrate("Create a change for Outlook patching, assign Sarah as approver, schedule for next Saturday 2am, notify the requester")` — multi-step plan with confirmation gates between each step | Productivity for complex workflows | Claude planning + per-step Gemini tool execution | L |
+| R2.12.11 | **Spoken record diff** — `whats_changed(ticket, since="last_open")` — compare current state to user's last-seen state, narrate only deltas | Productivity, screen-reader-fatigue avoidance | Client-side per-record cache + Claude diff narration | M |
+| R2.12.12 | **Gemini Live audio API** — replace the current TTS path with native speech-in / speech-out via WebSocket. Saves ~2s of latency per turn; built-in VAD + interruption detection | Latency / interruption support | Significant rewrite of TTS pipeline; new WSS path | L |
+
+The top three in this list (spoken form diffs, audio breadcrumb, validation pre-flight) all directly address Known Error KBs from ServiceNow's own accessibility tracker.
+
+---
+
 ## 14.5 R2.10 — RAG + sentiment + multilingual + conversational repair
 
 Four new AI capabilities added on top of R2.9.1:
