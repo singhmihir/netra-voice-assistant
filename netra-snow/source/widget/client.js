@@ -2902,46 +2902,101 @@ api.controller = function ($scope, $timeout, $window) {
         var words = (text || '').split(/\s+/).length;
         return Math.max(1200, Math.min(5000, words * 330));
     }
-    function _playOneFiller(onEndedExtra) {
-        if (!fillerCache.length) {
-            if (onEndedExtra) onEndedExtra();
-            return;
+    // R4.1 - track the active filler utterance so we can cancel it on
+    // interrupt or stop. currentFillerAudio handles the Edge blob path;
+    // currentFillerUtter handles the browser-TTS runtime path.
+    var currentFillerUtter = null;
+    function _playFillerLive(text, onDone) {
+        // Synthesize a filler at runtime via SpeechSynthesis. Used when
+        // the Edge pre-cache is empty (Edge WSS blocked) so fillers
+        // still play instead of silence.
+        if (typeof speechSynthesis === 'undefined' || !c.hasTTS) {
+            if (onDone) onDone();
+            return null;
         }
+        try {
+            // Don't cancel the existing utterance queue here - that would
+            // also stop the real reply if it's already speaking. Filler
+            // chain interrupt path calls speechSynthesis.cancel separately.
+            var u = new SpeechSynthesisUtterance(text);
+            u.rate   = 1.0;
+            u.pitch  = 0.98;
+            u.volume = 0.9;
+            u.lang   = 'en-IN';
+            var v = chooseVoice();
+            if (v) { u.voice = v; }
+            var fired = false;
+            var fire = function () { if (fired) return; fired = true; if (onDone) onDone(); };
+            u.onend = fire;
+            u.onerror = fire;
+            speechSynthesis.speak(u);
+            return u;
+        } catch (e) {
+            logEvent('warn', 'filler live failed: ' + e.message);
+            if (onDone) onDone();
+            return null;
+        }
+    }
+    function _playOneFiller(onEndedExtra) {
+        // Clear any in-flight filler before starting a new one
         if (currentFillerAudio) {
             try { currentFillerAudio.pause(); } catch (e) {}
             currentFillerAudio = null;
         }
-        var f = fillerCache[Math.floor(Math.random() * fillerCache.length)];
-        var a = new Audio(f.url);
-        a.volume = 0.85;
-        a.playbackRate = 1.0;
-        currentFillerAudio = a;
+        if (currentFillerUtter && typeof speechSynthesis !== 'undefined') {
+            try { speechSynthesis.cancel(); } catch (e) {}
+            currentFillerUtter = null;
+        }
+        // R4.1 - Path A: Edge cache populated -> play pre-rendered blob (best quality)
+        if (fillerCache.length) {
+            var f = fillerCache[Math.floor(Math.random() * fillerCache.length)];
+            var a = new Audio(f.url);
+            a.volume = 0.85;
+            a.playbackRate = 1.0;
+            currentFillerAudio = a;
+            _currentFillerStart = Date.now();
+            _currentFillerEst = _estimateFillerMs(f.text);
+            lastFillerPlayedAt = Date.now();
+            logEvent('tts', 'filler[blob]: "' + f.text + '" (~' + _currentFillerEst + 'ms)');
+            a.onended = function () {
+                if (currentFillerAudio === a) currentFillerAudio = null;
+                if (onEndedExtra) onEndedExtra();
+            };
+            a.onerror = function () {
+                if (currentFillerAudio === a) currentFillerAudio = null;
+                if (onEndedExtra) onEndedExtra();
+            };
+            a.play().catch(function () {
+                if (currentFillerAudio === a) currentFillerAudio = null;
+                if (onEndedExtra) onEndedExtra();
+            });
+            return;
+        }
+        // R4.1 - Path B: no cache (Edge blocked) -> synthesize live via
+        // browser TTS. Slightly less natural than Aria/Raveena but always
+        // works on networks where Edge WSS and StreamElements are blocked.
+        var phrase = FILLER_PHRASES[Math.floor(Math.random() * FILLER_PHRASES.length)];
         _currentFillerStart = Date.now();
-        _currentFillerEst = _estimateFillerMs(f.text);
+        _currentFillerEst = _estimateFillerMs(phrase);
         lastFillerPlayedAt = Date.now();
-        logEvent('tts', 'filler: "' + f.text + '" (~' + _currentFillerEst + 'ms)');
-        a.onended = function () {
-            if (currentFillerAudio === a) currentFillerAudio = null;
-            if (onEndedExtra) onEndedExtra();
-        };
-        a.onerror = function () {
-            if (currentFillerAudio === a) currentFillerAudio = null;
-            if (onEndedExtra) onEndedExtra();
-        };
-        a.play().catch(function () {
-            if (currentFillerAudio === a) currentFillerAudio = null;
+        logEvent('tts', 'filler[live]: "' + phrase + '" (~' + _currentFillerEst + 'ms)');
+        currentFillerUtter = _playFillerLive(phrase, function () {
+            currentFillerUtter = null;
             if (onEndedExtra) onEndedExtra();
         });
+        if (!currentFillerUtter) {
+            // synthesis unavailable - skip ahead so the chain keeps moving
+            $timeout(function () { if (onEndedExtra) onEndedExtra(); }, 50);
+        }
     }
     function startFillerChain() {
         if (_fillerChainActive) return;
-        if (!fillerCache.length) {
-            logEvent('tts', 'no fillers cached - chain skipped');
-            return;
-        }
+        // R4.1 - removed the "no cache -> skip" guard. We can now synthesize
+        // live, so the chain always starts. fillerCache acts as an optimisation
+        // when Edge WSS works; runtime browser TTS is the fallback.
         _fillerChainActive = true;
         _pendingReply = null;
-        logEvent('tts', 'filler chain start');
+        logEvent('tts', 'filler chain start (cache=' + fillerCache.length + ')');
         var advance = function () {
             // If a real reply was queued, deliver it now.
             if (_pendingReply) {
@@ -2963,9 +3018,14 @@ api.controller = function ($scope, $timeout, $window) {
         _playOneFiller(advance);
     }
     function stopFillerChain() {
-        if (!_fillerChainActive && !currentFillerAudio) return;
+        if (!_fillerChainActive && !currentFillerAudio && !currentFillerUtter) return;
         _fillerChainActive = false;
         _pendingReply = null;
+        // R4.1 - also cancel any live browser-TTS filler utterance
+        if (currentFillerUtter && typeof speechSynthesis !== 'undefined') {
+            try { speechSynthesis.cancel(); } catch (e) {}
+            currentFillerUtter = null;
+        }
         if (currentFillerAudio) {
             try { currentFillerAudio.pause(); } catch (e) {}
             currentFillerAudio = null;
@@ -2974,30 +3034,30 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function deliverServerReply(text, done) {
         // Server reply arrived. Decide: interrupt, queue, or just speak.
-        if (!_fillerChainActive && !currentFillerAudio) {
+        if (!_fillerChainActive && !currentFillerAudio && !currentFillerUtter) {
             // No filler running - normal speak
             speak(text, done);
             return;
         }
-        if (currentFillerAudio) {
-            // R4 - prefer the real audio.duration once metadata has loaded,
-            // fall back to the per-word estimate while it's still 0 or NaN.
-            var elapsed = Date.now() - _currentFillerStart;
-            var realMs = (currentFillerAudio.duration && isFinite(currentFillerAudio.duration))
-                         ? currentFillerAudio.duration * 1000 / (currentFillerAudio.playbackRate || 1)
-                         : _currentFillerEst;
-            var ratio = realMs > 0 ? elapsed / realMs : 1;
+        // R4.1 - support both blob fillers (currentFillerAudio) and live
+        // browser-TTS fillers (currentFillerUtter). Compute ratio against
+        // whichever is active.
+        var elapsed = Date.now() - _currentFillerStart;
+        var realMs = _currentFillerEst;
+        if (currentFillerAudio && currentFillerAudio.duration && isFinite(currentFillerAudio.duration)) {
+            realMs = currentFillerAudio.duration * 1000 / (currentFillerAudio.playbackRate || 1);
+        }
+        var ratio = realMs > 0 ? elapsed / realMs : 1;
+        if (currentFillerAudio || currentFillerUtter) {
             if (ratio < 0.5) {
-                // Interrupt - less than half of filler spoken
                 logEvent('tts', 'reply interrupts filler at ' + Math.round(ratio*100) + '% -> "Oh wait..."');
-                try { currentFillerAudio.pause(); } catch (e) {}
-                currentFillerAudio = null;
+                if (currentFillerAudio) { try { currentFillerAudio.pause(); } catch (e) {} currentFillerAudio = null; }
+                if (currentFillerUtter && typeof speechSynthesis !== 'undefined') { try { speechSynthesis.cancel(); } catch (e) {} currentFillerUtter = null; }
                 _fillerChainActive = false;
                 _pendingReply = null;
                 var prefixed = 'Oh wait, I have it. ' + text;
                 speak(prefixed, done);
             } else {
-                // Queue - let current filler finish naturally
                 logEvent('tts', 'reply queued behind filler at ' + Math.round(ratio*100) + '%');
                 _pendingReply = { text: text, done: done, queuedAt: Date.now() };
             }
