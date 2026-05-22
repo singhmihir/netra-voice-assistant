@@ -792,11 +792,24 @@ api.controller = function ($scope, $timeout, $window) {
         out = out.replace(/\bink\b/gi, 'INC');
         out = out.replace(/\bI\s*and\s*C\b/gi, 'INC');
 
+        // R3.6 - English-word -> ServiceNow prefix mapping (was missing)
+        //   "incident 8001"   -> "INC0008001"
+        //   "change 8001"     -> "CHG0008001"
+        //   "problem 8001"    -> "PRB0008001"
+        //   "request 8001"    -> "REQ0008001"
+        //   "task 8001"       -> "TASK0008001"
+        //   "knowledge 8001"  -> "KB0008001"
+        out = out.replace(/\bincident\s+(\d+)\b/gi, function(_,d){return 'INC' + d;});
+        out = out.replace(/\bchange\s+(?:request\s+)?(\d+)\b/gi, function(_,d){return 'CHG' + d;});
+        out = out.replace(/\bproblem\s+(\d+)\b/gi, function(_,d){return 'PRB' + d;});
+        out = out.replace(/\brequest\s+(\d+)\b/gi, function(_,d){return 'REQ' + d;});
+        out = out.replace(/\b(?:knowledge|article|kbase)\s+(\d+)\b/gi, function(_,d){return 'KB' + d;});
+
         // coalesce PREFIX + digits possibly separated by spaces
-        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB)\s*([\d\s]+)/g, function (_, prefix, digits) {
+        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK)\s*([\d\s]+)/g, function (_, prefix, digits) {
             var cleaned = digits.replace(/\s+/g,'');
-            // pad to 7 digits for incident-like
-            if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB)$/.test(prefix)) {
+            // pad to 7 digits for ticket-like prefixes
+            if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB|REQ|TASK)$/.test(prefix)) {
                 while (cleaned.length < 7) cleaned = '0' + cleaned;
             }
             return prefix + cleaned;
@@ -1574,7 +1587,7 @@ api.controller = function ($scope, $timeout, $window) {
                     logEvent('train', 'alias-rewrite: "' + t + '" -> "' + aliasedT + '"');
                     t = aliasedT;
                 }
-                processFinalTranscript(t, conf);
+                _enqueueFinalTranscript(t, conf);
             }
         };
 
@@ -1638,30 +1651,48 @@ api.controller = function ($scope, $timeout, $window) {
         }
     }
 
-    /* R3.5 - SR activity watchdog. Chrome's SpeechRecognition silently
-     * dies after ~5 mins on some Chromium builds (no onend, no onerror).
-     * If recRunning is true but we've had no interim/final result in
-     * 90s while the user is "alert" (not dormant), force a restart. */
-    var SR_IDLE_RESTART_MS = 90000;
+    /* R3.6 - SR activity watchdog with FULL recycle.
+     * Chrome's SpeechRecognition silently dies on some builds (no onend,
+     * no onerror). The R3.5 watchdog tried to restart SR alone, but
+     * sometimes the underlying audio pipeline is also stuck - the user
+     * was having to refresh the page. Now we tear down the SR instance
+     * AND the getUserMedia stream AND the AudioContext on every silent
+     * stall, then rebuild from scratch with a 600 ms gap so the OS can
+     * fully release the device.
+     */
+    var SR_IDLE_RESTART_MS = 60000;   // tightened 90s -> 60s
+    var _recyclingMic = false;
+    function _fullMicRecycle(reason) {
+        if (_recyclingMic) return;
+        _recyclingMic = true;
+        logEvent('rec', 'full mic+SR recycle (' + reason + ')');
+        recLastActivityAt = Date.now();   // reset to avoid retrigger
+        try { if (contRec) contRec.stop(); } catch (e) {}
+        try { if (contRec) contRec.abort(); } catch (e) {}
+        contRec = null;
+        try { stopMicLevelMeter(); } catch (e) {}
+        $timeout(function () {
+            try { startMicLevelMeter(); } catch (e) { logEvent('warn', 'meter restart: ' + e.message); }
+            $timeout(function () {
+                try { startContinuous(); } catch (e) { logEvent('warn', 'SR restart: ' + e.message); }
+                _recyclingMic = false;
+            }, 300);
+        }, 600);
+    }
     function _srActivityWatchdog() {
         try {
             if (c.recRunning && c.alert && c.state !== 'speaking' && recLastActivityAt > 0) {
                 var silentFor = Date.now() - recLastActivityAt;
                 if (silentFor > SR_IDLE_RESTART_MS) {
-                    logEvent('rec', 'no activity for ' + Math.round(silentFor/1000) + 's - forcing restart');
-                    recRestartCount = 0;
-                    recLastActivityAt = Date.now();   // reset to avoid restart loop
-                    try { if (contRec) contRec.stop(); } catch (e) {}
-                    $timeout(startContinuous, 200);
+                    _fullMicRecycle('idle ' + Math.round(silentFor/1000) + 's');
                 }
             } else if (c.recRunning && recLastActivityAt === 0) {
-                // first run - seed the timer so the watchdog has a baseline
                 recLastActivityAt = Date.now();
             }
         } catch (eW) { logEvent('warn', 'SR watchdog: ' + eW.message); }
-        $timeout(_srActivityWatchdog, 30000);
+        $timeout(_srActivityWatchdog, 20000);
     }
-    $timeout(_srActivityWatchdog, 30000);
+    $timeout(_srActivityWatchdog, 20000);
 
     /* ============================================================
      *  R1 - LISTENING WATCHDOG
@@ -1859,6 +1890,56 @@ api.controller = function ($scope, $timeout, $window) {
     /* ============================================================
      *  FINAL TRANSCRIPT DISPATCH
      * ============================================================ */
+    /* ============================================================
+     *  R3.6 - FINAL-TRANSCRIPT DEBOUNCE BUFFER
+     *
+     *  Web Speech often fires multiple isFinal events for a single
+     *  sentence (one per pause). Sending each fragment to Gemini
+     *  separately means:
+     *    - "change priority 2"   -> server confused
+     *    - "to 1"                -> server confused again
+     *  Instead we buffer finals for 1300ms; if no new final arrives,
+     *  join them into one utterance and send it. If TTS starts or the
+     *  user goes dormant before the timer expires, drop the buffer.
+     * ============================================================ */
+    var _finalBuffer  = [];
+    var _finalConfs   = [];
+    var _finalTimer   = null;
+    var FINAL_DEBOUNCE_MS = 1300;
+    function _enqueueFinalTranscript(text, conf) {
+        if (!text || !text.trim()) return;
+        _finalBuffer.push(text.trim());
+        _finalConfs.push(conf || 0);
+        logEvent('rec.buf', '+"' + text.trim() + '" (queue=' + _finalBuffer.length + ')');
+        // Surface the running buffer as interim so the dev panel still
+        // shows what's accumulating - feels live rather than stuck.
+        c.interim = _finalBuffer.join(' ');
+        $scope.$applyAsync();
+        if (_finalTimer) $timeout.cancel(_finalTimer);
+        _finalTimer = $timeout(_flushFinalBuffer, FINAL_DEBOUNCE_MS);
+    }
+    function _flushFinalBuffer() {
+        if (_finalTimer) { $timeout.cancel(_finalTimer); _finalTimer = null; }
+        if (!_finalBuffer.length) return;
+        var joined = _finalBuffer.join(' ').replace(/\s+/g, ' ').trim();
+        var bestConf = _finalConfs.reduce(function(a,b){return Math.max(a,b);}, 0);
+        _finalBuffer = [];
+        _finalConfs  = [];
+        c.interim = '';
+        if (joined) {
+            logEvent('rec.buf', 'flush -> "' + joined + '" conf=' + bestConf.toFixed(2));
+            processFinalTranscript(joined, bestConf);
+        }
+    }
+    function _dropFinalBuffer(reason) {
+        if (!_finalBuffer.length && !_finalTimer) return;
+        if (_finalTimer) { $timeout.cancel(_finalTimer); _finalTimer = null; }
+        logEvent('rec.buf', 'dropped (' + reason + '): "' + _finalBuffer.join(' ') + '"');
+        _finalBuffer = [];
+        _finalConfs  = [];
+        c.interim = '';
+    }
+
     function processFinalTranscript(text, conf) {
         var clean = (text || '').trim();
         if (!clean) return;
@@ -2048,8 +2129,8 @@ api.controller = function ($scope, $timeout, $window) {
         }
 
         var hung = $timeout(function () {
-            logEvent('warn', 'server >12s, may be hung');
-        }, 12000);
+            logEvent('warn', 'server >18s, may be hung - speak again to retry');
+        }, 18000);
 
         var startedAt = Date.now();   // R1 - latency tracking
         c.stats.utterances++;

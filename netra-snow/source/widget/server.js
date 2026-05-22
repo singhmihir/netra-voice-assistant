@@ -545,21 +545,26 @@
         //                                     even with thinkingBudget=0)
         // Pro models dropped — too slow for an interactive voice loop.
         var chain = [requestedModel];
-        ['gemini-flash-lite-latest',  // <-- new default; fastest in tests
-         'gemini-3.1-flash-lite',
+        // R3.6 - trimmed from 7 to 3 alternates. With 12s timeout each, the
+        // old worst case was 7x12=84s (which felt like a server hang).
+        // Now: 3 attempts max + 20s total deadline -> never exceeds ~22s.
+        ['gemini-flash-lite-latest',
          'gemini-2.5-flash-lite',
-         'gemini-2.0-flash-lite',
-         'gemini-flash-latest',
-         'gemini-2.5-flash',
-         'gemini-2.0-flash'].forEach(function (m) {
+         'gemini-2.0-flash-lite'].forEach(function (m) {
             if (chain.indexOf(m) < 0) chain.push(m);
         });
 
         var lastErr = null;
+        var chainStartedAt = Date.now();
+        var CHAIN_DEADLINE_MS = 20000;   // R3.6 - hard cap, no matter how many models left
         // 404 on a deprecated model is NOT a real "stop the chain" signal -
         // the model just doesnt exist. Keep going. We only stop on auth (401/403),
         // quota (RESOURCE_EXHAUSTED with quota), or actual permission errors.
         for (var i = 0; i < chain.length; i++) {
+            if (Date.now() - chainStartedAt > CHAIN_DEADLINE_MS) {
+                gs.warn('[NetraGemini] chain deadline hit after ' + i + ' attempts - giving up');
+                return { error: 'chain_deadline: ' + (lastErr || 'no model returned in 20s') };
+            }
             var result = _callGeminiOnce(apiKey, chain[i], contents, tools, systemInstruction);
             if (!result.error) {
                 if (i > 0) {
