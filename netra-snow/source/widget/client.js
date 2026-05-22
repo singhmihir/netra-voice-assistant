@@ -2259,12 +2259,15 @@ api.controller = function ($scope, $timeout, $window) {
             return;
         }
 
+        // R3.8 - preserve **word** markdown (used for SSML emphasis on Edge
+        // TTS) but strip everything else. The c.spoken display still gets
+        // the fully-cleaned version so the dev panel reads naturally.
         var clean = String(text)
             .replace(/```[\s\S]*?```/g, ' ')
-            .replace(/[*_`#>]/g, '')
+            .replace(/[_`#>]/g, '')           // strip _ ` # > only - keep *
             .replace(/\s+/g, ' ')
             .trim();
-        c.spoken = clean;
+        c.spoken = clean.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*/g, '');
         $scope.$applyAsync();
 
         // R1: wrap the done callback so state ALWAYS resets to idle/dormant
@@ -2290,21 +2293,39 @@ api.controller = function ($scope, $timeout, $window) {
     // Build SSML body with natural breath breaks between sentences.
     // Splits on .!? boundaries and inserts <break time="180ms"/>.
     function _buildHumanSSML(text, voice) {
-        var safe = String(text)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&apos;');
-        // Insert breath break after every .!? (followed by space or end)
-        safe = safe.replace(/([.!?]+)(\s|$)/g, '$1<break time="180ms"/>$2');
-        // Slightly shorter pause after commas
-        safe = safe.replace(/(,)(\s)/g, '$1<break time="80ms"/>$2');
-        // Slightly longer pause after em-dashes (Indian-English thinking pause)
-        safe = safe.replace(/( - | -- | — )/g, '<break time="120ms"/>$1');
+        // R3.8 - human prosody: stress emphasis, longer breaths, ellipsis
+        // pauses, and pitch-dip on natural verbal fillers. Order matters:
+        // we replace markdown markers with placeholder sentinels first so
+        // they survive the XML escape pass, then insert breaks, then expand
+        // sentinels into real SSML tags.
+        var t = String(text);
+        // Step 1: collapse runs of asterisks. **word** -> emphasis sentinel.
+        t = t.replace(/\*\*([^*]+)\*\*/g, 'EM$1/EM');
+        // Strip any leftover lone asterisks so they don't leak in.
+        t = t.replace(/\*/g, '');
+        // Step 2: ellipsis = thinking pause (~350ms)
+        t = t.replace(/\.{3,}/g, 'LP');
+        // Step 3: XML escape everything else
+        t = t.replace(/&/g, '&amp;')
+             .replace(/</g, '&lt;')
+             .replace(/>/g, '&gt;')
+             .replace(/"/g, '&quot;')
+             .replace(/'/g, '&apos;');
+        // Step 4: sentence / comma / em-dash breath breaks (lengthened)
+        t = t.replace(/([.!?]+)(\s|$)/g, '$1<break time="320ms"/>$2');
+        t = t.replace(/(,)(\s)/g, '$1<break time="150ms"/>$2');
+        t = t.replace(/( - | -- | — )/g, '<break time="240ms"/>$1');
+        // Step 5: pitch-dip on natural verbal fillers so umm/uh/ah sound
+        // like real human hesitation, not flat words.
+        t = t.replace(/\b(umm+|uhh*|ahh+|hmm+|mm+|well)\b(?=,)/gi,
+                      '<prosody pitch="-2st" rate="-15%" volume="-2dB">$1</prosody>');
+        // Step 6: expand sentinels
+        t = t.replace(/EM/g, '<emphasis level="strong">');
+        t = t.replace(/\/EM/g, '</emphasis>');
+        t = t.replace(/LP/g, '<break time="380ms"/>');
         return '<speak version=\'1.0\' xml:lang=\'en-IN\'>' +
                '<voice name=\'' + voice + '\'>' +
-               '<prosody rate=\'+15%\' pitch=\'+1st\'>' + safe + '</prosody>' +
+               '<prosody rate=\'+0%\' pitch=\'+1st\'>' + t + '</prosody>' +
                '</voice></speak>';
     }
 
@@ -3065,7 +3086,15 @@ api.controller = function ($scope, $timeout, $window) {
             TTS.cancel();
         }
 
-        var u = new SpeechSynthesisUtterance(text);
+        // R3.8 - Web Speech API has no SSML support, so strip the markdown
+        // emphasis + ellipsis markers we kept around for the SSML path.
+        // SpeechSynthesisUtterance also has no break-time tag, so we just
+        // rely on natural punctuation pauses.
+        var plain = String(text)
+            .replace(/\*\*([^*]+)\*\*/g, '$1')
+            .replace(/\*/g, '')
+            .replace(/\.{3,}/g, ',');   // ellipsis -> short pause via comma
+        var u = new SpeechSynthesisUtterance(plain);
         u.rate  = 1.15;   // R3.4 - 1.15x speed
         u.pitch = 1.05;
         u.volume = 1.0;
