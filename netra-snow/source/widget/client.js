@@ -968,22 +968,34 @@ api.controller = function ($scope, $timeout, $window) {
             logEvent('warn', 'mic-meter: getUserMedia not supported');
             return;
         }
-        // R2.7 - autoGainControl=false. With AGC on, Chrome silently
-        // attenuates the mic over time when the average level is "high"
-        // (the user's own voice counts as high), causing the meter to
-        // gradually drop. Off means the meter shows true acoustic level.
+        // R3.5 - autoGainControl=true. The previous off-by-default caused
+        // quiet mics (Bluetooth headsets, laptop integrated mics at arm's
+        // length) to produce audioLevel ~2/100, which then fell below the
+        // noise gate AND was too soft for SpeechRecognition. AGC on lets
+        // Chrome auto-boost quiet inputs. The earlier R2.7 attenuation
+        // concern only applied to loud mics over long sessions; quiet
+        // inputs are unaffected. Combined with the +6dB GainNode below
+        // we now boost analysis ~2x even before AGC kicks in.
         navigator.mediaDevices.getUserMedia({ audio: {
-            echoCancellation: true, noiseSuppression: true, autoGainControl: false
+            echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+            channelCount: 1, sampleRate: 48000
         } }).then(function (stream) {
             _micStream = stream;
             c.micStreamActive = true;
             $scope.$applyAsync();
             _micCtx = new (window.AudioContext || window.webkitAudioContext)();
             var source = _micCtx.createMediaStreamSource(stream);
+            // R3.5 - GainNode amplifies the signal for our analyser only.
+            // Does NOT affect the audio sent to SpeechRecognition (separate
+            // pipeline) but makes the VU meter visibly responsive to soft
+            // voices. 2x = +6dB.
+            var gainNode = _micCtx.createGain();
+            gainNode.gain.value = 2.0;
             _micAnalyser = _micCtx.createAnalyser();
             _micAnalyser.fftSize = 1024;
             _micAnalyser.smoothingTimeConstant = 0.5;
-            source.connect(_micAnalyser);
+            source.connect(gainNode);
+            gainNode.connect(_micAnalyser);
             var data = new Uint8Array(_micAnalyser.frequencyBinCount);
 
             var lastMicLevel = -1;
@@ -999,7 +1011,7 @@ api.controller = function ($scope, $timeout, $window) {
                     sum += vv * vv;
                 }
                 var rms = Math.sqrt(sum / data.length);
-                var level = Math.min(100, Math.round(rms * 360));   // gain bumped
+                var level = Math.min(100, Math.round(rms * 500));   // R3.5 - 360 -> 500, more sensitive scaling
 
                 if (level !== lastMicLevel) {
                     lastMicLevel = level;
@@ -1012,7 +1024,7 @@ api.controller = function ($scope, $timeout, $window) {
                         // _recomputeVoiceRing uses the single audioLevel=0).
                         // Otherwise persistent ambient hum produces stuck
                         // spikes that never decay.
-                        if (level < 5) {
+                        if (level < 2) {   // R3.5 - 5 -> 2, more sensitive to soft speech
                             c.audioLevels = null;
                             _setOrbPulse(0);
                         } else {
@@ -1029,7 +1041,7 @@ api.controller = function ($scope, $timeout, $window) {
                                 // R2.12.4 - per-band noise gate: kill quiet
                                 // frequencies so ambient room tone doesn't
                                 // create visible jitter.
-                                bands[b] = (raw < 15) ? 0 : Math.min(100, raw);
+                                bands[b] = (raw < 6) ? 0 : Math.min(100, raw);   // R3.5 - 15 -> 6, gentler per-band gate
                             }
                             c.audioLevels = bands;
                             _setOrbPulse(((bands[0] + bands[1] + bands[2]) / 3) / 100);
@@ -1625,6 +1637,31 @@ api.controller = function ($scope, $timeout, $window) {
             $timeout(startContinuous, 1000);
         }
     }
+
+    /* R3.5 - SR activity watchdog. Chrome's SpeechRecognition silently
+     * dies after ~5 mins on some Chromium builds (no onend, no onerror).
+     * If recRunning is true but we've had no interim/final result in
+     * 90s while the user is "alert" (not dormant), force a restart. */
+    var SR_IDLE_RESTART_MS = 90000;
+    function _srActivityWatchdog() {
+        try {
+            if (c.recRunning && c.alert && c.state !== 'speaking' && recLastActivityAt > 0) {
+                var silentFor = Date.now() - recLastActivityAt;
+                if (silentFor > SR_IDLE_RESTART_MS) {
+                    logEvent('rec', 'no activity for ' + Math.round(silentFor/1000) + 's - forcing restart');
+                    recRestartCount = 0;
+                    recLastActivityAt = Date.now();   // reset to avoid restart loop
+                    try { if (contRec) contRec.stop(); } catch (e) {}
+                    $timeout(startContinuous, 200);
+                }
+            } else if (c.recRunning && recLastActivityAt === 0) {
+                // first run - seed the timer so the watchdog has a baseline
+                recLastActivityAt = Date.now();
+            }
+        } catch (eW) { logEvent('warn', 'SR watchdog: ' + eW.message); }
+        $timeout(_srActivityWatchdog, 30000);
+    }
+    $timeout(_srActivityWatchdog, 30000);
 
     /* ============================================================
      *  R1 - LISTENING WATCHDOG
