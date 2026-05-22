@@ -985,15 +985,15 @@ api.controller = function ($scope, $timeout, $window) {
             $scope.$applyAsync();
             _micCtx = new (window.AudioContext || window.webkitAudioContext)();
             var source = _micCtx.createMediaStreamSource(stream);
-            // R3.5 - GainNode amplifies the signal for our analyser only.
-            // Does NOT affect the audio sent to SpeechRecognition (separate
-            // pipeline) but makes the VU meter visibly responsive to soft
-            // voices. 2x = +6dB.
+            // R3.5.1 - GainNode set to 1.0 (no extra boost). AGC already
+            // normalises the stream; doubling on top made the ring dance
+            // for ambient room noise. The mic stream itself stays clean
+            // for SpeechRecognition; we only boost if AGC is OFF later.
             var gainNode = _micCtx.createGain();
-            gainNode.gain.value = 2.0;
+            gainNode.gain.value = 1.0;
             _micAnalyser = _micCtx.createAnalyser();
             _micAnalyser.fftSize = 1024;
-            _micAnalyser.smoothingTimeConstant = 0.5;
+            _micAnalyser.smoothingTimeConstant = 0.75;   // R3.5.1 - 0.5 -> 0.75 damp brief noise transients
             source.connect(gainNode);
             gainNode.connect(_micAnalyser);
             var data = new Uint8Array(_micAnalyser.frequencyBinCount);
@@ -1011,7 +1011,7 @@ api.controller = function ($scope, $timeout, $window) {
                     sum += vv * vv;
                 }
                 var rms = Math.sqrt(sum / data.length);
-                var level = Math.min(100, Math.round(rms * 500));   // R3.5 - 360 -> 500, more sensitive scaling
+                var level = Math.min(100, Math.round(rms * 360));   // R3.5.1 - back to 360 (500 amplified noise floor)
 
                 if (level !== lastMicLevel) {
                     lastMicLevel = level;
@@ -1024,7 +1024,7 @@ api.controller = function ($scope, $timeout, $window) {
                         // _recomputeVoiceRing uses the single audioLevel=0).
                         // Otherwise persistent ambient hum produces stuck
                         // spikes that never decay.
-                        if (level < 2) {   // R3.5 - 5 -> 2, more sensitive to soft speech
+                        if (level < 8) {   // R3.5.1 - 2 -> 8, damp ambient/typing noise
                             c.audioLevels = null;
                             _setOrbPulse(0);
                         } else {
@@ -1041,7 +1041,7 @@ api.controller = function ($scope, $timeout, $window) {
                                 // R2.12.4 - per-band noise gate: kill quiet
                                 // frequencies so ambient room tone doesn't
                                 // create visible jitter.
-                                bands[b] = (raw < 6) ? 0 : Math.min(100, raw);   // R3.5 - 15 -> 6, gentler per-band gate
+                                bands[b] = (raw < 18) ? 0 : Math.min(100, raw);   // R3.5.1 - 6 -> 18, kill jitter from ambient bands
                             }
                             c.audioLevels = bands;
                             _setOrbPulse(((bands[0] + bands[1] + bands[2]) / 3) / 100);
