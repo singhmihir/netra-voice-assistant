@@ -2179,7 +2179,7 @@ api.controller = function ($scope, $timeout, $window) {
         safe = safe.replace(/( - | -- | — )/g, '<break time="120ms"/>$1');
         return '<speak version=\'1.0\' xml:lang=\'en-IN\'>' +
                '<voice name=\'' + voice + '\'>' +
-               '<prosody rate=\'+15%\' pitch=\'+1st\'>' + safe + '</prosody>' +
+               '<prosody rate=\'+0%\' pitch=\'+1st\'>' + safe + '</prosody>' +
                '</voice></speak>';
     }
 
@@ -2319,8 +2319,7 @@ api.controller = function ($scope, $timeout, $window) {
      *  Connects to wss://speech.platform.bing.com/.../edge/v1
      *  with a hardcoded TrustedClientToken that all Edge browsers
      *  use. Streams MP3 chunks back, assembled into a Blob and
-     *  played through an <audio> element with playbackRate = 1.20
-     *  for that natural, slightly-quick-but-human cadence.
+     *  played through an <audio> element at default playbackRate (1.0).
      *
      *  Voices: en-IN-NeerjaNeural (default - warm Indian female),
      *  en-IN-AashiNeural, en-IN-AnanyaNeural, hi-IN-SwaraNeural.
@@ -2413,7 +2412,7 @@ api.controller = function ($scope, $timeout, $window) {
                 var blob = _pcmToWavBlob(r.b64, rate);
                 var url = URL.createObjectURL(blob);
                 var audio = new Audio(url);
-                audio.playbackRate = 1.20;   // gemini voice is already brisk
+                audio.playbackRate = 1.0;    // R3.4 - default speed
                 audio.volume = 1.0;
                 currentAudio = audio;
                 logEvent('tts', 'gemini: ' + r.voice + ' (' + Math.round(r.b64.length / 1024) + ' KB)');
@@ -2509,7 +2508,7 @@ api.controller = function ($scope, $timeout, $window) {
                         var blob = new Blob(chunks, { type: 'audio/mp3' });
                         var url = URL.createObjectURL(blob);
                         var audio = new Audio(url);
-                        audio.playbackRate = 1.50;   // R2.1 - 1.5x, brisk + Claude-like
+                        audio.playbackRate = 1.0;    // R3.4 - default speed
                         audio.volume = 1.0;
                         currentAudio = audio;
                         // R2.9.1 - attach BEFORE play() so MediaElementSource binds in time
@@ -2616,7 +2615,7 @@ api.controller = function ($scope, $timeout, $window) {
                 ws.send('X-Timestamp:' + new Date().toISOString() + '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' + cfg);
                 var safe = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
                 var ssml = '<speak version=\'1.0\' xml:lang=\'en-IN\'><voice name=\'' + (voice || c.edgeVoice) + '\'>' +
-                           '<prosody rate=\'+5%\' pitch=\'+0Hz\'>' + safe + '</prosody></voice></speak>';
+                           '<prosody rate=\'+0%\' pitch=\'+0Hz\'>' + safe + '</prosody></voice></speak>';
                 ws.send('X-RequestId:' + requestId + '\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:' + new Date().toISOString() + '\r\nPath:ssml\r\n\r\n' + ssml);
             };
             ws.onmessage = function (ev) {
@@ -2666,7 +2665,7 @@ api.controller = function ($scope, $timeout, $window) {
         var f = fillerCache[Math.floor(Math.random() * fillerCache.length)];
         var a = new Audio(f.url);
         a.volume = 0.75;
-        a.playbackRate = 1.15;
+        a.playbackRate = 1.0;    // R3.4 - default speed
         currentFillerAudio = a;
         lastFillerPlayedAt = Date.now();
         a.play().catch(function () { /* ignore - autoplay may be blocked */ });
@@ -2695,7 +2694,7 @@ api.controller = function ($scope, $timeout, $window) {
         var audio = new Audio();
         audio.src = url;
         audio.volume = 1.0;
-        audio.playbackRate = 1.50;   // R2.1 - 1.5x, brisk + Claude-like
+        audio.playbackRate = 1.0;    // R3.4 - default speed
         currentAudio = audio;
 
         // Single fallback guard - whichever signal fires first wins
@@ -2764,7 +2763,7 @@ api.controller = function ($scope, $timeout, $window) {
         }
 
         var u = new SpeechSynthesisUtterance(text);
-        u.rate  = 1.50;   // R2.1 - 1.5x, brisk + Claude-like
+        u.rate  = 1.0;    // R3.4 - default speed
         u.pitch = 1.05;
         u.volume = 1.0;
         var v = chooseVoice();
