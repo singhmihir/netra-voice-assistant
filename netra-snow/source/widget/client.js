@@ -2498,8 +2498,35 @@ api.controller = function ($scope, $timeout, $window) {
         });
     }
 
+    // R3.5.2 - circuit breaker: after 2 consecutive failures of a remote
+    // provider in the same page session, skip it. Saves the 4-6s timeout
+    // penalty per utterance on corporate networks that block these
+    // endpoints. Counters reset on successful playback or page reload.
+    var _edgeFails = 0;
+    var _streamFails = 0;
+    var REMOTE_FAIL_LIMIT = 2;
+    function _edgeFallback(text, done) {
+        _edgeFails++;
+        if (_edgeFails === REMOTE_FAIL_LIMIT) {
+            logEvent('tts', 'edge circuit open - skipping for this session');
+        }
+        speakStreamElements(text, done);
+    }
+    function _streamFallback(text, done, reason) {
+        _streamFails++;
+        if (_streamFails === REMOTE_FAIL_LIMIT) {
+            logEvent('tts', 'stream circuit open - skipping for this session');
+        }
+        logEvent('warn', 'remote -> browser fallback: ' + reason);
+        speakBrowser(text, done);
+    }
+
     function speakEdgeTTS(text, done) {
         if (!text) { _afterTTS(done); return; }
+        // R3.5.2 - skip if circuit is open
+        if (_edgeFails >= REMOTE_FAIL_LIMIT) {
+            return speakStreamElements(text, done);
+        }
         // Some networks/CSPs forbid arbitrary WSS - fall back fast if blocked.
         if (typeof WebSocket === 'undefined') {
             return speakStreamElements(text, done);
@@ -2513,7 +2540,7 @@ api.controller = function ($scope, $timeout, $window) {
             var watchdog = $timeout(function () {
                 if (!resolved) { resolved = true; try { ws.close(); } catch (e) {}
                     logEvent('warn', 'edge TTS no audio in 6s - fallback');
-                    speakStreamElements(text, done);
+                    _edgeFallback(text, done);
                 }
             }, 6000);
 
@@ -2539,7 +2566,7 @@ api.controller = function ($scope, $timeout, $window) {
                         // Assemble MP3 chunks and play
                         if (chunks.length === 0) {
                             logEvent('warn', 'edge returned no audio - fallback');
-                            if (!resolved) { resolved = true; $timeout.cancel(watchdog); speakStreamElements(text, done); }
+                            if (!resolved) { resolved = true; $timeout.cancel(watchdog); _edgeFallback(text, done); }
                             return;
                         }
                         var blob = new Blob(chunks, { type: 'audio/mp3' });
@@ -2553,7 +2580,8 @@ api.controller = function ($scope, $timeout, $window) {
                         audio.onplaying = function () {
                             if (resolved) return;
                             $timeout.cancel(watchdog);
-                            logEvent('tts', 'edge playing @1.50x');
+                            _edgeFails = 0;   // R3.5.2 - success resets circuit
+                            logEvent('tts', 'edge playing @1.15x');
                         };
                         audio.onended = function () {
                             if (resolved) return;
@@ -2570,13 +2598,13 @@ api.controller = function ($scope, $timeout, $window) {
                             detachOutputAnalyser(audio);
                             URL.revokeObjectURL(url);
                             logEvent('warn', 'edge audio playback error - fallback');
-                            speakStreamElements(text, done);
+                            _edgeFallback(text, done);
                         };
                         audio.play().catch(function (e) {
                             if (resolved) return;
                             resolved = true;
                             logEvent('warn', 'edge play() rejected: ' + e.message);
-                            speakStreamElements(text, done);
+                            _edgeFallback(text, done);
                         });
                     }
                 } else {
@@ -2596,7 +2624,7 @@ api.controller = function ($scope, $timeout, $window) {
                 resolved = true;
                 $timeout.cancel(watchdog);
                 logEvent('warn', 'edge ws error - fallback to StreamElements');
-                speakStreamElements(text, done);
+                _edgeFallback(text, done);
             };
 
             ws.onclose = function () {
@@ -2604,12 +2632,12 @@ api.controller = function ($scope, $timeout, $window) {
                     resolved = true;
                     $timeout.cancel(watchdog);
                     logEvent('warn', 'edge ws closed early - fallback');
-                    speakStreamElements(text, done);
+                    _edgeFallback(text, done);
                 }
             };
         } catch (e) {
             logEvent('err', 'edge TTS threw: ' + e.message);
-            speakStreamElements(text, done);
+            _edgeFallback(text, done);
         }
     }
 
@@ -2710,6 +2738,10 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     function speakStreamElements(text, done) {
+        // R3.5.2 - skip remote entirely if circuit is open
+        if (_streamFails >= REMOTE_FAIL_LIMIT) {
+            return speakBrowser(text, done);
+        }
         // Stop any currently playing remote audio
         if (currentAudio) {
             try { currentAudio.pause(); currentAudio.src = ''; } catch (e) {}
@@ -2743,8 +2775,7 @@ api.controller = function ($scope, $timeout, $window) {
             try { audio.pause(); audio.src = ''; } catch (e) {}
             detachOutputAnalyser(audio);
             if (currentAudio === audio) currentAudio = null;
-            logEvent('warn', 'remote -> browser fallback: ' + reason);
-            speakBrowser(text, done);
+            _streamFallback(text, done, reason);   // R3.5.2 - bumps circuit + logs
         };
         var finish = function () {
             if (resolved) return;
@@ -2765,6 +2796,7 @@ api.controller = function ($scope, $timeout, $window) {
         audio.onplaying = function () {
             if (resolved) return;
             $timeout.cancel(watchdog);
+            _streamFails = 0;   // R3.5.2 - success resets circuit
             logEvent('tts', 'remote playing');
         };
         audio.onended = function () { if (!resolved) { logEvent('tts', 'remote ended'); finish(); } };
