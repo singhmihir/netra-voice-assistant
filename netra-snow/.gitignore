@@ -1,0 +1,6 @@
+# Never commit raw API keys or secrets
+*.key
+*secret*
+.env
+.env.*
+**/credentials.json
