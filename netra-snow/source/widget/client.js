@@ -2299,6 +2299,17 @@ api.controller = function ($scope, $timeout, $window) {
         // they survive the XML escape pass, then insert breaks, then expand
         // sentinels into real SSML tags.
         var t = String(text);
+        // R4 - if Gemini emitted an odd number of "**" markers, the last
+        // emphasis block never closes. Heuristic: close it at the next
+        // sentence boundary so we keep the stress instead of losing it.
+        var doubleCount = (t.match(/\*\*/g) || []).length;
+        if (doubleCount % 2 === 1) {
+            t = t.replace(/\*\*([^*]*)$/, function(_, tail) {
+                var idx = tail.search(/[.!?]/);
+                return idx >= 0 ? '**' + tail.substring(0, idx) + '**' + tail.substring(idx)
+                                : '**' + tail + '**';
+            });
+        }
         // Step 1: collapse runs of asterisks. **word** -> emphasis sentinel.
         t = t.replace(/\*\*([^*]+)\*\*/g, 'EM$1/EM');
         // Strip any leftover lone asterisks so they don't leak in.
@@ -2969,8 +2980,13 @@ api.controller = function ($scope, $timeout, $window) {
             return;
         }
         if (currentFillerAudio) {
+            // R4 - prefer the real audio.duration once metadata has loaded,
+            // fall back to the per-word estimate while it's still 0 or NaN.
             var elapsed = Date.now() - _currentFillerStart;
-            var ratio = _currentFillerEst > 0 ? elapsed / _currentFillerEst : 1;
+            var realMs = (currentFillerAudio.duration && isFinite(currentFillerAudio.duration))
+                         ? currentFillerAudio.duration * 1000 / (currentFillerAudio.playbackRate || 1)
+                         : _currentFillerEst;
+            var ratio = realMs > 0 ? elapsed / realMs : 1;
             if (ratio < 0.5) {
                 // Interrupt - less than half of filler spoken
                 logEvent('tts', 'reply interrupts filler at ' + Math.round(ratio*100) + '% -> "Oh wait..."');
