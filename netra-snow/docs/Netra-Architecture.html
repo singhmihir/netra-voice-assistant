@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Netra — Interactive Architecture Documentation</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- React 18 + Babel + Three.js, all CDN, single-file when downloaded -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.4/babel.min.js"></script>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+
+<style>
+:root {
+  --violet-50:  #f5edff;
+  --violet-200: #c69bf2;
+  --violet-400: #b48af0;
+  --violet-600: #8b4dc8;
+  --violet-700: #6b2db0;
+  --violet-900: #2a1560;
+  --bg:         #0a0a14;
+  --bg-card:    rgba(20, 14, 40, 0.65);
+  --border:     rgba(180, 138, 240, 0.25);
+  --text:       #e8e2f5;
+  --muted:      #948cae;
+  --green:      #5ee59a;
+  --orange:     #ffa64a;
+  --red:        #ff6b6b;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; line-height: 1.55; min-height: 100vh; }
+body { background:
+  radial-gradient(ellipse at 20% 0%, rgba(139, 77, 200, 0.18) 0%, transparent 60%),
+  radial-gradient(ellipse at 80% 100%, rgba(106, 45, 176, 0.16) 0%, transparent 55%),
+  var(--bg);
+  background-attachment: fixed;
+}
+#root { max-width: 1280px; margin: 0 auto; padding: 24px; }
+
+/* ---------- HERO ---------- */
+.hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 32px; align-items: center; padding: 56px 0 64px; }
+.hero-text h1 { font-size: 64px; line-height: 1; letter-spacing: -2px; margin-bottom: 16px;
+  background: linear-gradient(135deg, var(--violet-50), var(--violet-200) 40%, var(--violet-600));
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero-text h2 { font-size: 22px; font-weight: 500; color: var(--violet-200); margin-bottom: 28px; }
+.hero-text p { color: var(--muted); font-size: 17px; max-width: 540px; }
+.hero-canvas { aspect-ratio: 1; max-width: 480px; margin-left: auto; position: relative; }
+.hero-canvas canvas { width: 100% !important; height: 100% !important; display: block; border-radius: 50%; }
+.hero-glow { position: absolute; inset: -8% -8% -8% -8%; pointer-events: none;
+  background: radial-gradient(circle, rgba(180, 138, 240, 0.35) 0%, transparent 60%); }
+
+.badge-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 28px; }
+.badge { padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: rgba(139, 77, 200, 0.18); border: 1px solid var(--border); color: var(--violet-50); }
+
+/* ---------- NAV ---------- */
+.tabnav { position: sticky; top: 0; z-index: 100; padding: 16px 0; backdrop-filter: blur(12px);
+  background: rgba(10, 10, 20, 0.75); border-bottom: 1px solid var(--border); margin-bottom: 32px; }
+.tabnav-inner { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
+.tabnav button { background: transparent; border: 1px solid transparent; color: var(--muted);
+  padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer;
+  white-space: nowrap; transition: all 0.15s; }
+.tabnav button:hover { color: var(--violet-50); background: rgba(180, 138, 240, 0.08); }
+.tabnav button.active { color: var(--violet-50); background: rgba(180, 138, 240, 0.18); border-color: var(--border); }
+
+/* ---------- CARDS ---------- */
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px;
+  padding: 24px; backdrop-filter: blur(8px); margin-bottom: 24px; }
+.card h3 { font-size: 22px; margin-bottom: 16px; color: var(--violet-50); letter-spacing: -0.5px; }
+.card h4 { font-size: 15px; margin-bottom: 8px; color: var(--violet-200); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+.card p { color: var(--text); font-size: 15px; margin-bottom: 12px; }
+.card .meta { color: var(--muted); font-size: 13px; }
+.card code { background: rgba(139, 77, 200, 0.15); padding: 2px 8px; border-radius: 4px;
+  font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 13px; color: var(--violet-200); }
+
+/* ---------- PIPELINE ---------- */
+.pipeline { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; margin: 24px 0; }
+.pipe-step { padding: 16px 12px; background: rgba(20, 14, 40, 0.5); border: 1px solid var(--border);
+  border-radius: 12px; text-align: center; cursor: pointer; transition: all 0.3s;
+  position: relative; min-height: 110px; }
+.pipe-step:hover { transform: translateY(-3px); border-color: var(--violet-400); }
+.pipe-step.active { background: linear-gradient(135deg, rgba(180, 138, 240, 0.25), rgba(106, 45, 176, 0.15));
+  border-color: var(--violet-400); box-shadow: 0 8px 32px rgba(180, 138, 240, 0.3); }
+.pipe-step.live { animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+.pipe-step-num { font-size: 11px; color: var(--violet-200); font-weight: 600; margin-bottom: 4px; }
+.pipe-step-icon { font-size: 24px; margin-bottom: 6px; }
+.pipe-step-title { font-size: 12px; font-weight: 600; line-height: 1.2; }
+.pipe-arrow { position: absolute; right: -16px; top: 50%; transform: translateY(-50%);
+  color: var(--violet-400); font-size: 16px; z-index: 1; }
+.pipe-detail { background: rgba(20, 14, 40, 0.7); border-left: 4px solid var(--violet-400);
+  padding: 16px 20px; border-radius: 8px; margin-top: 16px; }
+.pipe-detail h4 { color: var(--violet-200); margin-bottom: 6px; font-size: 13px; letter-spacing: 1px; }
+.pipe-controls { display: flex; gap: 10px; margin-top: 16px; }
+.btn { background: linear-gradient(135deg, var(--violet-600), var(--violet-700)); color: white;
+  border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600;
+  font-size: 14px; transition: transform 0.15s; }
+.btn:hover { transform: translateY(-1px); }
+.btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--violet-200); }
+
+/* ---------- TABLES ---------- */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 12px 14px; background: rgba(139, 77, 200, 0.15);
+  color: var(--violet-200); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-size: 11px; }
+td { padding: 12px 14px; border-top: 1px solid var(--border); vertical-align: top; }
+td:first-child { font-family: monospace; color: var(--violet-50); }
+tbody tr:hover { background: rgba(180, 138, 240, 0.05); }
+
+/* ---------- GRID ---------- */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+
+.feat { padding: 16px; background: rgba(20, 14, 40, 0.5); border: 1px solid var(--border);
+  border-radius: 10px; transition: all 0.2s; cursor: pointer; }
+.feat:hover { background: rgba(180, 138, 240, 0.08); border-color: var(--violet-400); transform: translateY(-2px); }
+.feat-rel { font-size: 10px; color: var(--violet-200); font-weight: 700; letter-spacing: 1px; }
+.feat-title { font-size: 14px; font-weight: 600; margin: 4px 0 6px; color: var(--violet-50); }
+.feat-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+/* ---------- 3D LAYERS DIAGRAM ---------- */
+.layer-stack { perspective: 1200px; padding: 60px 0; }
+.layer-stack-inner { transform-style: preserve-3d; transition: transform 0.4s; }
+.layer { padding: 18px 24px; margin-bottom: 8px; border-radius: 12px;
+  background: linear-gradient(135deg, rgba(139, 77, 200, 0.22), rgba(106, 45, 176, 0.12));
+  border: 1px solid var(--border); transform-origin: center; transition: all 0.3s; cursor: pointer; }
+.layer:hover { transform: translateZ(20px) scale(1.02); box-shadow: 0 20px 40px rgba(139, 77, 200, 0.3); border-color: var(--violet-400); }
+.layer-label { font-size: 11px; letter-spacing: 1.5px; color: var(--violet-200); font-weight: 700; }
+.layer-title { font-size: 18px; font-weight: 600; margin: 4px 0 8px; }
+.layer-detail { font-size: 13px; color: var(--muted); }
+
+/* ---------- DEMO BOX ---------- */
+.demo { background: linear-gradient(135deg, rgba(180, 138, 240, 0.12), rgba(106, 45, 176, 0.08));
+  border: 1px solid var(--violet-400); border-radius: 12px; padding: 24px; margin: 20px 0; }
+.demo-input { font-family: monospace; font-size: 14px; padding: 12px 16px; background: rgba(10, 10, 20, 0.7);
+  border-radius: 6px; color: var(--violet-50); margin-bottom: 12px; border: 1px solid var(--border); }
+.demo-arrow { color: var(--violet-400); font-size: 18px; margin: 8px 0; text-align: center; }
+.demo-step { padding: 10px 14px; background: rgba(20, 14, 40, 0.5); border-left: 3px solid var(--violet-400);
+  border-radius: 4px; margin-bottom: 8px; font-size: 13px; }
+.demo-step b { color: var(--violet-200); }
+
+/* ---------- FOOTER ---------- */
+footer { padding: 48px 0 24px; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .hero { grid-template-columns: 1fr; }
+  .hero-text h1 { font-size: 42px; }
+  .pipeline { grid-template-columns: repeat(3, 1fr); }
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+/* ======================================================================
+   3D ORB - Three.js sphere with iris/pupil + voice ring + breathing
+   ====================================================================== */
+function Orb3D() {
+  const mountRef = useRef(null);
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const w = mount.clientWidth, h = mount.clientHeight;
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 100);
+    camera.position.set(0, 0, 5);
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    mount.appendChild(renderer.domElement);
+
+    // Iris sphere - radial-gradient via shader-light material
+    const sphereGeo = new THREE.SphereGeometry(1.6, 96, 96);
+    const sphereMat = new THREE.MeshPhysicalMaterial({
+      color: 0x8b4dc8,
+      emissive: 0x6b2db0,
+      emissiveIntensity: 0.55,
+      roughness: 0.15,
+      metalness: 0.25,
+      clearcoat: 0.85,
+      clearcoatRoughness: 0.2,
+    });
+    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+    scene.add(sphere);
+
+    // Pupil - small dark sphere on top of iris
+    const pupilGeo = new THREE.SphereGeometry(0.45, 48, 48);
+    const pupilMat = new THREE.MeshBasicMaterial({ color: 0x1a0838 });
+    const pupil = new THREE.Mesh(pupilGeo, pupilMat);
+    pupil.position.z = 1.25;
+    scene.add(pupil);
+
+    // Outer ring - voice ring
+    const ringGeo = new THREE.TorusGeometry(2.1, 0.04, 16, 96);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xc69bf2, transparent: true, opacity: 0.55 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    scene.add(ring);
+
+    // 24 vertices around the ring (matches Netra's voice ring)
+    const vertexGroup = new THREE.Group();
+    const vertices = [];
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.06, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0xb48af0 })
+      );
+      dot.position.set(Math.cos(a) * 2.45, Math.sin(a) * 2.45, 0);
+      vertexGroup.add(dot);
+      vertices.push({ dot, angle: a });
+    }
+    scene.add(vertexGroup);
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x553388, 0.6));
+    const key = new THREE.DirectionalLight(0xb48af0, 1.2);
+    key.position.set(2, 3, 4);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xff9ce0, 0.4);
+    fill.position.set(-3, -2, 2);
+    scene.add(fill);
+
+    // Animation
+    let t = 0, rafId;
+    const animate = () => {
+      t += 0.008;
+      sphere.rotation.y = t * 0.6;
+      sphere.rotation.x = Math.sin(t * 0.4) * 0.1;
+      // Breathing
+      const breath = 1 + Math.sin(t * 1.2) * 0.05;
+      sphere.scale.set(breath, breath, breath);
+      sphereMat.emissiveIntensity = 0.45 + Math.sin(t * 1.2) * 0.15;
+      // Voice ring vertices pulse outward, faux-FFT
+      vertices.forEach((v, i) => {
+        const r = 2.35 + Math.sin(t * 2 + i * 0.8) * 0.18;
+        v.dot.position.set(Math.cos(v.angle) * r, Math.sin(v.angle) * r, 0);
+        const s = 0.7 + Math.sin(t * 3 + i * 0.5) * 0.35;
+        v.dot.scale.set(s, s, s);
+      });
+      vertexGroup.rotation.z = t * 0.15;
+      ring.rotation.z = -t * 0.1;
+      pupil.position.z = 1.25 + Math.sin(t * 0.9) * 0.08;
+      renderer.render(scene, camera);
+      rafId = requestAnimationFrame(animate);
+    };
+    animate();
+
+    const onResize = () => {
+      const w2 = mount.clientWidth, h2 = mount.clientHeight;
+      renderer.setSize(w2, h2);
+      camera.aspect = w2 / h2;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', onResize);
+      renderer.dispose();
+      mount.innerHTML = '';
+    };
+  }, []);
+  return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />;
+}
+
+/* ======================================================================
+   DATA
+   ====================================================================== */
+const PIPELINE = [
+  { icon: '🎤', title: 'Voice Input', detail: 'Mic captured via getUserMedia + Web Audio API. AGC on, GainNode +0 dB, fft 1024-point, 24 frequency bands feed the live voice ring.',
+    api: 'Web Speech API (SpeechRecognition continuous=true, interimResults=true, maxAlternatives=5).', code: 'contRec.onresult → res.isFinal' },
+  { icon: '🧠', title: 'Normalize', detail: 'Spoken digits map to numerals. "incident 8001" → INC0008001 with auto-pad. ServiceNow prefixes recognised letter-by-letter ("I N C zero zero..."). 27 misheard prefixes folded back.',
+    api: 'normalizeNumbers() in client.js', code: '"two to one" → "2 to 1"' },
+  { icon: '⏱️', title: 'Debounce', detail: 'Multiple isFinal fragments are buffered for 1300 ms. "change priority 2 ... to 1" arrives as one merged utterance, not split fragments.',
+    api: '_enqueueFinalTranscript / _flushFinalBuffer', code: 'FINAL_DEBOUNCE_MS = 1300' },
+  { icon: '🔌', title: 'Widget API', detail: 'POST /api/now/sp/widget/netra-mic with action=chat, message, history. Service Portal widget server.js runs in scoped app x_196061_netra_v1.',
+    api: 'sp_widget table; data.action="chat"', code: 'c.server.update()' },
+  { icon: '🤖', title: 'Gemini', detail: 'gemini-flash-lite-latest first; fallback 2.5-flash-lite → 2.0-flash-lite. Hard 20s chain deadline. Tools, history, system prompt, structured output as needed.',
+    api: 'generativelanguage.googleapis.com/v1beta', code: 'thinkingBudget: 0' },
+  { icon: '🛠️', title: 'Tools + Tables', detail: '52 function-calling tools execute via NetraTools / NetraReasoning script includes. Touch incident, change_request, kb_knowledge, sysapproval_approver, and 30+ more.',
+    api: 'GlideRecord, gs.getProperty', code: '_toolDeclarations()' },
+  { icon: '🔊', title: 'TTS Speak', detail: 'Engine selection: Edge WSS (default), StreamElements REST, Web Speech (fallback). SSML enriches with <emphasis>, <break>, prosody dips on fillers. Filler chain runs in parallel.',
+    api: 'wss://...edge/v1 + StreamElements REST', code: '_buildHumanSSML()' },
+];
+
+const TABLES = [
+  ['x_196061_netra_v1_kb_embedding', 'Custom', 'RAG cache: kb_number, sys_id, 768-dim Gemini embedding, cached_at', 'R/W'],
+  ['x_196061_netra_v1_notification', 'Custom', 'Proactive queue: user, ticket sys_id, kind (comment/assign/approval), delivered', 'R/W'],
+  ['x_196061_netra_v1_watchlist', 'Custom', 'User watchlist: record table + sys_id; surfaces state/comment changes', 'R/W'],
+  ['x_196061_netra_v1_user_pref', 'Custom', 'Per-user pause/resume, voice mode, watch_assignments/comments/approvals flags', 'R/W'],
+  ['x_196061_netra_v1_context', 'Custom', 'Conversation focus ticket - pronoun resolution ("resolve it")', 'R/W'],
+  ['incident', 'OOB', 'create_ticket, list_tickets, resolve_ticket, update_ticket, search_incidents, summarize_ticket', 'R/W'],
+  ['change_request', 'OOB', 'list_my_changes, summarize_change, create_change', 'R/W'],
+  ['problem', 'OOB', 'list_my_problems, create_problem', 'R/W'],
+  ['sc_req_item', 'OOB', 'list_my_requests (RITM lookups)', 'R'],
+  ['sc_task', 'OOB', 'Assignment scanning in NetraScanner', 'R'],
+  ['kb_knowledge', 'OOB', 'search_knowledge keyword + semantic_search_knowledge (embeddings)', 'R'],
+  ['sys_user, sys_user_group', 'OOB', 'lookup_user, assign_ticket_to_user, assign_ticket_to_group', 'R'],
+  ['sysapproval_approver', 'OOB', 'list_approvals, decide_approval, triage_approvals', 'R/W'],
+  ['sys_journal_field', 'OOB', 'Comment polling for Netra Notify On Comment business rule', 'R'],
+  ['sys_attachment', 'OOB', 'list_attachments, read_text_attachment, PWA icon storage', 'R'],
+  ['sys_dictionary + override, sys_data_policy_rule, sys_ui_policy_action', 'OOB', 'list_mandatory_fields - dynamic slot-filling without creating UI/data policies', 'R'],
+  ['sys_sidebar_discussion (+ participant, +_message)', 'OOB', 'send_sidebar_message - real ServiceNow chat with colleagues', 'W'],
+  ['sys_cs_session, sys_cs_message, sys_cs_session_member', 'OOB', 'CollabSpace chat history integration via NetraChat', 'R'],
+  ['sys_script_include, sys_script, sysauto_script, sys_ws_definition', 'OOB', 'read_script, narrate_script, list_scripts (introspection tools)', 'R'],
+];
+
+const BUSINESS_RULES = [
+  ['Netra Notify On Comment', 'sys_journal_field', 'after insert', 'Extracts caller_id, assigned_to, opened_by, watch_list, manager, custom owner fields on every new comment. Enqueues to x_196061_netra_v1_notification. Honours sys_property x_196061_netra_v1.notify_author (default false) to skip self-comments.'],
+];
+
+const SCHEDULED_JOBS = [
+  ['Netra Watch', 'every 3 minutes', 'Calls NetraScanner. Iterates all active Netra users, scans incident.assigned_to, change_request.assigned_to, sc_task.assigned_to, sysapproval_approver since last run. Pushes to notification queue. try/catch per row so single failure does not stop schedule.'],
+];
+
+const SCRIPT_INCLUDES = [
+  ['NetraTools', 'Server-side GlideRecord operations: incident CRUD, approvals, watchlist, user prefs, lookups, attachments. Returns shaped responses with display labels.'],
+  ['NetraIntent', 'Local intent parser. Regex bank + smalltalk + state machine. Resolves "resolve INC...", "pause for N hours", "help" without an LLM call.'],
+  ['NetraResponder', 'Response composer. Takes parsed intent, calls NetraTools, returns ok/message/data/pending. Handles multi-turn follow-ups.'],
+  ['NetraScanner', 'Periodic per-user scan for new assignments + approvals since last_scan. Enqueues to x_196061_netra_v1_notification.'],
+  ['NetraContext', 'Conversation memory. Persists focus_table + focus_record per user in x_196061_netra_v1_context.'],
+  ['NetraChat', 'Sidebar Discussion + CollabSpace integration. Reads sys_cs_message / sys_sidebar_discussion_message.'],
+  ['NetraKnowledge', 'KB operations: keyword LIKE search, KB-number lookup, full article body read.'],
+  ['NetraSummarizer', 'Ticket + change summarization with recent comments and structured next-steps.'],
+  ['NetraNavigator', 'In-tab navigation: navigate_to_record, click_button by label, update_field.'],
+  ['NetraReasoning', 'Claude-style reasoning patterns over Gemini. Used by triage_approvals, narrate_script, build_query. Returns structured output via responseSchema.'],
+];
+
+const TOOLS = [
+  ['Tickets (8)', ['create_ticket', 'list_tickets', 'resolve_ticket', 'update_ticket', 'get_ticket_status', 'search_incidents', 'create_problem', 'create_change']],
+  ['Knowledge (3)', ['search_knowledge', 'semantic_search_knowledge', 'read_knowledge_article']],
+  ['Approvals (3)', ['list_approvals', 'decide_approval', 'triage_approvals']],
+  ['Notifications (2)', ['pause_notifications', 'resume_notifications']],
+  ['Priority + Assignment (4)', ['change_priority', 'escalate_ticket', 'assign_ticket_to_group', 'assign_ticket_to_user']],
+  ['Listing (7)', ['list_my_problems', 'list_my_changes', 'list_my_requests', 'lookup_user', 'list_attachments', 'read_text_attachment', 'list_overdue']],
+  ['Summarization (2)', ['summarize_ticket', 'summarize_change']],
+  ['Focus + Watchlist (5)', ['set_focus_ticket', 'recall_focus', 'add_to_watchlist', 'remove_from_watchlist', 'list_watchlist']],
+  ['Workload (3)', ['team_workload', 'daily_briefing', 'workload_summary']],
+  ['Draft flow (5)', ['start_record_draft', 'set_record_field', 'review_draft', 'confirm_and_create', 'cancel_draft']],
+  ['Messaging (2)', ['send_sidebar_message', 'send_message_to_user']],
+  ['Memory (3)', ['recall_past_conversations', 'remember_fact', 'analyze_screenshot']],
+  ['Code intro (3)', ['read_script', 'list_scripts', 'narrate_script']],
+  ['Navigation (4)', ['navigate_to_record', 'click_button', 'open_url', 'go_to_servicenow']],
+  ['Reasoning (1)', ['build_query']],
+  ['Mandatory (1)', ['list_mandatory_fields']],
+  ['Misc (5)', ['list_capabilities', 'search_web', 'tell_joke', 'add_work_note', 'update_field']],
+];
+
+const RELEASES = [
+  { v: 'R1', title: 'Voice CRUD', desc: 'Web Speech STT + TTS, incident CRUD, search, lookup, pause/resume, conversation memory, multi-turn flow, smalltalk.' },
+  { v: 'R2.0', title: 'Web + in-tab', desc: 'DuckDuckGo + Wikipedia search, in-SP-tab navigate, button click by label, field update, golden-ratio orb.' },
+  { v: 'R2.7', title: 'Long sessions', desc: 'History trim (100 turns), context table x_196061_netra_v1_context, AGC=false experiments.' },
+  { v: 'R2.8', title: 'FFT ring', desc: 'Frequency-domain voice ring (24 bands logarithmic), audio-reactive output analyser.' },
+  { v: 'R2.9', title: 'RAG / embeddings', desc: 'Gemini-embedding-001 (768-dim), kb_embedding cache table, cosine-similarity ranking, asymmetric task-typing.' },
+  { v: 'R2.10', title: 'Multilingual + sentiment', desc: 'Mirror user language (Hindi/Tamil/Spanish/Hinglish), sentiment escalation, recall_past_conversations, search_web.' },
+  { v: 'R2.11', title: 'NetraReasoning', desc: 'Claude-style structured-output patterns over Gemini: triage_approvals, narrate_script, build_query. responseSchema.' },
+  { v: 'R2.12', title: 'VS Code dev panel', desc: 'Restyled dev panel, dark mode, 4 tabs (Voice/Monitor/Logs/Training), collapsible. Speaker-cone pulse.' },
+  { v: 'R2.12.5', title: 'Speed-first', desc: 'gemini-flash-lite-latest default, HTTP timeout 30s→12s, chain deadline added.' },
+  { v: 'R2.13', title: 'Slot-fill + auto-read', desc: 'Dynamic mandatory enum (sys_dictionary + override + data_policy + ui_policy), KB/CHG auto-read on number mention.' },
+  { v: 'R3', title: 'Production freeze', desc: 'Orb 36px (50% smaller), dev panel frozen by default, Netra_Version_1 canonical merge (245/248 rows).' },
+  { v: 'R3.1', title: 'Violet dormant', desc: 'Dormant orb violet breathing (4.2s sine), focus box killed, SCSS saturate() conflict fixed.' },
+  { v: 'R3.3', title: 'PWA install', desc: 'Web manifest blob injection, apple-touch-icon, iOS/Android meta tags. Add to Home Screen → full-screen.' },
+  { v: 'R3.5', title: 'Mic AGC + watchdog', desc: 'autoGainControl=true, GainNode in analyser chain, 90s SR activity watchdog with full teardown.' },
+  { v: 'R3.5.1', title: 'Damp VU', desc: 'Noise gates raised (level<8, raw<18), smoothingTimeConstant 0.5→0.75 to suppress transients.' },
+  { v: 'R3.5.2', title: 'TTS circuit breaker', desc: 'Per-session counters - skip Edge / Stream after 2 fails. Avoid 10s timeout penalty on blocked networks.' },
+  { v: 'R3.6', title: 'Debounce + recycle', desc: 'Final-transcript debounce (1300ms), full mic+SR teardown recycle, normalizeNumbers English-word prefixes.' },
+  { v: 'R3.7', title: 'Filler chain', desc: '27 conversational fillers, auto-loop during server call, interrupt <50% with "Oh wait, I have it." or queue ≥50%.' },
+  { v: 'R3.8', title: 'Human prosody', desc: 'SSML emphasis on **words**, longer sentence/comma breaks, pitch-dip on umm/uhh fillers, ellipsis = 380ms thinking pause.' },
+];
+
+/* ======================================================================
+   COMPONENTS
+   ====================================================================== */
+function Hero() {
+  return (
+    <section className="hero">
+      <div className="hero-text">
+        <h1>Netra</h1>
+        <h2>Voice-first ServiceNow assistant — Architecture & Mechanics</h2>
+        <p>An interactive walkthrough of how voice becomes a ServiceNow tool call, how Gemini drives reasoning, how the SSML pipeline shapes the spoken reply, and which tables, rules, and jobs make it all run. Built for blind and low-vision users from the ground up.</p>
+        <div className="badge-row">
+          <span className="badge">10 Script Includes</span>
+          <span className="badge">52 LLM Tools</span>
+          <span className="badge">5 Custom Tables</span>
+          <span className="badge">1 Business Rule</span>
+          <span className="badge">1 Scheduled Job</span>
+          <span className="badge">3 TTS Engines</span>
+          <span className="badge">PWA</span>
+        </div>
+      </div>
+      <div className="hero-canvas">
+        <div className="hero-glow"></div>
+        <Orb3D />
+      </div>
+    </section>
+  );
+}
+
+function TabNav({ tabs, active, onChange }) {
+  return (
+    <nav className="tabnav">
+      <div className="tabnav-inner">
+        {tabs.map(t => (
+          <button key={t.id} className={active === t.id ? 'active' : ''} onClick={() => onChange(t.id)}>{t.label}</button>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+function Pipeline() {
+  const [active, setActive] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => {
+    if (!playing) return;
+    const id = setInterval(() => {
+      setActive(a => {
+        if (a >= PIPELINE.length - 1) { setPlaying(false); return a; }
+        return a + 1;
+      });
+    }, 1400);
+    return () => clearInterval(id);
+  }, [playing]);
+  const step = PIPELINE[active];
+  return (
+    <div className="card">
+      <h3>🌊 End-to-End Voice Pipeline</h3>
+      <p className="meta">Click a step or hit Play. Each step is a real piece of the live R3.8 codebase.</p>
+      <div className="pipeline">
+        {PIPELINE.map((s, i) => (
+          <div key={i} className={'pipe-step' + (active === i ? ' active' : '') + (playing && active === i ? ' live' : '')}
+               onClick={() => setActive(i)}>
+            <div className="pipe-step-num">STEP {i + 1}</div>
+            <div className="pipe-step-icon">{s.icon}</div>
+            <div className="pipe-step-title">{s.title}</div>
+          </div>
+        ))}
+      </div>
+      <div className="pipe-detail">
+        <h4>STEP {active + 1} — {step.title.toUpperCase()}</h4>
+        <p>{step.detail}</p>
+        <div style={{ marginTop: 10, fontSize: 12 }}>
+          <span style={{ color: 'var(--violet-200)' }}>API:</span> <code>{step.api}</code>
+        </div>
+        <div style={{ marginTop: 4, fontSize: 12 }}>
+          <span style={{ color: 'var(--violet-200)' }}>Code:</span> <code>{step.code}</code>
+        </div>
+      </div>
+      <div className="pipe-controls">
+        <button className="btn" onClick={() => { setActive(0); setPlaying(true); }}>▶ Play full flow</button>
+        <button className="btn btn-ghost" onClick={() => { setActive(0); setPlaying(false); }}>↺ Reset</button>
+      </div>
+    </div>
+  );
+}
+
+function Demo() {
+  const [stage, setStage] = useState(0);
+  const STAGES = [
+    { label: 'User says', text: '"Netra, raise priority of incident 8001 from 2 to 1"', highlight: false },
+    { label: 'Web Speech onresult', text: 'isFinal: "raise priority of incident 8001" + isFinal: "from 2 to 1"', highlight: true },
+    { label: '_enqueueFinalTranscript', text: 'Buffered for 1300ms, joined → "raise priority of incident 8001 from 2 to 1"', highlight: true },
+    { label: 'normalizeNumbers', text: '"incident 8001" → INC0008001 (auto-pad to 7 digits)', highlight: true },
+    { label: 'startFillerChain', text: 'Netra speaks: "Hold on, let me pull that up for you..." (Edge TTS Aria voice)', highlight: false },
+    { label: 'POST /api/now/sp/widget/netra-mic', text: 'action=chat, message="raise priority of INC0008001 from 2 to 1", history=[...prev turns]', highlight: true },
+    { label: 'server.js → Gemini', text: 'gemini-flash-lite-latest, system prompt + 52 tools, structured response', highlight: true },
+    { label: 'Gemini decides', text: 'function_call: change_priority({ticket: "INC0008001", priority: 1})', highlight: true },
+    { label: 'NetraTools', text: 'GlideRecord("incident").get("INC0008001"); gr.priority="1"; gr.update();', highlight: true },
+    { label: 'Gemini composes', text: '"**INC0008001** is now **priority 1**, critical. Anything else?" (with **stress** markers)', highlight: true },
+    { label: 'deliverServerReply', text: 'Filler 78% done → QUEUE. Filler finishes, then reply speaks via Edge TTS with SSML <emphasis> stress.', highlight: true },
+    { label: 'User hears', text: 'Filler line completes naturally, then "I N C zero zero zero eight zero zero one is now priority one, critical." with breaks and stress.', highlight: false },
+  ];
+  return (
+    <div className="card">
+      <h3>🎬 Worked Example — From Voice to ServiceNow</h3>
+      <p className="meta">A real round-trip, expanded one stage at a time.</p>
+      <div className="demo">
+        <div className="demo-input">📢  "Netra, raise priority of incident 8001 from 2 to 1"</div>
+        {STAGES.slice(0, stage + 1).map((s, i) => (
+          <div key={i}>
+            {i > 0 && <div className="demo-arrow">↓</div>}
+            <div className="demo-step"><b>{s.label}:</b> <span style={{ marginLeft: 6 }}>{s.text}</span></div>
+          </div>
+        ))}
+      </div>
+      <div className="pipe-controls">
+        <button className="btn" onClick={() => setStage(s => Math.min(s + 1, STAGES.length - 1))} disabled={stage >= STAGES.length - 1}>Next stage →</button>
+        <button className="btn btn-ghost" onClick={() => setStage(0)}>↺ Restart</button>
+        <button className="btn btn-ghost" onClick={() => setStage(STAGES.length - 1)}>⏩ Show all</button>
+      </div>
+    </div>
+  );
+}
+
+function Layered3D() {
+  const [open, setOpen] = useState(-1);
+  const LAYERS = [
+    { label: 'PRESENTATION', title: 'Service Portal Widget (Angular 1.x)', detail: 'sp_widget table. template.html (SVG orb + dev panel), client.js (controller), stylesheet.scss. Loaded inline on /sp pages.' },
+    { label: 'INPUT', title: 'Web Speech + Audio APIs', detail: 'SpeechRecognition (continuous + interim + 5 alternatives), getUserMedia stream → AnalyserNode (FFT 1024) → 24-band ring.' },
+    { label: 'CLIENT LOGIC', title: 'Normalize • Debounce • Filler chain', detail: 'normalizeNumbers, _enqueueFinalTranscript (1300ms), startFillerChain (parallel TTS), _buildHumanSSML.' },
+    { label: 'TRANSPORT', title: 'Service Portal Widget API', detail: 'POST /api/now/sp/widget/netra-mic. X-UserToken CSRF, JSON body {action, message, history, image_b64?}.' },
+    { label: 'SERVER LOGIC', title: 'server.js (Glide script)', detail: 'Dispatch by action, call _systemPrompt + _callGemini (3-model chain + 20s deadline), execute function-call tools, return data.response.' },
+    { label: 'AI', title: 'Gemini API', detail: 'generateContent (flash-lite-latest) for chat. embedContent (gemini-embedding-001) for RAG. thinkingBudget=0 to dodge empty responses.' },
+    { label: 'TOOLS / GLIDE', title: '52 functions → NetraTools / Reasoning', detail: 'GlideRecord operations on incident/change/problem/kb_knowledge/sysapproval_approver. RAG via x_196061_netra_v1_kb_embedding.' },
+    { label: 'OUTPUT', title: 'TTS chain', detail: 'speakEdgeTTS (Edge WSS, SSML rich) → speakStreamElements (REST) → speakBrowser (Web Speech). Circuit breaker after 2 fails.' },
+  ];
+  return (
+    <div className="card">
+      <h3>🏗 Architecture Layers</h3>
+      <p className="meta">Hover for the 3D tilt; click for the detail. Each layer is a real piece of the running stack.</p>
+      <div className="layer-stack">
+        {LAYERS.map((l, i) => (
+          <div key={i} className="layer" onClick={() => setOpen(open === i ? -1 : i)}
+               style={{ transform: 'translateZ(' + (-i * 6) + 'px) translateY(' + (i * -2) + 'px)' }}>
+            <div className="layer-label">{l.label}</div>
+            <div className="layer-title">{l.title}</div>
+            {open === i && <div className="layer-detail">{l.detail}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AISection() {
+  return (
+    <div className="card">
+      <h3>🤖 How AI is used</h3>
+      <div className="grid-2">
+        <div>
+          <h4>1. Chat reasoning</h4>
+          <p>Gemini <code>flash-lite-latest</code> runs every turn. The system prompt is built per-request from <code>_systemPrompt()</code> — includes user name, capabilities tour, accessibility constraints, voice style (R3.8 prosody rules), language mirroring, sentiment behaviour. 52 tools are declared via <code>_toolDeclarations()</code>; Gemini picks zero or more per turn.</p>
+        </div>
+        <div>
+          <h4>2. Embeddings (RAG)</h4>
+          <p><code>gemini-embedding-001</code> (768-dim) used asymmetrically — <code>RETRIEVAL_QUERY</code> on user input, <code>RETRIEVAL_DOCUMENT</code> on KB articles. Cosine similarity ranks top 3 articles. Article embeddings cached in <code>x_196061_netra_v1_kb_embedding</code> with sys_id + cached_at so repeat lookups are zero-cost.</p>
+        </div>
+        <div>
+          <h4>3. Structured output (NetraReasoning)</h4>
+          <p>Three tools use Gemini's <code>responseMimeType: 'application/json'</code> + <code>responseSchema</code> for guaranteed-shape output: <code>triage_approvals</code> classifies items ROUTINE/SCRUTINY/RISKY with rationale; <code>narrate_script</code> emits 4–6 sentence accessible narration; <code>build_query</code> outputs a ServiceNow encoded query string.</p>
+        </div>
+        <div>
+          <h4>4. Prompt engineering for prosody (R3.8)</h4>
+          <p>System prompt instructs Gemini to wrap stress words in <code>**double asterisks**</code> (→ SSML <code>&lt;emphasis level="strong"&gt;</code>), use <code>...</code> for thinking pauses (→ 380ms break), and sprinkle natural verbal fillers (<code>umm, uhh, well, hmm</code>) sparingly. Client-side SSML builder converts these markers into Edge TTS prosody.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TablesSection() {
+  return (
+    <div className="card">
+      <h3>📦 ServiceNow tables touched</h3>
+      <p className="meta">5 custom + 19 OOB. <code>R/W</code> = read &amp; written, <code>R</code> = read-only.</p>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Table</th><th>Type</th><th>Usage</th><th>Mode</th></tr>
+          </thead>
+          <tbody>
+            {TABLES.map((t, i) => (
+              <tr key={i}><td>{t[0]}</td><td><span className="badge">{t[1]}</span></td><td>{t[2]}</td><td>{t[3]}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function BRSection() {
+  return (
+    <div className="card">
+      <h3>⚙ Business Rules &amp; Scheduled Jobs</h3>
+      <h4>Business Rule</h4>
+      {BUSINESS_RULES.map((b, i) => (
+        <div key={i} className="demo" style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--violet-50)' }}>{b[0]}</div>
+          <div style={{ color: 'var(--muted)', fontSize: 13, margin: '4px 0' }}>
+            Table: <code>{b[1]}</code> • Fires: <code>{b[2]}</code>
+          </div>
+          <div style={{ fontSize: 14 }}>{b[3]}</div>
+        </div>
+      ))}
+      <h4 style={{ marginTop: 20 }}>Scheduled Job</h4>
+      {SCHEDULED_JOBS.map((j, i) => (
+        <div key={i} className="demo" style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--violet-50)' }}>{j[0]}</div>
+          <div style={{ color: 'var(--muted)', fontSize: 13, margin: '4px 0' }}>Runs: <code>{j[1]}</code></div>
+          <div style={{ fontSize: 14 }}>{j[2]}</div>
+        </div>
+      ))}
+      <h4 style={{ marginTop: 20 }}>Script Includes (10)</h4>
+      <div className="grid-2">
+        {SCRIPT_INCLUDES.map((s, i) => (
+          <div key={i} className="feat">
+            <div className="feat-rel">SCRIPT INCLUDE</div>
+            <div className="feat-title">{s[0]}</div>
+            <div className="feat-desc">{s[1]}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ToolsSection() {
+  return (
+    <div className="card">
+      <h3>🛠 The 52 LLM Tools</h3>
+      <p className="meta">Declared in <code>_toolDeclarations()</code>; Gemini picks zero or more per turn via function-calling. Each maps to a GlideRecord operation in NetraTools or NetraReasoning.</p>
+      <div className="grid-2">
+        {TOOLS.map((cat, i) => (
+          <div key={i} className="feat">
+            <div className="feat-rel">CATEGORY</div>
+            <div className="feat-title">{cat[0]}</div>
+            <div className="feat-desc" style={{ marginTop: 8 }}>
+              {cat[1].map((t, j) => (
+                <code key={j} style={{ display: 'inline-block', marginRight: 6, marginBottom: 4, fontSize: 11 }}>{t}</code>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReleasesSection() {
+  return (
+    <div className="card">
+      <h3>📈 Features by Release</h3>
+      <p className="meta">19 releases, R1 through R3.8. Each pushed live to <code>Netra_Version_1</code> on dev373407.</p>
+      <div className="grid-3">
+        {RELEASES.map((r, i) => (
+          <div key={i} className="feat">
+            <div className="feat-rel">{r.v}</div>
+            <div className="feat-title">{r.title}</div>
+            <div className="feat-desc">{r.desc}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PropsSection() {
+  const PROPS = [
+    ['x_196061_netra_v1.gemini_api_key', 'string (password2)', 'Google Gemini API key — required for chat, embeddings, TTS. Marked is_private=true so it never leaks into update-set exports.'],
+    ['x_196061_netra_v1.gemini_model', 'string', 'Default text model. Currently gemini-flash-lite-latest. Fallback chain in server.js _callGemini.'],
+    ['x_196061_netra_v1.notify_author', 'boolean', 'If true, Netra Notify On Comment rule notifies even on self-comments. Default false.'],
+    ['x_196061_netra_v1.vocab_cache', 'string (JSON)', 'Cached groups/apps/categories/KB titles/catalog items as JSGF biasing vocabulary for SpeechRecognition.'],
+    ['x_196061_netra_v1.vocab_cache_ts', 'integer', 'Timestamp of last refresh. Rebuilt every 24h via NetraScanner.'],
+  ];
+  return (
+    <div className="card">
+      <h3>🔐 System Properties</h3>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Property</th><th>Type</th><th>Purpose</th></tr></thead>
+          <tbody>
+            {PROPS.map((p, i) => (
+              <tr key={i}><td>{p[0]}</td><td><span className="badge">{p[1]}</span></td><td>{p[2]}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ======================================================================
+   APP
+   ====================================================================== */
+const TABS = [
+  { id: 'overview',   label: 'Overview' },
+  { id: 'pipeline',   label: 'Pipeline' },
+  { id: 'demo',       label: 'Worked Example' },
+  { id: 'arch',       label: 'Architecture' },
+  { id: 'ai',         label: 'AI / Gemini' },
+  { id: 'tables',     label: 'Tables' },
+  { id: 'rules',      label: 'Rules & Jobs' },
+  { id: 'tools',      label: 'Tools' },
+  { id: 'props',      label: 'Properties' },
+  { id: 'releases',   label: 'Release timeline' },
+];
+
+function App() {
+  const [tab, setTab] = useState('overview');
+  return (
+    <>
+      <TabNav tabs={TABS} active={tab} onChange={setTab} />
+      {tab === 'overview' && <><Hero /></>}
+      {tab === 'pipeline' && <Pipeline />}
+      {tab === 'demo' && <Demo />}
+      {tab === 'arch' && <Layered3D />}
+      {tab === 'ai' && <AISection />}
+      {tab === 'tables' && <TablesSection />}
+      {tab === 'rules' && <BRSection />}
+      {tab === 'tools' && <ToolsSection />}
+      {tab === 'props' && <PropsSection />}
+      {tab === 'releases' && <ReleasesSection />}
+
+      <footer>
+        Built for Mihir Kumar Singh • ServiceNow Architect, SecOps &amp; GRC • Deloitte<br/>
+        Netra widget · scope <code>x_196061_netra_v1</code> · update set <code>Netra_Version_1</code><br/>
+        <a href="https://github.com/singhmihir/netra-voice-assistant" target="_blank" rel="noopener" style={{ color: 'var(--violet-200)' }}>github.com/singhmihir/netra-voice-assistant</a>
+      </footer>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
