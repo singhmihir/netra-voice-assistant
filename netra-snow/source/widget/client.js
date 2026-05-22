@@ -2135,6 +2135,11 @@ api.controller = function ($scope, $timeout, $window) {
         var startedAt = Date.now();   // R1 - latency tracking
         c.stats.utterances++;
 
+        // R3.7 - start the filler chain in parallel with the server call so
+        // the conversation does not have dead air. The chain self-terminates
+        // when deliverServerReply or stopFillerChain is invoked below.
+        startFillerChain();
+
         c.server.update().then(
             function () {
                 $timeout.cancel(hung);
@@ -2200,6 +2205,7 @@ api.controller = function ($scope, $timeout, $window) {
                     logEvent('err', 'server returned but no response object');
                     c.stats.errors++;
                     setState('error');
+                    stopFillerChain();
                     speak('Sorry, the server returned an empty response.');
                     return;
                 }
@@ -2208,7 +2214,7 @@ api.controller = function ($scope, $timeout, $window) {
                     lastReply = r.message || '';
                     logEvent('srv', 'reply ok (' + lastReply.length + ' chars, ' + elapsed + ' ms)' + (r.model_used ? ' via ' + r.model_used : ''));
                     setState('speaking');
-                    speak(r.message, function () {
+                    deliverServerReply(r.message, function () {
                         if (c.alert) {
                             setState('idle');
                             openConversation('after server reply');
@@ -2219,7 +2225,7 @@ api.controller = function ($scope, $timeout, $window) {
                     c.stats.errors++;
                     setState('error');
                     cue('error');
-                    speak(r.message || 'Sorry, something went wrong.', function () {
+                    deliverServerReply(r.message || 'Sorry, something went wrong.', function () {
                         if (c.alert) setState('idle');
                     });
                 }
@@ -2230,6 +2236,7 @@ api.controller = function ($scope, $timeout, $window) {
                 setState('error');
                 cue('error');
                 logEvent('err', 'transport error: ' + (err && (err.message || err.status) || err));
+                stopFillerChain();
                 speak('Sorry, I could not reach the server.', function () {
                     if (c.alert) setState('idle');
                 });
@@ -2733,18 +2740,53 @@ api.controller = function ($scope, $timeout, $window) {
      *  Falls back silently if Edge TTS is unavailable - no filler is OK,
      *  the existing audio cue from cue('think') stays.
      * ============================================================ */
-    // R2.9.1 - expanded filler set for more natural cadence during the Gemini
-    // round-trip. Picked from Mihir's spoken-Indian-English filler vocabulary
-    // so the thinking pause sounds conversational rather than scripted.
+    // R3.7 - conversational filler bank, three length tiers so the chain
+    // can choose what fits the remaining wait time. Plays during the
+    // Gemini round-trip; interrupted or queued when the real reply lands.
+    // Lines written in warm Indian-English help-desk register.
     var FILLER_PHRASES = [
-        'Hmm.', 'Let me see.', 'Okay so.', 'Right.', 'Mm.', 'Ahh.',
-        'One moment.', 'Let me check.', 'I see.', 'Right so.',
-        'Hmm okay.', 'Just a moment.', 'Got it.', 'Let me think.',
-        'Alright.', 'So.', 'Mm hmm.', 'Bear with me.'
+        // SHORT (~1s)
+        'One moment, please.',
+        'Just a sec, looking that up.',
+        'Checking on that now.',
+        'Let me pull that up.',
+        'Hold on, fetching it.',
+        'Right, looking into it.',
+        'Give me a moment, Mihir.',
+        'One second, please.',
+        'Pulling that up for you.',
+        // MEDIUM (~2s)
+        'Just a moment, I am checking on that.',
+        'Hold on, let me pull that up for you.',
+        'Okay, fetching that information right now.',
+        'One moment please, I am looking into it.',
+        'Bear with me, just pulling the details.',
+        'Got it, checking the system now.',
+        'Let me see what I can find.',
+        'Hang on a second, almost there.',
+        'Alright Mihir, looking that up now.',
+        'Just checking the records, one moment.',
+        // LONG (~3s)
+        'Give me a moment, I am pulling that information from the system now.',
+        'Bear with me for a second, I am just looking into the details.',
+        'One moment please, I am checking that on my end for you.',
+        'Hold on Mihir, I am fetching the latest information for you right now.',
+        'Let me check on that quickly, should only take a moment.',
+        'Just a moment please, I am getting that sorted out for you.',
+        'Hang on for a second, I am cross-checking the details right now.',
+        'Alright, looking into that for you, should have it shortly.'
     ];
     var fillerCache = [];   // [{url, text}]
     var lastFillerPlayedAt = 0;
     var currentFillerAudio = null;
+    // R3.7 - filler chain state. While _fillerChainActive is true, fillers
+    // auto-loop until the server replies. _pendingReply queues the real
+    // response if it arrives in the second half of a filler. _currentFillerEst
+    // is the estimated total ms of the currently-playing filler audio.
+    var _fillerChainActive = false;
+    var _pendingReply       = null;   // {text, done, queuedAt}
+    var _currentFillerStart = 0;
+    var _currentFillerEst   = 0;
 
     function _edgeBlob(text, voice, cb) {
         try {
@@ -2804,18 +2846,129 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     function playThinkingFiller() {
-        if (!fillerCache.length) return;
-        // Only one filler at a time, and at most once per 4s
+        // R3.7 - one-shot fallback used only by setState transitions.
+        // The main flow uses startFillerChain / stopFillerChain.
+        if (!fillerCache.length || _fillerChainActive) return;
         if (Date.now() - lastFillerPlayedAt < 4000) return;
-        if (currentFillerAudio) { try { currentFillerAudio.pause(); } catch (e) {} }
+        _playOneFiller(null);
+    }
+
+    /* ============================================================
+     *  R3.7 - FILLER CHAIN
+     *
+     *  startFillerChain():  begin auto-looping fillers while waiting
+     *                       for the server response.
+     *  deliverServerReply(text, done):
+     *      Real reply arrived. If a filler is currently playing:
+     *        - <50% spoken -> interrupt with "Oh wait, ..." + reply
+     *        - >=50% spoken -> queue reply for after current filler ends
+     *      If no filler playing -> speak the reply directly.
+     *  stopFillerChain():   abort the chain (used on errors).
+     * ============================================================ */
+    function _estimateFillerMs(text) {
+        // ~330 ms per word at 1.15x rate, min 1.2s, max 5s
+        var words = (text || '').split(/\s+/).length;
+        return Math.max(1200, Math.min(5000, words * 330));
+    }
+    function _playOneFiller(onEndedExtra) {
+        if (!fillerCache.length) {
+            if (onEndedExtra) onEndedExtra();
+            return;
+        }
+        if (currentFillerAudio) {
+            try { currentFillerAudio.pause(); } catch (e) {}
+            currentFillerAudio = null;
+        }
         var f = fillerCache[Math.floor(Math.random() * fillerCache.length)];
         var a = new Audio(f.url);
-        a.volume = 0.75;
-        a.playbackRate = 1.0;    // R3.4 - default speed
+        a.volume = 0.85;
+        a.playbackRate = 1.0;
         currentFillerAudio = a;
+        _currentFillerStart = Date.now();
+        _currentFillerEst = _estimateFillerMs(f.text);
         lastFillerPlayedAt = Date.now();
-        a.play().catch(function () { /* ignore - autoplay may be blocked */ });
-        logEvent('tts', 'filler: "' + f.text + '"');
+        logEvent('tts', 'filler: "' + f.text + '" (~' + _currentFillerEst + 'ms)');
+        a.onended = function () {
+            if (currentFillerAudio === a) currentFillerAudio = null;
+            if (onEndedExtra) onEndedExtra();
+        };
+        a.onerror = function () {
+            if (currentFillerAudio === a) currentFillerAudio = null;
+            if (onEndedExtra) onEndedExtra();
+        };
+        a.play().catch(function () {
+            if (currentFillerAudio === a) currentFillerAudio = null;
+            if (onEndedExtra) onEndedExtra();
+        });
+    }
+    function startFillerChain() {
+        if (_fillerChainActive) return;
+        if (!fillerCache.length) {
+            logEvent('tts', 'no fillers cached - chain skipped');
+            return;
+        }
+        _fillerChainActive = true;
+        _pendingReply = null;
+        logEvent('tts', 'filler chain start');
+        var advance = function () {
+            // If a real reply was queued, deliver it now.
+            if (_pendingReply) {
+                var p = _pendingReply;
+                _pendingReply = null;
+                _fillerChainActive = false;
+                logEvent('tts', 'filler chain -> queued reply');
+                speak(p.text, p.done);
+                return;
+            }
+            if (!_fillerChainActive) return;   // stopped externally
+            // Short gap, then next filler. The gap is small enough that the
+            // pause feels like a breath, not a stop.
+            $timeout(function () {
+                if (!_fillerChainActive) return;
+                _playOneFiller(advance);
+            }, 250);
+        };
+        _playOneFiller(advance);
+    }
+    function stopFillerChain() {
+        if (!_fillerChainActive && !currentFillerAudio) return;
+        _fillerChainActive = false;
+        _pendingReply = null;
+        if (currentFillerAudio) {
+            try { currentFillerAudio.pause(); } catch (e) {}
+            currentFillerAudio = null;
+        }
+        logEvent('tts', 'filler chain stop');
+    }
+    function deliverServerReply(text, done) {
+        // Server reply arrived. Decide: interrupt, queue, or just speak.
+        if (!_fillerChainActive && !currentFillerAudio) {
+            // No filler running - normal speak
+            speak(text, done);
+            return;
+        }
+        if (currentFillerAudio) {
+            var elapsed = Date.now() - _currentFillerStart;
+            var ratio = _currentFillerEst > 0 ? elapsed / _currentFillerEst : 1;
+            if (ratio < 0.5) {
+                // Interrupt - less than half of filler spoken
+                logEvent('tts', 'reply interrupts filler at ' + Math.round(ratio*100) + '% -> "Oh wait..."');
+                try { currentFillerAudio.pause(); } catch (e) {}
+                currentFillerAudio = null;
+                _fillerChainActive = false;
+                _pendingReply = null;
+                var prefixed = 'Oh wait, I have it. ' + text;
+                speak(prefixed, done);
+            } else {
+                // Queue - let current filler finish naturally
+                logEvent('tts', 'reply queued behind filler at ' + Math.round(ratio*100) + '%');
+                _pendingReply = { text: text, done: done, queuedAt: Date.now() };
+            }
+        } else {
+            // Chain active but between fillers - just speak immediately
+            _fillerChainActive = false;
+            speak(text, done);
+        }
     }
 
     function speakStreamElements(text, done) {
@@ -3323,10 +3476,8 @@ api.controller = function ($scope, $timeout, $window) {
         c.state = s;
         c.stateLabel = STATE_LABEL[s] || s;
         $scope.$applyAsync();
-        // R1.6 - on transition INTO 'thinking', play a thinking-cue filler
-        // so there is no dead air while Gemini is processing.
-        if (s === 'thinking' && prev !== 'thinking') {
-            $timeout(playThinkingFiller, 80);
-        }
+        // R3.7 - filler chain is now started explicitly from handleHeard()
+        // when the server call is dispatched. setState no longer triggers
+        // a one-shot filler so we don't double-play.
     }
 };
