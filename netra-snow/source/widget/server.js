@@ -3759,10 +3759,17 @@
 
         v.built_at = String(new GlideDateTime());
 
+        // R4.2 - defensive setProperty. On instances where a previous
+        // platform-level cross-scope guard rejects the write, swallow the
+        // exception AND prevent the platform from flashing the error to
+        // the SP page (we already have an in-memory copy of v that the
+        // current request will use, so a missed cache is harmless).
         try {
             gs.setProperty(SCOPE + '.vocab_cache', JSON.stringify(v));
             gs.setProperty(SCOPE + '.vocab_cache_ts', String(new Date().getTime()));
-        } catch (eS) {}
+        } catch (eS) {
+            gs.info('[NetraGemini] vocab cache write skipped: ' + eS.message);
+        }
 
         gs.info('[NetraGemini] vocab refreshed - groups=' + v.groups.length +
                 ' apps=' + v.apps.length + ' cats=' + v.categories.length +

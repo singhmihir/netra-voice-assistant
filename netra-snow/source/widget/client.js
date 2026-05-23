@@ -840,8 +840,14 @@ api.controller = function ($scope, $timeout, $window) {
      *  an installable app. Icon is fetched from a ServiceNow
      *  sys_attachment (no base64 bloat in client.js).
      * ============================================================ */
-    var PWA_ICON_URL  = '/sys_attachment.do?sys_id=a73423ab9370c350936af0a75d03d62e';
-    var PWA_BADGE_URL = '/sys_attachment.do?sys_id=1144e32393b0c350936af0a75d03d62d';
+    // R4.2 - manifest URLs MUST be absolute. The manifest is served from
+    // a blob: URL whose origin is opaque, so relative paths like
+    // "/sp?id=index" cannot resolve and the browser drops them silently
+    // (log line "Manifest: property 'start_url' ignored, URL is invalid").
+    // Build all URLs against window.location.origin.
+    var _PWA_ORIGIN   = (window.location.origin || '');
+    var PWA_ICON_URL  = _PWA_ORIGIN + '/sys_attachment.do?sys_id=a73423ab9370c350936af0a75d03d62e';
+    var PWA_BADGE_URL = _PWA_ORIGIN + '/sys_attachment.do?sys_id=1144e32393b0c350936af0a75d03d62d';
     function _installPWA() {
         try {
             if (document.querySelector('link[data-netra-pwa]')) return;
@@ -849,8 +855,8 @@ api.controller = function ($scope, $timeout, $window) {
                 name: 'Netra - Voice for ServiceNow',
                 short_name: 'Netra',
                 description: 'Voice-first ServiceNow assistant for blind and low-vision users.',
-                start_url: '/sp?id=index',
-                scope: '/sp',
+                start_url: _PWA_ORIGIN + '/sp?id=index',
+                scope: _PWA_ORIGIN + '/sp',
                 display: 'standalone',
                 orientation: 'portrait',
                 background_color: '#0a0a14',
@@ -2618,15 +2624,27 @@ api.controller = function ($scope, $timeout, $window) {
         });
     }
 
-    // R3.5.2 - circuit breaker: after 2 consecutive failures of a remote
-    // provider in the same page session, skip it. Saves the 4-6s timeout
-    // penalty per utterance on corporate networks that block these
-    // endpoints. Counters reset on successful playback or page reload.
-    var _edgeFails = 0;
-    var _streamFails = 0;
+    // R4.2 - circuit breaker now persists across page reloads. On networks
+    // where Edge WSS / StreamElements are permanently blocked, the first
+    // utterance no longer pays the 4-6s timeout penalty on every refresh.
+    // Counters stored in sessionStorage so they survive Ctrl+R but reset
+    // when the user closes the tab (in case the network changes).
     var REMOTE_FAIL_LIMIT = 2;
+    var _ssGet = function (k, def) {
+        try { var v = sessionStorage.getItem(k); return v === null ? def : parseInt(v, 10) || 0; }
+        catch (e) { return def; }
+    };
+    var _ssSet = function (k, v) {
+        try { sessionStorage.setItem(k, String(v)); } catch (e) {}
+    };
+    var _edgeFails = _ssGet('netra_edgeFails', 0);
+    var _streamFails = _ssGet('netra_streamFails', 0);
+    if (_edgeFails >= REMOTE_FAIL_LIMIT) logEvent('tts', 'edge circuit was open from previous session (' + _edgeFails + ' fails)');
+    if (_streamFails >= REMOTE_FAIL_LIMIT) logEvent('tts', 'stream circuit was open from previous session (' + _streamFails + ' fails)');
+
     function _edgeFallback(text, done) {
         _edgeFails++;
+        _ssSet('netra_edgeFails', _edgeFails);
         if (_edgeFails === REMOTE_FAIL_LIMIT) {
             logEvent('tts', 'edge circuit open - skipping for this session');
         }
@@ -2634,6 +2652,7 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function _streamFallback(text, done, reason) {
         _streamFails++;
+        _ssSet('netra_streamFails', _streamFails);
         if (_streamFails === REMOTE_FAIL_LIMIT) {
             logEvent('tts', 'stream circuit open - skipping for this session');
         }
@@ -2700,7 +2719,8 @@ api.controller = function ($scope, $timeout, $window) {
                         audio.onplaying = function () {
                             if (resolved) return;
                             $timeout.cancel(watchdog);
-                            _edgeFails = 0;   // R3.5.2 - success resets circuit
+                            _edgeFails = 0;
+                            _ssSet('netra_edgeFails', 0);   // R4.2 - clear persisted breaker on recovery
                             logEvent('tts', 'edge playing @1.15x');
                         };
                         audio.onended = function () {
@@ -3127,7 +3147,8 @@ api.controller = function ($scope, $timeout, $window) {
         audio.onplaying = function () {
             if (resolved) return;
             $timeout.cancel(watchdog);
-            _streamFails = 0;   // R3.5.2 - success resets circuit
+            _streamFails = 0;
+            _ssSet('netra_streamFails', 0);   // R4.2 - clear persisted breaker on recovery
             logEvent('tts', 'remote playing');
         };
         audio.onended = function () { if (!resolved) { logEvent('tts', 'remote ended'); finish(); } };
