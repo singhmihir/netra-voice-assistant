@@ -2624,23 +2624,38 @@ api.controller = function ($scope, $timeout, $window) {
         });
     }
 
-    // R4.2 - circuit breaker now persists across page reloads. On networks
-    // where Edge WSS / StreamElements are permanently blocked, the first
-    // utterance no longer pays the 4-6s timeout penalty on every refresh.
-    // Counters stored in sessionStorage so they survive Ctrl+R but reset
-    // when the user closes the tab (in case the network changes).
+    // R4.3 - circuit breaker now persists in localStorage so it survives
+    // tab closes, browser restarts, and machine reboots. Without this,
+    // every fresh tab paid 5-10s waiting for Edge + Stream timeouts on
+    // networks that permanently block them. Counter is auto-cleared on
+    // any successful play(), so if the user moves to a working network
+    // the very next remote success resets the breaker. Falls back to
+    // sessionStorage if localStorage is unavailable (privacy mode etc).
     var REMOTE_FAIL_LIMIT = 2;
+    var _store = (function () {
+        try {
+            if (typeof localStorage !== 'undefined') {
+                localStorage.setItem('__netra_ls_probe', '1');
+                localStorage.removeItem('__netra_ls_probe');
+                return localStorage;
+            }
+        } catch (e) {}
+        try { if (typeof sessionStorage !== 'undefined') return sessionStorage; } catch (e) {}
+        return null;
+    })();
     var _ssGet = function (k, def) {
-        try { var v = sessionStorage.getItem(k); return v === null ? def : parseInt(v, 10) || 0; }
+        if (!_store) return def;
+        try { var v = _store.getItem(k); return v === null ? def : parseInt(v, 10) || 0; }
         catch (e) { return def; }
     };
     var _ssSet = function (k, v) {
-        try { sessionStorage.setItem(k, String(v)); } catch (e) {}
+        if (!_store) return;
+        try { _store.setItem(k, String(v)); } catch (e) {}
     };
     var _edgeFails = _ssGet('netra_edgeFails', 0);
     var _streamFails = _ssGet('netra_streamFails', 0);
-    if (_edgeFails >= REMOTE_FAIL_LIMIT) logEvent('tts', 'edge circuit was open from previous session (' + _edgeFails + ' fails)');
-    if (_streamFails >= REMOTE_FAIL_LIMIT) logEvent('tts', 'stream circuit was open from previous session (' + _streamFails + ' fails)');
+    if (_edgeFails >= REMOTE_FAIL_LIMIT) logEvent('tts', 'edge circuit was open from previous session (' + _edgeFails + ' fails) - skipping Edge');
+    if (_streamFails >= REMOTE_FAIL_LIMIT) logEvent('tts', 'stream circuit was open from previous session (' + _streamFails + ' fails) - skipping Stream');
 
     function _edgeFallback(text, done) {
         _edgeFails++;
@@ -2882,6 +2897,15 @@ api.controller = function ($scope, $timeout, $window) {
 
     function preloadFillers() {
         if (typeof WebSocket === 'undefined') return;
+        // R4.3 - respect the persisted circuit breaker. If Edge has already
+        // failed >=REMOTE_FAIL_LIMIT times across previous sessions, don't
+        // spam 27 more failed WSS connections at boot - they all fail
+        // identically. The filler chain (R4.1) will use live browser TTS
+        // instead.
+        if (_edgeFails >= REMOTE_FAIL_LIMIT) {
+            logEvent('tts', 'skipping filler preload - edge circuit open (' + _edgeFails + ' prior fails); chain will use live browser TTS');
+            return;
+        }
         logEvent('tts', 'pre-loading thinking-cue fillers...');
         var pending = FILLER_PHRASES.length;
         FILLER_PHRASES.forEach(function (phrase) {
