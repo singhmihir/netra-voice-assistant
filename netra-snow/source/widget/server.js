@@ -3704,15 +3704,25 @@
     ];
 
     function _getVocab() {
+        // R4.6 - dropped sys_properties cache entirely. Yokohama+ instances
+        // platform-flash "Not allowing update of property" on every
+        // setProperty call from a scoped widget context, regardless of
+        // sys_scope. The user sees red banners on every page load. We
+        // now rebuild fresh on each request (~80ms total for 5 indexed
+        // queries), which is < 2% of a typical Gemini round-trip.
+        // The reads at line 3708-3709 still work; we use cached value if
+        // present (set externally via Update Set import or a one-off
+        // background script), but we never WRITE.
         try {
             var cached = gs.getProperty(SCOPE + '.vocab_cache');
             var cachedTs = parseInt(gs.getProperty(SCOPE + '.vocab_cache_ts', '0'), 10);
             var ageMs = new Date().getTime() - cachedTs;
             if (cached && ageMs < 6 * 60 * 60 * 1000) {
                 var p = JSON.parse(cached);
-                // Always re-merge COMMON_VOCAB in case the static list grew since cache time
-                p.common = COMMON_VOCAB;
-                return p;
+                if (p && typeof p === 'object') {
+                    p.common = COMMON_VOCAB;
+                    return p;
+                }
             }
         } catch (e) { /* fall through to refresh */ }
 
@@ -3785,17 +3795,16 @@
 
         v.built_at = String(new GlideDateTime());
 
-        // R4.2 - defensive setProperty. On instances where a previous
-        // platform-level cross-scope guard rejects the write, swallow the
-        // exception AND prevent the platform from flashing the error to
-        // the SP page (we already have an in-memory copy of v that the
-        // current request will use, so a missed cache is harmless).
-        try {
-            gs.setProperty(SCOPE + '.vocab_cache', JSON.stringify(v));
-            gs.setProperty(SCOPE + '.vocab_cache_ts', String(new Date().getTime()));
-        } catch (eS) {
-            gs.info('[NetraGemini] vocab cache write skipped: ' + eS.message);
-        }
+        // R4.6 - setProperty calls REMOVED. Yokohama platform flashes
+        // "Not allowing update of property: X" via gs.addErrorMessage
+        // from inside GlideProperties.setProperty, regardless of scope,
+        // and it bypasses our try/catch (because the message is added
+        // out-of-band, not via thrown exception). The cache is now
+        // request-scoped only; each request rebuilds. If a future
+        // instance has working setProperty for scoped properties, an
+        // out-of-band update (background script or update-set import)
+        // can populate vocab_cache and the read at line ~3711 will use
+        // it. See _setSystemCache() helper below for portable storage.
 
         gs.info('[NetraGemini] vocab refreshed - groups=' + v.groups.length +
                 ' apps=' + v.apps.length + ' cats=' + v.categories.length +
