@@ -59,8 +59,18 @@
 
     if (action === 'chat') {
         try {
+            // R4.5 - cap user message to 8000 chars. The 60 KB history-byte
+            // cap below only trims old turns; the CURRENT message is fed
+            // raw to Gemini. A long dictation or hostile multi-MB payload
+            // could blow the 12s HTTP timeout before any history trim runs.
+            var _userMsg = String((input && input.message) || '').trim();
+            if (_userMsg.length > 8000) _userMsg = _userMsg.substring(0, 8000);
+            // image_b64 cap - 4 MB base64 ~ 3 MB binary, plenty for a screen
+            if (input && typeof input.image_b64 === 'string' && input.image_b64.length > 4000000) {
+                input.image_b64 = input.image_b64.substring(0, 4000000);
+            }
             data.response = _chat(
-                String((input && input.message) || '').trim(),
+                _userMsg,
                 (input && Array.isArray(input.history)) ? input.history : []
             );
         } catch (e) {
@@ -2667,17 +2677,18 @@
                 lg.setValue('group_type', 'direct_message');
                 var lgId = lg.insert();
                 if (lgId) {
-                    ['live_group_member_profile'].forEach(function () {});
-                    var p1 = new GlideRecord('live_group_profile');
-                    p1.initialize();
-                    p1.setValue('group',   lgId);
-                    p1.setValue('profile', senderId);
-                    p1.insert();
-                    var p2 = new GlideRecord('live_group_profile');
-                    p2.initialize();
-                    p2.setValue('group',   lgId);
-                    p2.setValue('profile', recipientId);
-                    p2.insert();
+                    // R4.5 - renamed lp1/lp2 to avoid var-hoist collision with
+                    // the modern path's p1/p2 above; removed dead forEach no-op.
+                    var lp1 = new GlideRecord('live_group_profile');
+                    lp1.initialize();
+                    lp1.setValue('group',   lgId);
+                    lp1.setValue('profile', senderId);
+                    lp1.insert();
+                    var lp2 = new GlideRecord('live_group_profile');
+                    lp2.initialize();
+                    lp2.setValue('group',   lgId);
+                    lp2.setValue('profile', recipientId);
+                    lp2.insert();
                     var lm = new GlideRecord('live_message');
                     lm.initialize();
                     lm.setValue('group',     lgId);
@@ -2838,7 +2849,13 @@
             rm.setHttpTimeout(8000);
             var r = rm.execute();
             if (r.getStatusCode() === 200) {
-                var body = JSON.parse(r.getBody() || '{}');
+                // R4.5 - cap response body at 200 KB before parsing.
+                // A misbehaving endpoint returning 50 MB would block the
+                // request thread on JSON.parse for many seconds.
+                var _rawBody = r.getBody() || '{}';
+                if (_rawBody.length > 200000) _rawBody = _rawBody.substring(0, 200000);
+                var body;
+                try { body = JSON.parse(_rawBody); } catch (eJ) { body = {}; }
                 var abstract = String(body.AbstractText || body.Abstract || '').trim();
                 var url      = String(body.AbstractURL  || body.URL      || '').trim();
                 var source   = String(body.AbstractSource || '').trim();
@@ -3241,6 +3258,15 @@
         var query = String((resp.json && resp.json.encoded_query) || '').trim();
         // Strip any accidental code fences
         query = query.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim().split('\n')[0].trim();
+        // R4.5 - reject prompt-injection: only allow the four documented
+        // ServiceNow encoded-query JS helpers, refuse anything else.
+        if (/javascript:/i.test(query)) {
+            var _allowed = /javascript:gs\.(daysAgoStart|beginningOfThisWeek|endOfYesterday|getUserID|hoursAgoStart|hoursAgoEnd)\(\)/g;
+            var _stripped = query.replace(_allowed, 'X');
+            if (/javascript:/i.test(_stripped)) {
+                return { ok: false, error: 'Query contains unsupported javascript: helper. Allowed helpers: daysAgoStart, beginningOfThisWeek, endOfYesterday, getUserID, hoursAgoStart, hoursAgoEnd.' };
+            }
+        }
 
         if (query.indexOf('=') < 0 && query.indexOf('LIKE') < 0) {
             return { ok: false, error: 'Model output did not look like an encoded query: ' + query.substring(0, 100) };

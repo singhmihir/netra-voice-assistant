@@ -427,14 +427,20 @@ api.controller = function ($scope, $timeout, $window) {
         toolBars:   [],
         toolTotal:  0
     };
+    // R4.5 - destroyed flag gates all recursive watchdogs so they stop
+    // rescheduling after $onDestroy. Without this, navigating between SP
+    // pages leaves N parallel chains running in stale controllers.
+    var _ctrlDestroyed = false;
+    var _statsTickTimer = null;
     function _statsTick() {
+        if (_ctrlDestroyed) return;
         var sec = Math.floor((Date.now() - BOOT_TIME) / 1000);
         var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
         c.stats.uptimeLabel = (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + s + 's';
         $scope.$applyAsync();
-        $timeout(_statsTick, 1000);
+        _statsTickTimer = $timeout(_statsTick, 1000);
     }
-    $timeout(_statsTick, 1000);
+    _statsTickTimer = $timeout(_statsTick, 1000);
 
     // Build SVG polyline path from a number series
     function _seriesToPath(series, scale) {
@@ -932,10 +938,17 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     c.$onDestroy = function () {
+        // R4.5 - mark destroyed so recursive watchdogs stop rescheduling.
+        // The _ctrlDestroyed flag is checked at the top of _statsTick,
+        // _srActivityWatchdog, __micHealthTick, and the listening tick.
+        _ctrlDestroyed = true;
         c.recRunning = false;
         try { if (contRec) contRec.stop(); } catch (e) {}
         if (pollTimer) $timeout.cancel(pollTimer);
         if (commandTimer) $timeout.cancel(commandTimer);
+        if (_statsTickTimer) $timeout.cancel(_statsTickTimer);
+        try { stopFillerChain(); } catch (e) {}
+        try { stopMicLevelMeter(); } catch (e) {}
         if (TTS) TTS.cancel();
         if (audioCtx) try { audioCtx.close(); } catch (e) {}
     };
@@ -1080,6 +1093,7 @@ api.controller = function ($scope, $timeout, $window) {
             //  2. The MediaStream track is still live. If "ended" or
             //     "muted", tear down and re-acquire.
             var __micHealthTick = function () {
+                if (_ctrlDestroyed) return;   // R4.5
                 try {
                     if (_micCtx && _micCtx.state === 'suspended') {
                         logEvent('mic', 'AudioContext was suspended - resuming');
@@ -1686,6 +1700,7 @@ api.controller = function ($scope, $timeout, $window) {
         }, 600);
     }
     function _srActivityWatchdog() {
+        if (_ctrlDestroyed) return;   // R4.5 - don't reschedule after destroy
         try {
             if (c.recRunning && c.alert && c.state !== 'speaking' && recLastActivityAt > 0) {
                 var silentFor = Date.now() - recLastActivityAt;
@@ -1947,7 +1962,11 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     function processFinalTranscript(text, conf) {
-        var clean = (text || '').trim();
+        // R4.5 - cap merged transcript to 4000 chars. The debounce buffer
+        // can join many isFinal fragments and each downstream regex pass
+        // (matchSleep, matchesWake, applyAliases, normalizeNumbers, etc.)
+        // scales linearly with input length.
+        var clean = (text || '').trim().substring(0, 4000);
         if (!clean) return;
         var lower = clean.toLowerCase();
         c.lastHeard  = clean;
@@ -2156,7 +2175,9 @@ api.controller = function ($scope, $timeout, $window) {
                 var r = c.data.response;
                 if (r) {
                     if (r.model_used) c.stats.lastModel = r.model_used;
-                    if (r.tools_called) {
+                    // R4.5 - defensive Array.isArray; a future server can't
+                    // accidentally send a scalar and crash the client.
+                    if (Array.isArray(r.tools_called)) {
                         c.stats.toolsCalled += r.tools_called.length || 0;
                         r.tools_called.forEach(function (name) { _countTool(name); });
                         // R1.4 - record the last turn's tool trace
@@ -2304,7 +2325,11 @@ api.controller = function ($scope, $timeout, $window) {
         // we replace markdown markers with placeholder sentinels first so
         // they survive the XML escape pass, then insert breaks, then expand
         // sentinels into real SSML tags.
-        var t = String(text);
+        // R4.5 - cap input length. Edge TTS hard-limits SSML to ~4 KB and
+        // each replace() copies the string, so 50 KB input does ~400 KB
+        // garbage. Real LLM replies are <2 KB; anything bigger is an
+        // error path leaking a stack trace.
+        var t = String(text || '').substring(0, 6000);
         // R4 - if Gemini emitted an odd number of "**" markers, the last
         // emphasis block never closes. Heuristic: close it at the next
         // sentence boundary so we keep the stress instead of losing it.
@@ -3211,10 +3236,13 @@ api.controller = function ($scope, $timeout, $window) {
         // emphasis + ellipsis markers we kept around for the SSML path.
         // SpeechSynthesisUtterance also has no break-time tag, so we just
         // rely on natural punctuation pauses.
-        var plain = String(text)
+        // R4.5 - hard cap on plain to Chrome's ~32KB utterance limit,
+        // with a safe margin. Long text silently stalls otherwise.
+        var plain = String(text || '')
             .replace(/\*\*([^*]+)\*\*/g, '$1')
             .replace(/\*/g, '')
             .replace(/\.{3,}/g, ',');   // ellipsis -> short pause via comma
+        if (plain.length > 28000) plain = plain.substring(0, 28000) + '...';
         var u = new SpeechSynthesisUtterance(plain);
         u.rate  = 1.15;   // R3.4 - 1.15x speed
         u.pitch = 1.05;
@@ -3432,6 +3460,14 @@ api.controller = function ($scope, $timeout, $window) {
                     list.forEach(function (n) {
                         if (seenIds[n.id]) return;
                         seenIds[n.id] = true;
+                        // R4.5 - cap seenIds to last 500 keys so long-lived
+                        // PWA sessions don't accumulate thousands of sys_ids.
+                        var _seenKeys = Object.keys(seenIds);
+                        if (_seenKeys.length > 500) {
+                            for (var _si = 0; _si < _seenKeys.length - 500; _si++) {
+                                delete seenIds[_seenKeys[_si]];
+                            }
+                        }
                         if (c.state === 'listening' || c.state === 'speaking' || c.state === 'awaiting') return;
                         if (!c.alert) return;  // don't disturb when dormant
                         c.spoken = n.message;
