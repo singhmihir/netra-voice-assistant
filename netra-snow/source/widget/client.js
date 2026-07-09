@@ -1830,11 +1830,20 @@ api.controller = function ($scope, $timeout, $window) {
 
     var grammarLoggedOnce = false;  // only log grammar details once (not every restart)
 
+    // R4.7 - PERF: the server now sends data.vocab ONLY on the initial widget
+    // load (not on every poll/chat), so grammar rebuilds after a poll must not
+    // depend on it still being on c.data. Snapshot it the first time we see it
+    // and reuse the snapshot on later recognizer restarts.
+    var _vocabSnapshot = null;
+
     function attachGrammar(rec) {
         if (!SGL) return;
         try {
             var wakeOptions = WAKE_WORDS.join(' | ');
-            var v = (c.data && c.data.vocab) || {};
+            if (c.data && c.data.vocab && Object.keys(c.data.vocab).length) {
+                _vocabSnapshot = c.data.vocab;   // freshest server truth (boot)
+            }
+            var v = _vocabSnapshot || (c.data && c.data.vocab) || {};
             var dynGroups   = compactList(v.groups, 60);
             var dynApps     = compactList(v.apps, 50);
             var dynCats     = compactList(v.categories, 25);
@@ -3450,9 +3459,19 @@ api.controller = function ($scope, $timeout, $window) {
      *  NOTIFICATION POLLING
      * ============================================================ */
     function startNotificationPolling() {
-        var POLL_MS = 9000;
+        var POLL_MS_ACTIVE  = 9000;
+        var POLL_MS_DORMANT = 30000;   // R4.7 - back off when paused/dormant
         var tick = function () {
-            c.data.action = 'poll';
+            // R4.7 - PERF: keep the poll payload minimal. handleHeard leaves the
+            // full conversation history, the last response, and any screenshot
+            // on c.data; without clearing them, every 9s poll re-POSTed all of
+            // that upstream. Null them so the poll round-trip stays tiny. The
+            // next chat re-sets history/message before it sends.
+            c.data.action    = 'poll';
+            c.data.message   = null;
+            c.data.history   = null;
+            c.data.image_b64 = null;
+            c.data.response  = null;
             c.server.update().then(
                 function () {
                     var list = c.data.notifications || [];
@@ -3477,7 +3496,10 @@ api.controller = function ($scope, $timeout, $window) {
                 },
                 function () { /* silent */ }
             ).finally(function () {
-                pollTimer = $timeout(tick, POLL_MS);
+                // R4.7 - poll slower while paused or dormant: the server has
+                // nothing to deliver then, so a 9s cadence was wasted chatter.
+                var dormant = (c.data && c.data.paused) || !c.alert;
+                pollTimer = $timeout(tick, dormant ? POLL_MS_DORMANT : POLL_MS_ACTIVE);
             });
         };
         pollTimer = $timeout(tick, 3000);

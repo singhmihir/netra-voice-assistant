@@ -34,28 +34,39 @@
     var SCOPE = 'x_196061_netra_v1';
     var user  = gs.getUserID();
 
-    // ---- Always-on state ----
+    var action = (input && input.action) ? String(input.action) : null;
+
+    // ---- Always-on state (cheap: needed by every action incl. the 9s poll) ----
     data.user_name   = gs.getUserDisplayName();
     data.user_sys_id = user;
     data.error       = null;
     data.has_api_key = !!gs.getProperty(SCOPE + '.gemini_api_key');
 
-    _ensurePref();
-    _setPauseState();
-    data.vocab = _getVocab();
+    // R4.7 - PERF: one query both ensures a pref row exists AND reads pause
+    // state, replacing the previous two back-to-back GlideRecord queries on
+    // the same _user_pref row. Runs on every action because poll needs pause.
+    _ensurePrefAndPause();
 
-    // R2.3 - per-user voice training (vocab + aliases) lives in the
-    // Netra Context row. Expose it to the client on every load so it
-    // can rebuild the personal recognizer hints from server truth.
-    try {
-        var trainSnap = _trainingRead();
-        data.training = {
-            vocab:   trainSnap.vocab   || {},
-            aliases: trainSnap.aliases || {}
-        };
-    } catch (eT) { data.training = { vocab: {}, aliases: {} }; }
-
-    var action = (input && input.action) ? String(input.action) : null;
+    // R4.7 - PERF: vocab (5 GlideRecord queries, ~80ms) and the training blob
+    // are consumed by the client ONLY at boot, to build the speech recognizer.
+    // They were previously rebuilt on EVERY server call - including the
+    // 9-second notification poll - so an idle widget ran ~6 needless queries
+    // and shipped a fat vocab/training payload back every 9s, forever. Build
+    // them only on the initial widget load (action === null). The client keeps
+    // its boot snapshot, so poll/chat turns no longer need them re-sent.
+    // R2.3 - per-user voice training (vocab + aliases) lives in the Netra
+    // Context row; expose it so the client can rebuild personal recognizer
+    // hints from server truth.
+    if (!action) {
+        data.vocab = _getVocab();
+        try {
+            var trainSnap = _trainingRead();
+            data.training = {
+                vocab:   trainSnap.vocab   || {},
+                aliases: trainSnap.aliases || {}
+            };
+        } catch (eT) { data.training = { vocab: {}, aliases: {} }; }
+    }
 
     if (action === 'chat') {
         try {
@@ -209,7 +220,7 @@
     } else if (action === 'debug') {
         try {
             var key = gs.getProperty(SCOPE + '.gemini_api_key') || '';
-            var mdl = gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash');
+            var mdl = gs.getProperty(SCOPE + '.gemini_model', 'gemini-flash-lite-latest');
             var toolDecls = _toolDeclarations();
             var toolNames = [];
             if (toolDecls[0] && toolDecls[0].functionDeclarations) {
@@ -250,7 +261,15 @@
                          SCOPE + '.gemini_api_key with your Gemini API key from Google AI Studio.'
             };
         }
-        var model = gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash');
+        // R4.7 - PERF: default to gemini-flash-lite-latest (~1.0s) instead of
+        // gemini-2.5-flash (~2-4s with thinking-token overhead). The tool-use
+        // loop can fire this model up to 5 times per turn, so the primary model
+        // choice dominates perceived latency. flash-lite handles Netra's tool
+        // calls well and was already the first fallback the chain relied on;
+        // making it the *primary* removes 1-3s from every voice turn. Override
+        // via the x_196061_netra_v1.gemini_model property if richer reasoning
+        // is needed on a given instance.
+        var model = gs.getProperty(SCOPE + '.gemini_model', 'gemini-flash-lite-latest');
 
         // Build conversation history for Gemini.
         // R2.7 - aggressive sanitisation to keep payloads under ~40KB even
@@ -296,11 +315,14 @@
                     contents.push({ role: h.role, parts: sanitisedParts });
                 }
             }
-            // Hard byte cap
+            // Hard byte cap. R4.7 - PERF: compute the total size once and
+            // subtract each dropped turn's own length, instead of
+            // re-serialising the entire contents array on every iteration
+            // (previously O(n^2) on long sessions).
             var size = JSON.stringify(contents).length;
             while (contents.length > 2 && size > 60000) {
-                contents.shift();
-                size = JSON.stringify(contents).length;
+                var dropped = contents.shift();
+                size -= JSON.stringify(dropped).length + 1;   // +1 ~ comma separator
             }
             if (size > 60000) {
                 gs.warn('[NetraGemini] history still ' + size + ' bytes after pruning; will rely on Gemini to handle');
@@ -487,7 +509,32 @@
             } catch (eN) { return { label: 'neutral', score: 0, error: 'persist_failed' }; }
         }
 
-        // Stage 2: LLM classifier (only when cues present)
+        // R4.7 - PERF: by default do NOT fire a second, blocking Gemini call on
+        // the reply path. A cue word or ALL-CAPS shout is already a strong
+        // frustration signal, so classify from it directly and skip the extra
+        // ~1-2s LLM round-trip the user would otherwise wait through *before
+        // hearing any reply*. The consecutive-frustrated escalation counter
+        // still works. Set x_196061_netra_v1.sentiment_llm=true to restore the
+        // LLM-refined classification when accuracy matters more than latency.
+        var useLlmSentiment = gs.getProperty(SCOPE + '.sentiment_llm', 'false') === 'true';
+        if (!useLlmSentiment) {
+            try {
+                var bk = _ctxReadBlob();
+                bk.sentiment = bk.sentiment || { history: [], consecutive_frustrated: 0 };
+                bk.sentiment.history.push({ t: new GlideDateTime().toString(), label: 'frustrated', score: 0.6 });
+                if (bk.sentiment.history.length > 10) bk.sentiment.history = bk.sentiment.history.slice(-10);
+                bk.sentiment.consecutive_frustrated = (bk.sentiment.consecutive_frustrated || 0) + 1;
+                _ctxWriteBlob(bk);
+                return {
+                    label: 'frustrated', score: 0.6,
+                    consecutive_frustrated: bk.sentiment.consecutive_frustrated,
+                    suggest_escalation: bk.sentiment.consecutive_frustrated >= 2,
+                    source: 'keyword_filter'
+                };
+            } catch (eKw) { return { label: 'frustrated', score: 0.6, error: 'persist_failed' }; }
+        }
+
+        // Stage 2: LLM classifier (only when cues present AND opt-in enabled)
         var schema = {
             type: 'object',
             properties: {
@@ -687,7 +734,10 @@
     function _reason(systemText, userPayload, responseSchema, maxOutputTokens) {
         var apiKey = gs.getProperty(SCOPE + '.gemini_api_key');
         if (!apiKey) return { error: 'no_gemini_key' };
-        var model = gs.getProperty(SCOPE + '.gemini_model', 'gemini-2.5-flash');
+        // R4.7 - PERF: reasoning calls (sentiment, triage) also default to the
+        // fast lite model. These run on the request path, so 2.5-flash's
+        // thinking overhead was pure added latency.
+        var model = gs.getProperty(SCOPE + '.gemini_model', 'gemini-flash-lite-latest');
 
         // Wrap the system text with a chain-of-thought preamble. This is the
         // single most-effective prompting trick from Anthropic's playbook:
@@ -1851,14 +1901,19 @@
      *  v14 advanced tool implementations
      * =================================================================== */
 
-    // Generic count: query a table by encoded query and return count
+    // Generic count: query a table by encoded query and return count.
+    // R4.7 - PERF: GlideAggregate COUNT runs a SELECT COUNT(*) in the DB
+    // instead of materialising every matching row just to call getRowCount().
+    // daily_briefing makes 9 of these and workload_summary 5, all on the
+    // interactive chat path, so the saving is felt on common opening commands.
     function _countActiveBy(table, qStr) {
         try {
-            var gr = new GlideRecord(table);
-            gr.addActiveQuery();
-            if (qStr) gr.addEncodedQuery(qStr);
-            gr.query();
-            return gr.getRowCount();
+            var ga = new GlideAggregate(table);
+            ga.addActiveQuery();
+            if (qStr) ga.addEncodedQuery(qStr);
+            ga.addAggregate('COUNT');
+            ga.query();
+            return ga.next() ? (parseInt(ga.getAggregate('COUNT'), 10) || 0) : 0;
         } catch (e) { return 0; }
     }
 
@@ -3054,7 +3109,27 @@
             return new NetraKnowledge().search(query, limit || 3);
         }
         var qVec = qRes.values;
-        // Iterate published KB articles, embed lazily, score, keep top-K
+
+        // R4.7 - PERF: batch-load every cached KB embedding for this model in a
+        // SINGLE query and build a lookup map, instead of one point-query per
+        // article inside _lazyEmbedKb (previously up to 200 queries per search).
+        var cacheMap = {};
+        try {
+            var cg = new GlideRecord(EMBED_CACHE_TABLE);
+            cg.addQuery('source_table', 'kb_knowledge');
+            cg.addQuery('model', EMBED_MODEL);
+            cg.setLimit(5000);
+            cg.query();
+            while (cg.next()) {
+                cacheMap[String(cg.source_sys_id)] = {
+                    embedding: String(cg.embedding),
+                    title:     String(cg.title),
+                    number:    String(cg.source_number)
+                };
+            }
+        } catch (eCache) { gs.warn('[NetraRAG] cache preload failed: ' + (eCache.message || eCache)); }
+
+        // Iterate published KB articles, score against the cache, embed lazily
         var gr = new GlideRecord('kb_knowledge');
         gr.addQuery('workflow_state', 'published');
         gr.addQuery('active', true);
@@ -3063,17 +3138,36 @@
         var scored = [];
         var embedded = 0;
         var cached   = 0;
+        var skipped  = 0;
+        // R4.7 - PERF: cap the number of *live* embed HTTP calls per search.
+        // Each is a synchronous 15s-timeout call to Gemini; on a cold cache the
+        // old code could fire up to 200 of them sequentially and hang the whole
+        // transaction for minutes (guaranteed timeout). Now we embed at most a
+        // handful per search and let the cache warm incrementally across calls.
+        var MAX_LIVE_EMBEDS = 8;
         while (gr.next()) {
-            var docRes = _lazyEmbedKb(gr);
-            if (!docRes.ok) continue;
-            if (docRes.cached) cached++; else embedded++;
-            var score = _cosineSim(qVec, docRes.embedding);
+            var sysId = String(gr.sys_id);
+            var vec = null, title = '', number = '';
+            var hit = cacheMap[sysId];
+            if (hit) {
+                try { vec = JSON.parse(hit.embedding); } catch (eP) { vec = null; }
+                title = hit.title; number = hit.number;
+            }
+            if (!vec) {
+                if (embedded >= MAX_LIVE_EMBEDS) { skipped++; continue; }
+                var docRes = _lazyEmbedKb(gr);
+                if (!docRes.ok) continue;
+                vec = docRes.embedding; title = docRes.title; number = docRes.number;
+                embedded++;
+            } else {
+                cached++;
+            }
             scored.push({
-                sys_id:  String(gr.sys_id),
-                number:  docRes.number,
-                title:   docRes.title,
+                sys_id:  sysId,
+                number:  number,
+                title:   title,
                 snippet: _kbBodyDigest(gr.text).substring(0, 220),
-                score:   score
+                score:   _cosineSim(qVec, vec)
             });
         }
         scored.sort(function (a, b) { return b.score - a.score; });
@@ -3088,7 +3182,7 @@
             query: query,
             articles: top,
             count: top.length,
-            stats: { embedded_now: embedded, cached_hits: cached, total_articles_seen: scored.length }
+            stats: { embedded_now: embedded, cached_hits: cached, skipped_uncached: skipped, total_articles_seen: scored.length }
         };
     }
 
@@ -3815,7 +3909,12 @@
     /* ===================================================================
      *  Pref / pause helpers
      * =================================================================== */
-    function _ensurePref() {
+    // R4.7 - PERF: merged _ensurePref + _setPauseState into a single query.
+    // Ensures the per-user pref row exists and, in the same pass, populates
+    // data.paused / data.paused_until from that row.
+    function _ensurePrefAndPause() {
+        data.paused = false;
+        data.paused_until = '';
         var pref = new GlideRecord(SCOPE + '_user_pref');
         pref.addQuery('user', user);
         pref.setLimit(1);
@@ -3828,8 +3927,15 @@
             pref.watch_comments    = true;
             pref.watch_approvals   = true;
             pref.insert();
+            return;   // brand-new row is never paused
         }
-        return pref;
+        if (pref.paused_until && String(pref.paused_until) !== '') {
+            var nowGdt = new GlideDateTime();
+            if (new GlideDateTime(String(pref.paused_until)).compareTo(nowGdt) > 0) {
+                data.paused = true;
+                data.paused_until = String(pref.paused_until);
+            }
+        }
     }
 
     function _setPauseState() {
