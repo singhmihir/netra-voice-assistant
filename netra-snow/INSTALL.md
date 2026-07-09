@@ -100,7 +100,7 @@ Proactive scan check:
 ## Path B — Update Set XML (alternative)
 
 If you'd rather use the standard Update Set flow, see the older instructions
-in [`README.md`](README.md). The XML at `update-set/netra-v2.0.0.xml`
+in [`README.md`](README.md). The XML at `update-set/Netra_v2.0.0-R4.7_Batch.xml`
 contains the 4 Script Includes + Business Rule + Scheduled Job. You'd still
 need to manually create the 2 tables, the Scripted REST API, and the
 Widget via the UI — about 6 steps total, ~10 minutes.

@@ -11,7 +11,7 @@ A scoped ServiceNow Service Portal widget that lets blind and visually-impaired 
 |---|---|
 | [netra-snow/source/widget/](netra-snow/source/widget/) | The four widget files: `template.html`, `client.js`, `server.js`, `stylesheet.scss` |
 | [netra-snow/docs/](netra-snow/docs/) | Canonical Technical Design Document + test report |
-| [netra-snow/update-set/](netra-snow/update-set/) | Canonical deployment bundle: `NetraDeploymentV1.xml` |
+| [netra-snow/update-set/](netra-snow/update-set/) | Canonical deployment bundle: `Netra_v2.0.0-R4.7_Batch.xml` (batch parent + 5 children, single-file import) |
 | [netra-snow/scripts/](netra-snow/scripts/) | PowerShell + Python helpers for build, diagrams, and update-set export |
 | [netra-snow/install/](netra-snow/install/) | One-shot installer that wires the scoped app and Business Rule |
 | [netra-snow/branding/](netra-snow/branding/) | Logo, icon, and badge assets |
