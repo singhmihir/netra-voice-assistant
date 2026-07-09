@@ -60,7 +60,7 @@ A voice-first, fully accessible assistant that runs **natively inside ServiceNow
 | Path | Files | Manual steps |
 |---|---|---|
 | **A. Background Script (Recommended)** | `install/setup-netra.js` | Create scope (1 click), paste + Run script (1 click), drop widget on page (1 click) |
-| B. Update Set XML | `update-set/netra-v2.0.0.xml` | Create scope + tables + REST API + widget manually, import Update Set |
+| B. Update Set XML (batch) | `update-set/Netra_v2.0.0-R4.7_Batch.xml` | Import XML, then Preview & Commit the parent set — children commit automatically |
 
 See [`INSTALL.md`](INSTALL.md) for the click-by-click walkthrough.
 
@@ -73,9 +73,9 @@ netra-snow/
 ├── install/
 │   └── setup-netra.js                       ← single Background Script: creates everything
 ├── update-set/
-│   └── netra-v2.0.0.xml                     ← alternative: Update Set with code-bearing records
+│   └── Netra_v2.0.0-R4.7_Batch.xml          ← batch update set: parent + 5 children, single import
 ├── scripts/
-│   ├── build-setup-script.ps1               ← regenerates setup-netra.js from source/
+│   ├── build-setup-script.mjs               ← regenerates setup-netra.js from source/ (Node, cross-platform)
 │   └── build-update-set.ps1                 ← regenerates the XML from source/
 └── source/
     ├── script_includes/
@@ -165,7 +165,7 @@ After editing any source file:
 
 ```powershell
 # Regenerate the Background Script (recommended path)
-powershell -ExecutionPolicy Bypass -File netra-snow\scripts\build-setup-script.ps1
+node netra-snow/scripts/build-setup-script.mjs
 
 # Regenerate the Update Set XML (alternative path)
 powershell -ExecutionPolicy Bypass -File netra-snow\scripts\build-update-set.ps1
