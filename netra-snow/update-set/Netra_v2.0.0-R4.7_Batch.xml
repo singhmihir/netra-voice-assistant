@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<unload unload_date="2026-07-09 04.49.29">
+<unload unload_date="2026-07-09 05.07.51">
 <sys_remote_update_set action="INSERT_OR_UPDATE">
     <application>26a2121093424710e3aef0aefaba106a</application>
     <application_name>Netra Voice Assistant</application_name>
@@ -20,7 +20,7 @@
     <sys_created_on>2026-07-09 04:37:09</sys_created_on>
     <sys_id>32a2961093424710e3aef0aefaba1082</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 04:45:04</sys_updated_on>
+    <sys_updated_on>2026-07-09 05:07:36</sys_updated_on>
     <update_source/>
 </sys_remote_update_set>
 <sys_remote_update_set action="INSERT_OR_UPDATE">
@@ -135,7 +135,7 @@
     <sys_created_on>2026-07-09 04:37:09</sys_created_on>
     <sys_id>f6a2961093424710e3aef0aefaba1087</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 04:44:04</sys_updated_on>
+    <sys_updated_on>2026-07-09 05:07:36</sys_updated_on>
     <update_source/>
 </sys_remote_update_set>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14241,6 +14241,26 @@ api.controller = function ($scope, $timeout, $window) {
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
+    <name>sys_scope_privilege_00cd1747ff6026103d6affffffffff14</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="ServiceNow IDE"&gt;fd254d9443a161100967247e6bb8f200&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2025-04-01 17:12:28&lt;/sys_created_on&gt;&lt;sys_id&gt;00cd1747ff6026103d6affffffffff14&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_script&lt;/sys_name&gt;&lt;sys_package display_value="ServiceNow IDE" source="sn_glider"&gt;fd254d9443a161100967247e6bb8f200&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="ServiceNow IDE"&gt;fd254d9443a161100967247e6bb8f200&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_00cd1747ff6026103d6affffffffff14&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2025-04-01 17:12:28&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_script&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-961787695</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:04</sys_created_on>
+    <sys_id>c5285a5c93424710e3aef0aefaba1096</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:04</sys_updated_on>
+    <target_name>sys_script</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>01285a5c0f4247105b44b6127d8b8696</update_guid>
+    <update_guid_history>01285a5c0f4247105b44b6127d8b8696:-961787695</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
     <name>sys_scope_privilege_05d3d2d093424710e3aef0aefaba10a1</name>
     <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:42:14&lt;/sys_created_on&gt;&lt;sys_id&gt;05d3d2d093424710e3aef0aefaba10a1&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_ws_operation&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_05d3d2d093424710e3aef0aefaba10a1&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-09 04:42:14&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_ws_operation&lt;/target_name&gt;&lt;target_scope/&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
     <payload_hash>-1831529818</payload_hash>
@@ -14341,6 +14361,106 @@ api.controller = function ($scope, $timeout, $window) {
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
+    <name>sys_scope_privilege_0ff90a43ff783210761effffffffffa6</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;delete&lt;/operation&gt;&lt;source_scope display_value="Clone Admin Console"&gt;31774a2953839110a6f8ddeeff7b12cb&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2025-10-29 17:33:09&lt;/sys_created_on&gt;&lt;sys_id&gt;0ff90a43ff783210761effffffffffa6&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_user_preference&lt;/sys_name&gt;&lt;sys_package display_value="Clone Admin Console" source="sn_instance_clone"&gt;31774a2953839110a6f8ddeeff7b12cb&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Clone Admin Console"&gt;31774a2953839110a6f8ddeeff7b12cb&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_0ff90a43ff783210761effffffffffa6&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2025-10-29 17:33:09&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_user_preference&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-535633604</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:06</sys_created_on>
+    <sys_id>6d289a5c93424710e3aef0aefaba105a</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:06</sys_updated_on>
+    <target_name>sys_user_preference</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>a5289a5c794247108e8b35ce69fa745a</update_guid>
+    <update_guid_history>a5289a5c794247108e8b35ce69fa745a:-535633604</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_11deab51eb10220034d1eeea1206fe93</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2016-06-28 10:43:06&lt;/sys_created_on&gt;&lt;sys_id&gt;11deab51eb10220034d1eeea1206fe93&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;incident&lt;/sys_name&gt;&lt;sys_package display_value="Change Management - CAB Workbench" source="sn_change_cab"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_11deab51eb10220034d1eeea1206fe93&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2016-06-28 10:43:06&lt;/sys_updated_on&gt;&lt;target_name&gt;incident&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1604944983</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:07</sys_created_on>
+    <sys_id>29289a5c93424710e3aef0aefaba107c</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:07</sys_updated_on>
+    <target_name>incident</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>61289a5c4442471054f78a286236ff7c</update_guid>
+    <update_guid_history>61289a5c4442471054f78a286236ff7c:-1604944983</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_2e5d9571ff813210761effffffffff8c</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;write&lt;/operation&gt;&lt;source_scope display_value="Clone Admin Console"&gt;31774a2953839110a6f8ddeeff7b12cb&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2025-11-07 03:21:20&lt;/sys_created_on&gt;&lt;sys_id&gt;2e5d9571ff813210761effffffffff8c&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_properties&lt;/sys_name&gt;&lt;sys_package display_value="Clone Admin Console" source="sn_instance_clone"&gt;31774a2953839110a6f8ddeeff7b12cb&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Clone Admin Console"&gt;31774a2953839110a6f8ddeeff7b12cb&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_2e5d9571ff813210761effffffffff8c&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2025-11-07 03:21:20&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_properties&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1167563376</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:10</sys_created_on>
+    <sys_id>6a281e5c93424710e3aef0aefaba1065</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:10</sys_updated_on>
+    <target_name>sys_properties</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>a2281e5c49424710441d10e6600fad65</update_guid>
+    <update_guid_history>a2281e5c49424710441d10e6600fad65:1167563376</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_306bc0da87530110a4a2c077f6cb0bed</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;write&lt;/operation&gt;&lt;source_scope display_value="Omni-Experience Standard Feature Set"&gt;53b1b0e79761011018b2fa98c253afcc&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2022-05-08 09:43:34&lt;/sys_created_on&gt;&lt;sys_id&gt;306bc0da87530110a4a2c077f6cb0bed&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_user_preference&lt;/sys_name&gt;&lt;sys_package display_value="Issue Auto-Resolution" source="com.glide.cs.auto_resolution"&gt;d2256460f58c03100a22c0b3dfa1515b&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Global"&gt;global&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_306bc0da87530110a4a2c077f6cb0bed&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2022-05-08 09:43:34&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_user_preference&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1583237660</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:11</sys_created_on>
+    <sys_id>62281e5c93424710e3aef0aefaba107d</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:11</sys_updated_on>
+    <target_name>sys_user_preference</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>aa281e5c41424710a1c30603df57f47c</update_guid>
+    <update_guid_history>aa281e5c41424710a1c30603df57f47c:1583237660</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_437bb7d7eb03120034d1eeea1206fecb</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2016-05-03 13:27:45&lt;/sys_created_on&gt;&lt;sys_id&gt;437bb7d7eb03120034d1eeea1206fecb&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;change_request&lt;/sys_name&gt;&lt;sys_package display_value="Change Management - CAB Workbench" source="sn_change_cab"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_437bb7d7eb03120034d1eeea1206fecb&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2016-05-03 13:27:45&lt;/sys_updated_on&gt;&lt;target_name&gt;change_request&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1012518267</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:13</sys_created_on>
+    <sys_id>c7285e5c93424710e3aef0aefaba10a4</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:13</sys_updated_on>
+    <target_name>change_request</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>03285e5c64424710e49b92857e2121a4</update_guid>
+    <update_guid_history>03285e5c64424710e49b92857e2121a4:-1012518267</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
     <name>sys_scope_privilege_49d3d2d093424710e3aef0aefaba10c4</name>
     <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;write&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:42:14&lt;/sys_created_on&gt;&lt;sys_id&gt;49d3d2d093424710e3aef0aefaba10c4&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;incident&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_49d3d2d093424710e3aef0aefaba10c4&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-09 04:42:14&lt;/sys_updated_on&gt;&lt;target_name&gt;incident&lt;/target_name&gt;&lt;target_scope/&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
     <payload_hash>-1081515817</payload_hash>
@@ -14396,6 +14516,26 @@ api.controller = function ($scope, $timeout, $window) {
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
     <update_guid>51d316d032424710bc72301df6c7462c</update_guid>
     <update_guid_history>51d316d032424710bc72301df6c7462c:-884771866</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_5313dd50db38320099f93691f0b8f5e7</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Knowledge Management - Service Portal"&gt;bab6dea3db20320099f93691f0b8f590&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2017-02-03 13:31:24&lt;/sys_created_on&gt;&lt;sys_id&gt;5313dd50db38320099f93691f0b8f5e7&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;kb_knowledge&lt;/sys_name&gt;&lt;sys_package display_value="Knowledge Management - Service Portal" source="sn_km_portal"&gt;bab6dea3db20320099f93691f0b8f590&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Knowledge Management - Service Portal"&gt;bab6dea3db20320099f93691f0b8f590&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_5313dd50db38320099f93691f0b8f5e7&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2017-02-03 13:31:24&lt;/sys_updated_on&gt;&lt;target_name&gt;kb_knowledge&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1889620693</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:14</sys_created_on>
+    <sys_id>e3289e5c93424710e3aef0aefaba108c</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:14</sys_updated_on>
+    <target_name>kb_knowledge</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>2f289e5c0f4247105c86faf0ff17828b</update_guid>
+    <update_guid_history>2f289e5c0f4247105c86faf0ff17828b:1889620693</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14496,6 +14636,46 @@ api.controller = function ($scope, $timeout, $window) {
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
     <update_guid>5dd316d0454247101bd883d78d48fa2f</update_guid>
     <update_guid_history>5dd316d0454247101bd883d78d48fa2f:-1061570728</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_5e93f439535db410f738ddeeff7b12f3</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Conversational Interfaces - Diagnostics"&gt;434a64fd531db410f738ddeeff7b12c7&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2021-07-12 17:05:13&lt;/sys_created_on&gt;&lt;sys_id&gt;5e93f439535db410f738ddeeff7b12f3&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_properties&lt;/sys_name&gt;&lt;sys_package display_value="Conversational Interfaces - Diagnostics" source="sn_ci_diagnostics"&gt;434a64fd531db410f738ddeeff7b12c7&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Conversational Interfaces - Diagnostics"&gt;434a64fd531db410f738ddeeff7b12c7&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_5e93f439535db410f738ddeeff7b12f3&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2021-07-12 17:05:13&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_properties&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1740460899</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:15</sys_created_on>
+    <sys_id>a3289e5c93424710e3aef0aefaba10f4</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:15</sys_updated_on>
+    <target_name>sys_properties</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>eb289e5cb542471052e05080237a1cf3</update_guid>
+    <update_guid_history>eb289e5cb542471052e05080237a1cf3:-1740460899</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_6bf74e8fff383210761effffffffff52</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;create&lt;/operation&gt;&lt;source_scope display_value="Clone Admin Console"&gt;31774a2953839110a6f8ddeeff7b12cb&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2025-10-29 17:24:32&lt;/sys_created_on&gt;&lt;sys_id&gt;6bf74e8fff383210761effffffffff52&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_user_preference&lt;/sys_name&gt;&lt;sys_package display_value="Clone Admin Console" source="sn_instance_clone"&gt;31774a2953839110a6f8ddeeff7b12cb&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Clone Admin Console"&gt;31774a2953839110a6f8ddeeff7b12cb&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_6bf74e8fff383210761effffffffff52&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2025-10-29 17:24:32&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_user_preference&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1825908789</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:16</sys_created_on>
+    <sys_id>0c38de5c93424710e3aef0aefaba10a3</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:16</sys_updated_on>
+    <target_name>sys_user_preference</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>4438de5c8e424710d4fd70954014b8a3</update_guid>
+    <update_guid_history>4438de5c8e424710d4fd70954014b8a3:-1825908789</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14661,6 +14841,106 @@ api.controller = function ($scope, $timeout, $window) {
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
+    <name>sys_scope_privilege_a4c85471eb10220034d1eeea1206fe2c</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2016-06-29 08:24:47&lt;/sys_created_on&gt;&lt;sys_id&gt;a4c85471eb10220034d1eeea1206fe2c&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_user&lt;/sys_name&gt;&lt;sys_package display_value="Change Management - CAB Workbench" source="sn_change_cab"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_a4c85471eb10220034d1eeea1206fe2c&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2016-06-29 08:24:47&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_user&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>819873599</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:21</sys_created_on>
+    <sys_id>d138929c93424710e3aef0aefaba10db</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:21</sys_updated_on>
+    <target_name>sys_user</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>1d38929c034247108a503e54ae7cabda</update_guid>
+    <update_guid_history>1d38929c034247108a503e54ae7cabda:819873599</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_aebd5db087603200277eff0b84e3ec72</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;write&lt;/operation&gt;&lt;source_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2017-01-23 17:19:02&lt;/sys_created_on&gt;&lt;sys_id&gt;aebd5db087603200277eff0b84e3ec72&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;change_request&lt;/sys_name&gt;&lt;sys_package display_value="Change Management - CAB Workbench" source="sn_change_cab"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_aebd5db087603200277eff0b84e3ec72&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2017-01-23 17:19:02&lt;/sys_updated_on&gt;&lt;target_name&gt;change_request&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1853585796</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:22</sys_created_on>
+    <sys_id>6538d29c93424710e3aef0aefaba1053</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:22</sys_updated_on>
+    <target_name>change_request</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>ad38d29ccd424710a28bc2db12ad8352</update_guid>
+    <update_guid_history>ad38d29ccd424710a28bc2db12ad8352:-1853585796</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_bc130ef1b7b37300d1dc8b91ee11a922</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="ML UI"&gt;21f30bcdb7d03300d1dcf8b8ee11a9eb&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2019-09-10 20:44:48&lt;/sys_created_on&gt;&lt;sys_id&gt;bc130ef1b7b37300d1dc8b91ee11a922&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sp_widget&lt;/sys_name&gt;&lt;sys_package display_value="ML UI" source="sn_ml_ui"&gt;21f30bcdb7d03300d1dcf8b8ee11a9eb&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="ML UI"&gt;21f30bcdb7d03300d1dcf8b8ee11a9eb&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_bc130ef1b7b37300d1dc8b91ee11a922&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2019-09-10 20:44:48&lt;/sys_updated_on&gt;&lt;target_name&gt;sp_widget&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1564703857</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:24</sys_created_on>
+    <sys_id>3138169c93424710e3aef0aefaba101b</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:24</sys_updated_on>
+    <target_name>sp_widget</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>7938169c904247102e3dc04a36da8a1a</update_guid>
+    <update_guid_history>7938169c904247102e3dc04a36da8a1a:1564703857</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_bd785499b7823300d1dcf8b8ee11a906</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="ML UI"&gt;21f30bcdb7d03300d1dcf8b8ee11a9eb&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2019-06-13 23:52:11&lt;/sys_created_on&gt;&lt;sys_id&gt;bd785499b7823300d1dcf8b8ee11a906&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_db_object&lt;/sys_name&gt;&lt;sys_package display_value="ML UI" source="sn_ml_ui"&gt;21f30bcdb7d03300d1dcf8b8ee11a9eb&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="ML UI"&gt;21f30bcdb7d03300d1dcf8b8ee11a9eb&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_bd785499b7823300d1dcf8b8ee11a906&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2019-06-13 23:52:11&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_db_object&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1011006095</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:24</sys_created_on>
+    <sys_id>7938169c93424710e3aef0aefaba102f</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:24</sys_updated_on>
+    <target_name>sys_db_object</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>b138169c48424710b4c5d9bc79c9bf2f</update_guid>
+    <update_guid_history>b138169c48424710b4c5d9bc79c9bf2f:-1011006095</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_c292b7b8c31120100bf442583c40dd02</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope/&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;system&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2020-12-23 08:14:36&lt;/sys_created_on&gt;&lt;sys_id&gt;c292b7b8c31120100bf442583c40dd02&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_app&lt;/sys_name&gt;&lt;sys_package display_value="AES Portal UI Template" source="sn_portal_starte_0"&gt;9262a139c39020100bf442583c40dd87&lt;/sys_package&gt;&lt;sys_policy&gt;read&lt;/sys_policy&gt;&lt;sys_scope display_value="AES Portal UI Template"&gt;9262a139c39020100bf442583c40dd87&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_c292b7b8c31120100bf442583c40dd02&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;system&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2020-12-23 08:14:36&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_app&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>431425828</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:24</sys_created_on>
+    <sys_id>0638169c93424710e3aef0aefaba1073</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:24</sys_updated_on>
+    <target_name>sys_app</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>4e38169c19424710431a1aac06409d72</update_guid>
+    <update_guid_history>4e38169c19424710431a1aac06409d72:431425828</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
     <name>sys_scope_privilege_c5d3d2d093424710e3aef0aefaba1045</name>
     <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:42:14&lt;/sys_created_on&gt;&lt;sys_id&gt;c5d3d2d093424710e3aef0aefaba1045&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sc_task&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_c5d3d2d093424710e3aef0aefaba1045&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-09 04:42:14&lt;/sys_updated_on&gt;&lt;target_name&gt;sc_task&lt;/target_name&gt;&lt;target_scope/&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
     <payload_hash>525922240</payload_hash>
@@ -14676,6 +14956,26 @@ api.controller = function ($scope, $timeout, $window) {
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
     <update_guid>09d3d2d0fb424710564d649bfb540349</update_guid>
     <update_guid_history>09d3d2d0fb424710564d649bfb540349:525922240</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_c830a3c2533b1010af5addeeff7b1240</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="CI Guided Setup"&gt;30f13c8d53521010af5addeeff7b121d&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2020-10-13 14:32:34&lt;/sys_created_on&gt;&lt;sys_id&gt;c830a3c2533b1010af5addeeff7b1240&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_user_preference&lt;/sys_name&gt;&lt;sys_package display_value="CI Guided Setup" source="sn_ci_gs_content"&gt;30f13c8d53521010af5addeeff7b121d&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="CI Guided Setup"&gt;30f13c8d53521010af5addeeff7b121d&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_c830a3c2533b1010af5addeeff7b1240&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2020-10-13 14:32:34&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_user_preference&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1931643089</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:25</sys_created_on>
+    <sys_id>c638169c93424710e3aef0aefaba10cc</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:25</sys_updated_on>
+    <target_name>sys_user_preference</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>0238169c8742471078f0d1cb8bf497cc</update_guid>
+    <update_guid_history>0238169c8742471078f0d1cb8bf497cc:1931643089</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14716,6 +15016,46 @@ api.controller = function ($scope, $timeout, $window) {
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
     <update_guid>c9d3d2d0d242471095bf12a05fde05c2</update_guid>
     <update_guid_history>c9d3d2d0d242471095bf12a05fde05c2:929907936</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_cc0bfc48c3663010d81b6e221f40dd79</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Conversational Interfaces - Diagnostics"&gt;434a64fd531db410f738ddeeff7b12c7&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2021-09-07 10:26:52&lt;/sys_created_on&gt;&lt;sys_id&gt;cc0bfc48c3663010d81b6e221f40dd79&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;problem&lt;/sys_name&gt;&lt;sys_package display_value="Conversational Interfaces - Diagnostics" source="sn_ci_diagnostics"&gt;434a64fd531db410f738ddeeff7b12c7&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Conversational Interfaces - Diagnostics"&gt;434a64fd531db410f738ddeeff7b12c7&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_cc0bfc48c3663010d81b6e221f40dd79&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2021-09-07 10:26:52&lt;/sys_updated_on&gt;&lt;target_name&gt;problem&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1699081487</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:25</sys_created_on>
+    <sys_id>8a38569c93424710e3aef0aefaba1021</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:25</sys_updated_on>
+    <target_name>problem</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>c238569c2842471098ea049133d56521</update_guid>
+    <update_guid_history>c238569c2842471098ea049133d56521:-1699081487</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_ce45a58f4b73a2102a76aefa797461ab</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Knowledge Center"&gt;48e5dbcb9f6f1210ecf142a4ba0a1c84&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2025-09-09 21:49:43&lt;/sys_created_on&gt;&lt;sys_id&gt;ce45a58f4b73a2102a76aefa797461ab&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sc_req_item&lt;/sys_name&gt;&lt;sys_package display_value="Knowledge Center" source="sn_km_center"&gt;48e5dbcb9f6f1210ecf142a4ba0a1c84&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Knowledge Center"&gt;48e5dbcb9f6f1210ecf142a4ba0a1c84&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_ce45a58f4b73a2102a76aefa797461ab&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2025-09-09 21:49:43&lt;/sys_updated_on&gt;&lt;target_name&gt;sc_req_item&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1443651717</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:26</sys_created_on>
+    <sys_id>9e38569c93424710e3aef0aefaba104a</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:26</sys_updated_on>
+    <target_name>sc_req_item</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>d638569cd54247109418585dd919934a</update_guid>
+    <update_guid_history>d638569cd54247109418585dd919934a:1443651717</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14861,6 +15201,26 @@ api.controller = function ($scope, $timeout, $window) {
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
+    <name>sys_scope_privilege_d8752fe0eb20220034d1eeea1206fe19</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;write&lt;/operation&gt;&lt;source_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2016-07-08 12:22:21&lt;/sys_created_on&gt;&lt;sys_id&gt;d8752fe0eb20220034d1eeea1206fe19&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sysapproval_approver&lt;/sys_name&gt;&lt;sys_package display_value="Change Management - CAB Workbench" source="sn_change_cab"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_d8752fe0eb20220034d1eeea1206fe19&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2016-07-08 12:22:21&lt;/sys_updated_on&gt;&lt;target_name&gt;sysapproval_approver&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-928871132</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:27</sys_created_on>
+    <sys_id>6238569c93424710e3aef0aefaba10ca</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:27</sys_updated_on>
+    <target_name>sysapproval_approver</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>aa38569c4b4247103d956f2a6089d0c9</update_guid>
+    <update_guid_history>aa38569c4b4247103d956f2a6089d0c9:-928871132</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
     <name>sys_scope_privilege_d9d316d093424710e3aef0aefaba1009</name>
     <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:42:14&lt;/sys_created_on&gt;&lt;sys_id&gt;d9d316d093424710e3aef0aefaba1009&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_journal_field&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_d9d316d093424710e3aef0aefaba1009&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-09 04:42:14&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_journal_field&lt;/target_name&gt;&lt;target_scope/&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
     <payload_hash>1501269888</payload_hash>
@@ -14941,6 +15301,26 @@ api.controller = function ($scope, $timeout, $window) {
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
+    <name>sys_scope_privilege_dad6a672734430104f274e3a4cf6a764</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="AES Flow Templates"&gt;f9a0de22c7022010d447c17cf4c260ea&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2021-05-15 00:48:34&lt;/sys_created_on&gt;&lt;sys_id&gt;dad6a672734430104f274e3a4cf6a764&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_choice&lt;/sys_name&gt;&lt;sys_package display_value="AES Flow Templates" source="sn_aes_flow_templa"&gt;f9a0de22c7022010d447c17cf4c260ea&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="AES Flow Templates"&gt;f9a0de22c7022010d447c17cf4c260ea&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_dad6a672734430104f274e3a4cf6a764&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2021-05-15 00:48:34&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_choice&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1632991663</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:27</sys_created_on>
+    <sys_id>2238569c93424710e3aef0aefaba10eb</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:27</sys_updated_on>
+    <target_name>sys_choice</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>6a38569c1b42471023ab268817b1a8ea</update_guid>
+    <update_guid_history>6a38569c1b42471023ab268817b1a8ea:-1632991663</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
     <name>sys_scope_privilege_ddd316d093424710e3aef0aefaba1051</name>
     <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:42:14&lt;/sys_created_on&gt;&lt;sys_id&gt;ddd316d093424710e3aef0aefaba1051&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_sidebar_discussion_participant&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_ddd316d093424710e3aef0aefaba1051&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-09 04:42:14&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_sidebar_discussion_participant&lt;/target_name&gt;&lt;target_scope/&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
     <payload_hash>1398060656</payload_hash>
@@ -15016,6 +15396,106 @@ api.controller = function ($scope, $timeout, $window) {
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
     <update_guid>ddd316d061424710b48380ca608d0b80</update_guid>
     <update_guid_history>ddd316d061424710b48380ca608d0b80:939810730</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_e6d85ce60f003010f4166fe7c4767ede</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="AES Flow Templates"&gt;f9a0de22c7022010d447c17cf4c260ea&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2021-05-13 19:45:32&lt;/sys_created_on&gt;&lt;sys_id&gt;e6d85ce60f003010f4166fe7c4767ede&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_user_group&lt;/sys_name&gt;&lt;sys_package display_value="AES Flow Templates" source="sn_aes_flow_templa"&gt;f9a0de22c7022010d447c17cf4c260ea&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="AES Flow Templates"&gt;f9a0de22c7022010d447c17cf4c260ea&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_e6d85ce60f003010f4166fe7c4767ede&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2021-05-13 19:45:32&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_user_group&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>471376657</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:28</sys_created_on>
+    <sys_id>be38969c93424710e3aef0aefaba1083</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:28</sys_updated_on>
+    <target_name>sys_user_group</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>f638969cd4424710fd76c0872a933783</update_guid>
+    <update_guid_history>f638969cd4424710fd76c0872a933783:471376657</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_ea20e3e0eb20220034d1eeea1206fe8c</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2016-07-08 11:59:17&lt;/sys_created_on&gt;&lt;sys_id&gt;ea20e3e0eb20220034d1eeea1206fe8c&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sysapproval_approver&lt;/sys_name&gt;&lt;sys_package display_value="Change Management - CAB Workbench" source="sn_change_cab"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_ea20e3e0eb20220034d1eeea1206fe8c&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2016-07-08 11:59:17&lt;/sys_updated_on&gt;&lt;target_name&gt;sysapproval_approver&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1010660269</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:28</sys_created_on>
+    <sys_id>fa38969c93424710e3aef0aefaba10b3</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:28</sys_updated_on>
+    <target_name>sysapproval_approver</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>3638969c6c4247106ad39411783503b3</update_guid>
+    <update_guid_history>3638969c6c4247106ad39411783503b3:1010660269</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_eb853240eb3022002a7a666cd206fe22</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;beth.anglin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2016-07-19 05:51:51&lt;/sys_created_on&gt;&lt;sys_id&gt;eb853240eb3022002a7a666cd206fe22&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_attachment&lt;/sys_name&gt;&lt;sys_package display_value="Change Management - CAB Workbench" source="sn_change_cab"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Change Management - CAB Workbench"&gt;18351d53eb32120034d1eeea1206fe79&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_eb853240eb3022002a7a666cd206fe22&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;beth.anglin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2016-07-19 05:51:51&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_attachment&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-99694801</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:28</sys_created_on>
+    <sys_id>f638969c93424710e3aef0aefaba10c5</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:28</sys_updated_on>
+    <target_name>sys_attachment</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>3238969cd74247100d0f866acceb47c5</update_guid>
+    <update_guid_history>3238969cd74247100d0f866acceb47c5:-99694801</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_f48a60a2c3a101104b8e88c7c840dd7e</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Admin Experience Framework"&gt;5df6db91ebe4011090fa99602a52289e&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2022-02-11 06:48:10&lt;/sys_created_on&gt;&lt;sys_id&gt;f48a60a2c3a101104b8e88c7c840dd7e&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_dictionary&lt;/sys_name&gt;&lt;sys_package display_value="Admin Experience Framework" source="sn_ace"&gt;5df6db91ebe4011090fa99602a52289e&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Admin Experience Framework"&gt;5df6db91ebe4011090fa99602a52289e&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_f48a60a2c3a101104b8e88c7c840dd7e&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2022-02-11 06:48:10&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_dictionary&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-2136021967</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:29</sys_created_on>
+    <sys_id>8f38d69c93424710e3aef0aefaba1042</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:29</sys_updated_on>
+    <target_name>sys_dictionary</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>c738d69c60424710e089326673575342</update_guid>
+    <update_guid_history>c738d69c60424710e089326673575342:-2136021967</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_f6c8908b5cc2a010f877a76c46326c65</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Performance Appraisal App Template"&gt;91256a9899862010f8779b076766f4fb&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;maint&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2021-02-04 22:56:27&lt;/sys_created_on&gt;&lt;sys_id&gt;f6c8908b5cc2a010f877a76c46326c65&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_script_include&lt;/sys_name&gt;&lt;sys_package display_value="Performance Appraisal App Template" source="sn_performanc_0"&gt;91256a9899862010f8779b076766f4fb&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Performance Appraisal App Template"&gt;91256a9899862010f8779b076766f4fb&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_f6c8908b5cc2a010f877a76c46326c65&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;maint&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2021-02-04 22:56:27&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_script_include&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>837141201</payload_hash>
+    <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-09 05:01:29</sys_created_on>
+    <sys_id>8b38d69c93424710e3aef0aefaba104e</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-09 05:01:29</sys_updated_on>
+    <target_name>sys_script_include</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>c338d69c05424710dc6c58fcbf30ad4e</update_guid>
+    <update_guid_history>c338d69c05424710dc6c58fcbf30ad4e:837141201</update_guid_history>
     <view/>
 </sys_update_xml>
 </unload>
