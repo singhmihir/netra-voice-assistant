@@ -12210,7 +12210,7 @@
         for (var pi = 0; pi < privRules[privTable].length; pi++) {
             var privOp = privRules[privTable][pi];
             var privEx = new GlideRecord('sys_scope_privilege');
-            privEx.addQuery('source', scopeSysId);
+            privEx.addQuery('source_scope', scopeSysId);
             privEx.addQuery('target_type', 'sys_db_object');
             privEx.addQuery('target_name', privTable);
             privEx.addQuery('operation', privOp);
@@ -12218,7 +12218,8 @@
             if (privEx.next()) { privSkipped++; continue; }
             var privGr = new GlideRecord('sys_scope_privilege');
             privGr.initialize();
-            privGr.setValue('source', scopeSysId);
+            privGr.setValue('source_scope', scopeSysId);   // NB: the column is source_scope; 'source' silently no-ops
+            privGr.setValue('target_scope', 'global');
             privGr.setValue('target_type', 'sys_db_object');
             privGr.setValue('target_name', privTable);
             privGr.setValue('operation', privOp);

@@ -84,7 +84,7 @@
         rules[table].forEach(function (op) {
             // Idempotency check
             var existing = new GlideRecord('sys_scope_privilege');
-            existing.addQuery('source', SCOPE_SYS_ID);
+            existing.addQuery('source_scope', SCOPE_SYS_ID);
             existing.addQuery('target_type', 'sys_db_object');
             existing.addQuery('target_name', table);
             existing.addQuery('operation', op);
@@ -94,7 +94,9 @@
 
             var gr = new GlideRecord('sys_scope_privilege');
             gr.initialize();
-            gr.source = SCOPE_SYS_ID;
+            gr.source_scope = SCOPE_SYS_ID;   // NB: the column is source_scope; 'source' silently no-ops
+            gr.sys_scope = SCOPE_SYS_ID;
+            gr.target_scope = 'global';
             gr.target_type = 'sys_db_object';
             gr.target_name = table;
             gr.operation = op;
