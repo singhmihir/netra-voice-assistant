@@ -37,7 +37,7 @@
     [
         'NetraIntent', 'NetraTools', 'NetraResponder', 'NetraScanner',
         'NetraKnowledge', 'NetraChat', 'NetraSummarizer', 'NetraContext',
-        'NetraNavigator'
+        'NetraNavigator', 'NetraVulnerability', 'NetraPerformance'
     ].forEach(function (name) {
         try {
             var ctor = (typeof __NETRA_SCOPE__ !== 'undefined' && __NETRA_SCOPE__[name]) ||
@@ -56,7 +56,7 @@
 
     // Probe each table
     out.tables = {};
-    ['notification', 'user_pref', 'context', 'watchlist'].forEach(function (suffix) {
+    ['notification', 'user_pref', 'context', 'watchlist', 'kb_embedding'].forEach(function (suffix) {
         var tableName = '__NETRA_SCOPE___' + suffix;
         try {
             var gr = new GlideRecord(tableName);

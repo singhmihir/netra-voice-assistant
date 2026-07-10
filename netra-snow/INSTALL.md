@@ -99,11 +99,60 @@ Proactive scan check:
 
 ## Path B — Update Set XML (alternative)
 
-If you'd rather use the standard Update Set flow, see the older instructions
-in [`README.md`](README.md). The XML at `update-set/Netra_v2.0.0-R4.7_Batch.xml`
-contains the 4 Script Includes + Business Rule + Scheduled Job. You'd still
-need to manually create the 2 tables, the Scripted REST API, and the
-Widget via the UI — about 6 steps total, ~10 minutes.
+The batch XML `update-set/Netra_v2.0.0-R5_Batch.xml` is the **complete app** —
+7 child update sets under one parent ("Netra v2.0.0-R5 - Complete App"):
+01 Application & Tables, 02 Script Includes, 03 REST API & Automation,
+04 Service Portal, 05 Properties & Privileges, 06 Vulnerability Response,
+07 VR Analyst Expansion & Performance. No manual record creation is needed.
+
+1. **System Update Sets → Retrieved Update Sets → Import Update Set from XML.**
+2. Upload `Netra_v2.0.0-R5_Batch.xml`.
+3. Open the parent set **"Netra v2.0.0-R5 - Complete App"**, click **Preview**,
+   resolve any preview warnings, then **Commit**. The 7 children commit
+   automatically in numeric order (tables before code before portal).
+4. Continue to **Post-install** below.
+
+> The XML is regenerated from `source/` by `node scripts/build-update-set.mjs`
+> (it validates well-formedness and round-trips every code record to source).
+> The prior `Netra_v2.0.0-R4.7_Batch.xml` is kept as the generator's base and
+> as release history — do not import both.
+
+---
+
+## Post-install (both paths)
+
+### 1. Set the Gemini API key (required for the conversational brain + TTS)
+
+1. **System Properties → All Properties** (or filter `sys_properties.list`).
+2. Set **`x_196061_netra_v1.gemini_api_key`** to a free key from
+   <https://aistudio.google.com/apikey>. Keep it `is_private` — never commit it.
+3. Optional: `x_196061_netra_v1.gemini_model` (default `gemini-flash-lite-latest`).
+
+### 2. Assign roles to your analyst / service account
+
+Netra acts as the logged-in user and enforces real ACLs.
+
+- **ITSM features**: the user needs the usual `itil` etc. roles.
+- **Vulnerability Response (R5)**: assign one of
+  `sn_vul.vulnerability_analyst`, `sn_vul.admin`, `sn_vul.vulnerability_write`
+  (or `sn_vul.vulnerability_read` for read-only). Without a VR role, Netra
+  politely declines VR requests.
+- **Instance-health tools (R5)**: `admin`.
+- To grant VR/perf access to a **custom** role, add it (comma-separated) to
+  `x_196061_netra_v1.vr_read_roles`, `.vr_write_roles`, or `.perf_read_roles`.
+
+### 3. Smoke test
+
+Load the portal page with the widget, then say (or type in the dev panel):
+
+| Say | Expect |
+|---|---|
+| *"debug"* (dev panel typed command) | version **v8.0 (R5)**, `api_key_status: configured` |
+| *"What's my vulnerability exposure?"* | Spoken band counts (or a role-needed message if unroled) |
+| *"Instance health"* | Active job count + busiest job (admin only) |
+
+Also hit **GET `/api/x_196061_netra_v1/voice/ping`** — it now probes
+`NetraVulnerability` and `NetraPerformance` too.
 
 ---
 

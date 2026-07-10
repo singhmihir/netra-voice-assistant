@@ -229,12 +229,12 @@
                 }
             }
             data.debug = {
-                version: 'v7.0',
+                version: 'v8.0 (R5)',
                 scope: SCOPE,
                 user_name: gs.getUserDisplayName(),
                 user_sys_id: user,
                 model: mdl,
-                api_key_status: key ? ('set (length=' + key.length + ', prefix=' + key.substring(0, 6) + ')') : 'MISSING',
+                api_key_status: (key ? 'configured' : 'missing'),
                 tool_count: toolNames.length,
                 tools: toolNames,
                 paused: !!data.paused,
@@ -959,6 +959,14 @@
 '- most_vulnerable_assets / vulnerabilities_for_asset - reason about the riskiest hosts.\n' +
 '- assign_vulnerable_item, set_vulnerable_item_state (open/investigate/review/awaiting/resolve/close), defer_vulnerable_item (reason MANDATORY - it is a risk-acceptance on the audit trail), add_vulnerability_note - the mutating actions. ALWAYS read back the item and CONFIRM verbally before you assign, change state, defer, or close. Deferring or closing a critical item without confirmation is unacceptable.\n' +
 '- Speak risk as bands and numbers the analyst can act on: "**VIT0014304**, risk **100**, **critical** - Adobe Flash on **LAPTP-SD-3818**, still **open**." Summarise long queues by shape (how many critical/high, top groups) before enumerating, exactly like ticket lists.\n' +
+'- R5 LIFECYCLE & QUEUE: overdue_vulnerabilities (past remediation target), vulnerability_aging (age buckets plus the oldest items), vulnerability_trend (opened vs closed over N days plus mean time to remediate), next_vulnerable_item (the single highest-risk item to work next).\n' +
+'- For "walk me through my queue" / "what should I work on": call next_vulnerable_item, discuss the item, then call it again with the covered numbers in exclude to move down the queue.\n' +
+'- CLOSING WORK: close_vulnerable_item (closure note MANDATORY; resolution fixed/resolved/remediated marks it resolved, closed marks it closed), mark_false_positive (reason MANDATORY), reopen_vulnerable_item (reason MANDATORY), create_change_for_vulnerability (raise a remediation change from a VIT).\n' +
+'- GROUPS & LIBRARY: list_vulnerability_groups / get_vulnerability_group for VUL batch records; search_vulnerability_library to look up CVE library entries by keyword.\n' +
+'- BULK PROTOCOL (STRICT, no exceptions): for "defer everything on CVE X" / "assign all the criticals to Y", FIRST call bulk_vulnerability_preview with the filter, SPEAK the count and a sample to the analyst, WAIT for an explicit yes, THEN call bulk_vulnerability_apply with the SAME filter plus confirmed="yes". It refuses without confirmed="yes". Hard cap of 50 items per bulk action.\n' +
+'- CONFIRMATION: every single-item mutation (assign, state change, defer, close, false positive, reopen, create change) still needs a verbal read-back and a clear yes BEFORE the tool call. Close and false-positive need the reason or note captured from the analyst - never invent one.\n' +
+'- INSTANCE HEALTH: when asked about instance performance or slowness ("why is the instance slow", "what jobs are hammering us", "instance health"), call instance_health; list_heavy_jobs for the busiest scheduled jobs; integration_report for imports, LDAP, REST and MID servers. All read-only.\n' +
+'- SPEAKING VR NUMBERS: after the first letter-by-digit mention, say VIT numbers in short pairs like an analyst would - VIT0002345 becomes "VIT twenty-three forty-five".\n' +
 '\n' +
 'CLAUDE-STYLE BEHAVIOUR (R1.3 - careful, agentic, multi-turn):\n' +
 '\n' +
@@ -1505,6 +1513,9 @@
                         min_risk: { type: 'number', description: 'Optional minimum risk score 0-100.' },
                         ci: { type: 'string', description: 'Optional asset / host name to filter on.' },
                         cve: { type: 'string', description: 'Optional CVE id to filter on, e.g. CVE-2021-44228.' },
+                        older_than_days: { type: 'number', description: 'Optional: only items older than this many days.' },
+                        group: { type: 'string', description: 'Optional assignment group name to filter on.' },
+                        sla: { type: 'string', enum: ['overdue'], description: "Optional: 'overdue' = only items past their remediation target / SLA." },
                         limit: { type: 'number', description: 'Max items (default 10).' }
                     } }
                 },
@@ -1561,7 +1572,8 @@
                     description: 'Defer a Vulnerable Item (accept the risk) with a MANDATORY reason for the audit trail. Use for "defer this", "accept the risk", "we can not patch this yet because...".',
                     parameters: { type: 'object', properties: {
                         number: { type: 'string', description: 'VIT number' },
-                        reason: { type: 'string', description: 'Why the risk is being accepted / deferred. Required.' }
+                        reason: { type: 'string', description: 'Why the risk is being accepted / deferred. Required.' },
+                        until_date: { type: 'string', description: 'Optional review date in YYYY-MM-DD format, e.g. "defer until first of March" -> 2026-03-01.' }
                     }, required: ['number', 'reason'] }
                 },
                 {
@@ -1571,6 +1583,138 @@
                         number: { type: 'string', description: 'VIT number' },
                         note:   { type: 'string', description: 'The note text.' }
                     }, required: ['number', 'note'] }
+                },
+                // === R5: VR analyst expansion ===
+                {
+                    name: 'overdue_vulnerabilities',
+                    description: 'Vulnerable Items past their remediation target date (or older than the SLA age threshold when no target field exists). Use for "what is overdue", "which VITs breached their target", "past due vulnerabilities".',
+                    parameters: { type: 'object', properties: {
+                        limit: { type: 'number', description: 'Max overdue items (default 10).' }
+                    } }
+                },
+                {
+                    name: 'vulnerability_aging',
+                    description: 'Aging report of active Vulnerable Items: counts in age buckets (0-7 days, 7-30, 30-90, 90 plus), the oldest items, and deferred items past review. Use for "aging report", "how old is the backlog", "what has been sitting the longest".',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'close_vulnerable_item',
+                    description: 'Close out a Vulnerable Item. resolution "fixed" / "resolved" / "remediated" marks it RESOLVED; "closed" / "close" marks it CLOSED. A closure note is MANDATORY for the audit trail. Read the item back and get a verbal yes before calling.',
+                    parameters: { type: 'object', properties: {
+                        number:     { type: 'string', description: 'VIT number' },
+                        resolution: { type: 'string', description: 'fixed | resolved | remediated | closed | close (default fixed -> resolved state).' },
+                        note:       { type: 'string', description: 'What was done to resolve it. Required - capture it from the analyst.' }
+                    }, required: ['number', 'note'] }
+                },
+                {
+                    name: 'mark_false_positive',
+                    description: 'Mark a Vulnerable Item as a FALSE POSITIVE and close it. The reason is MANDATORY and goes on the audit trail. Confirm verbally before calling.',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        reason: { type: 'string', description: 'Why this finding is a false positive. Required.' }
+                    }, required: ['number', 'reason'] }
+                },
+                {
+                    name: 'reopen_vulnerable_item',
+                    description: 'Reopen a resolved, closed or deferred Vulnerable Item. Reason is MANDATORY. Use for "reopen VIT...", "that fix did not hold".',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        reason: { type: 'string', description: 'Why it is being reopened. Required.' }
+                    }, required: ['number', 'reason'] }
+                },
+                {
+                    name: 'list_vulnerability_groups',
+                    description: 'List Vulnerability Groups (VUL records that batch related vulnerable items, typically one per CVE or campaign). Use for "list vulnerability groups", "what campaigns are open".',
+                    parameters: { type: 'object', properties: {
+                        state: { type: 'string', description: 'Optional state word to filter on.' },
+                        limit: { type: 'number', description: 'Max groups (default 10).' }
+                    } }
+                },
+                {
+                    name: 'get_vulnerability_group',
+                    description: 'Detail of one Vulnerability Group by VUL number or name, including up to 5 member vulnerable items. Call the moment the user names a VUL record.',
+                    parameters: { type: 'object', properties: {
+                        group: { type: 'string', description: 'VUL number (e.g. VUL0010023) or the group name / short description.' }
+                    }, required: ['group'] }
+                },
+                {
+                    name: 'bulk_vulnerability_preview',
+                    description: 'STEP 1 of any bulk vulnerability action. Counts the items matching a filter and returns a small sample WITHOUT changing anything. You MUST call this, read the count to the analyst, and get an explicit yes BEFORE calling bulk_vulnerability_apply. At least one filter is required.',
+                    parameters: { type: 'object', properties: {
+                        cve:   { type: 'string', description: 'CVE id filter, e.g. CVE-2021-44228.' },
+                        ci:    { type: 'string', description: 'Asset / host name filter.' },
+                        band:  { type: 'string', enum: ['critical', 'high', 'medium', 'low'], description: 'Risk band filter.' },
+                        state: { type: 'string', description: 'State word filter: open, investigate, review, awaiting, defer, resolve, close.' },
+                        group: { type: 'string', description: 'Assignment group name filter.' },
+                        older_than_days: { type: 'number', description: 'Only items older than this many days.' }
+                    } }
+                },
+                {
+                    name: 'bulk_vulnerability_apply',
+                    description: 'STEP 2 of a bulk vulnerability action - mutates up to 50 items matching the SAME filter you previewed. action: assign (user and/or to_group), defer (reason required), state (new_state), note (note). PROTOCOL: call bulk_vulnerability_preview first, READ THE COUNT to the analyst, get an explicit verbal yes, and only then call this with confirmed="yes". Without confirmed="yes" the server refuses.',
+                    parameters: { type: 'object', properties: {
+                        action:    { type: 'string', enum: ['assign', 'defer', 'state', 'note'], description: 'What to do to every matching item.' },
+                        cve:   { type: 'string', description: 'Same CVE filter as the preview.' },
+                        ci:    { type: 'string', description: 'Same asset filter as the preview.' },
+                        band:  { type: 'string', enum: ['critical', 'high', 'medium', 'low'], description: 'Same risk-band filter as the preview.' },
+                        state: { type: 'string', description: 'Same state-word filter as the preview.' },
+                        group: { type: 'string', description: 'Same assignment-group filter as the preview.' },
+                        older_than_days: { type: 'number', description: 'Same age filter as the preview.' },
+                        user:      { type: 'string', description: 'For action assign: user name/email to assign to.' },
+                        to_group:  { type: 'string', description: 'For action assign: assignment group name to assign to.' },
+                        reason:    { type: 'string', description: 'For action defer: the risk-acceptance reason. Required for defer.' },
+                        note:      { type: 'string', description: 'For action note: the work note text.' },
+                        new_state: { type: 'string', description: 'For action state: target state word (open, investigate, review, awaiting, defer, resolve, close).' },
+                        confirmed: { type: 'string', description: 'Must be exactly "yes", and ONLY after the analyst verbally confirmed the previewed count.' }
+                    }, required: ['action'] }
+                },
+                {
+                    name: 'create_change_for_vulnerability',
+                    description: 'Create a change request to remediate a Vulnerable Item - links the asset and assignment group, writes the CVE summary into the change, and notes the change number back on the VIT. Use for "raise a change for VIT...", "create a change to patch this". Confirm verbally before calling.',
+                    parameters: { type: 'object', properties: {
+                        number:            { type: 'string', description: 'VIT number' },
+                        short_description: { type: 'string', description: 'Optional one-line summary; defaults to "Remediate <VIT> - <CVE>".' }
+                    }, required: ['number'] }
+                },
+                {
+                    name: 'vulnerability_trend',
+                    description: 'Vulnerability trend over the last N days: how many items opened, how many closed, current open total, and the mean time to remediate. Use for "are we keeping up", "trend this week", "how fast are we closing".',
+                    parameters: { type: 'object', properties: {
+                        days: { type: 'number', description: 'Window in days (default 7, max 90).' }
+                    } }
+                },
+                {
+                    name: 'search_vulnerability_library',
+                    description: 'Keyword search of the vulnerability library (CVE / third-party entries): summary text plus how many of our items are affected by each entry. Use for "search vulnerabilities for log4j", "anything about OpenSSL in the library".',
+                    parameters: { type: 'object', properties: {
+                        keyword: { type: 'string', description: 'Search keyword(s), e.g. "log4j remote code execution".' },
+                        limit:   { type: 'number', description: 'Max entries (default 5).' }
+                    }, required: ['keyword'] }
+                },
+                {
+                    name: 'next_vulnerable_item',
+                    description: 'The single highest-risk vulnerable item the analyst should work on next (their own queue first, then unassigned). Use for "what next", "walk me through my queue", "next item". Pass the numbers already discussed in exclude so it moves down the queue.',
+                    parameters: { type: 'object', properties: {
+                        exclude: { type: 'string', description: 'Comma-separated VIT numbers already covered this session.' }
+                    } }
+                },
+                // === R5: instance performance (read-only, NetraPerformance) ===
+                {
+                    name: 'instance_health',
+                    description: 'Read-only ServiceNow instance health snapshot: scheduled-job load, jobs due in the next hour, busiest jobs, slow transactions in the last 24 hours, and notable flags. Use when asked about instance performance or slowness: "why is the instance slow", "instance health", "how loaded are we".',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'list_heavy_jobs',
+                    description: 'The scheduled jobs that run most often (runs per day), each classified as protected / candidate / review. Read-only - nothing is disabled. Use for "what jobs are running", "heaviest scheduled jobs", "what could we switch off".',
+                    parameters: { type: 'object', properties: {
+                        limit: { type: 'number', description: 'Max jobs (default 10).' }
+                    } }
+                },
+                {
+                    name: 'integration_report',
+                    description: 'Read-only inventory of instance integrations: active scheduled imports, LDAP servers, outbound REST messages, and MID servers. Use for "what integrations do we have", "any imports running".',
+                    parameters: { type: 'object', properties: {} }
                 }
             ]
         }];
@@ -1720,7 +1864,8 @@
                 case 'list_vulnerable_items':
                     return new NetraVulnerability().listVulnerableItems({
                         scope: args.scope, state: args.state, band: args.band,
-                        min_risk: args.min_risk, ci: args.ci, cve: args.cve, limit: args.limit
+                        min_risk: args.min_risk, ci: args.ci, cve: args.cve, limit: args.limit,
+                        older_than_days: args.older_than_days, group: args.group, sla: args.sla
                     });
                 case 'top_vulnerabilities':
                     return new NetraVulnerability().topRisk(Number(args.limit) || 5);
@@ -1739,9 +1884,64 @@
                 case 'set_vulnerable_item_state':
                     return new NetraVulnerability().setVulnerableItemState(String(args.number || ''), String(args.state || ''), String(args.note || ''));
                 case 'defer_vulnerable_item':
-                    return new NetraVulnerability().deferVulnerableItem(String(args.number || ''), String(args.reason || ''));
+                    return new NetraVulnerability().deferVulnerableItem(String(args.number || ''), String(args.reason || ''), String(args.until_date || ''));
                 case 'add_vulnerability_note':
                     return new NetraVulnerability().addVulnerabilityNote(String(args.number || ''), String(args.note || ''));
+                // === R5: VR analyst expansion ===
+                case 'overdue_vulnerabilities':
+                    return new NetraVulnerability().overdueItems(Number(args.limit) || 10);
+                case 'vulnerability_aging':
+                    return new NetraVulnerability().agingReport();
+                case 'close_vulnerable_item':
+                    return new NetraVulnerability().closeVulnerableItem(String(args.number || ''), String(args.resolution || 'fixed'), String(args.note || ''));
+                case 'mark_false_positive':
+                    return new NetraVulnerability().markFalsePositive(String(args.number || ''), String(args.reason || ''));
+                case 'reopen_vulnerable_item':
+                    return new NetraVulnerability().reopenVulnerableItem(String(args.number || ''), String(args.reason || ''));
+                case 'list_vulnerability_groups':
+                    return new NetraVulnerability().listGroups({ state: args.state, limit: args.limit });
+                case 'get_vulnerability_group':
+                    return new NetraVulnerability().getGroup(String(args.group || ''));
+                case 'bulk_vulnerability_preview':
+                    return new NetraVulnerability().bulkPreview({
+                        cve: args.cve, ci: args.ci, band: args.band, state: args.state,
+                        group: args.group, older_than_days: args.older_than_days
+                    });
+                case 'bulk_vulnerability_apply':
+                    // R5 - server-side preview-first enforcement (stateless by
+                    // design): the model must have called bulk_vulnerability_preview,
+                    // read the count to the analyst and heard an explicit yes
+                    // before it may call this with confirmed='yes'. bulkApply
+                    // itself re-validates params and hard-caps 50 mutations.
+                    if (String(args.confirmed || '') !== 'yes') {
+                        return { ok: false, error: 'Preview first, then confirm.' };
+                    }
+                    var __act = String(args.action || '');
+                    var __filter = {
+                        cve: args.cve, ci: args.ci, band: args.band, state: args.state,
+                        group: args.group, older_than_days: args.older_than_days
+                    };
+                    var __params = {};
+                    if (__act === 'assign') { __params.user = args.user; __params.group = args.to_group; }
+                    else if (__act === 'defer') { __params.reason = String(args.reason || ''); }
+                    else if (__act === 'state') { __params.state = String(args.new_state || ''); }
+                    else if (__act === 'note') { __params.note = String(args.note || ''); }
+                    return new NetraVulnerability().bulkApply(__filter, __act, __params);
+                case 'create_change_for_vulnerability':
+                    return new NetraVulnerability().createChangeForVit(String(args.number || ''), String(args.short_description || ''));
+                case 'vulnerability_trend':
+                    return new NetraVulnerability().vulnerabilityTrend(Number(args.days) || 7);
+                case 'search_vulnerability_library':
+                    return new NetraVulnerability().searchVulnLibrary(String(args.keyword || ''), Number(args.limit) || 5);
+                case 'next_vulnerable_item':
+                    return new NetraVulnerability().nextTriageItem(String(args.exclude || ''));
+                // === R5: instance performance (read-only, NetraPerformance) ===
+                case 'instance_health':
+                    return new NetraPerformance().healthSummary();
+                case 'list_heavy_jobs':
+                    return new NetraPerformance().topJobs(Number(args.limit) || 10);
+                case 'integration_report':
+                    return new NetraPerformance().integrationReport();
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
@@ -1781,6 +1981,7 @@
 
     function _assignToGroup(num, groupName) {
         if (!groupName) return { ok: false, error: 'Group name is required' };
+        groupName = String(groupName || '').replace(/[\^"']/g, ' ');   // R5 - encoded-query injection guard
         var gr = _getIncident(num);
         if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
         var gg = new GlideRecord('sys_user_group');
@@ -1797,6 +1998,7 @@
 
     function _assignToUser(num, userName) {
         if (!userName) return { ok: false, error: 'User name is required' };
+        userName = String(userName || '').replace(/[\^"']/g, ' ');   // R5 - encoded-query injection guard
         var gr = _getIncident(num);
         if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
         var u = new GlideRecord('sys_user');
@@ -1855,6 +2057,7 @@
 
     function _lookupUser(query) {
         if (!query) return { ok: false, error: 'Query is required' };
+        query = String(query || '').replace(/[\^"']/g, ' ');   // R5 - encoded-query injection guard
         var gr = new GlideRecord('sys_user');
         gr.addQuery('active', true);
         gr.addEncodedQuery('nameLIKE' + query + '^ORuser_nameLIKE' + query + '^ORemailLIKE' + query);
@@ -2253,6 +2456,10 @@
         if (p === 'RIT' || num.indexOf('RITM') === 0) return 'sc_req_item';
         if (p === 'SCT' || num.indexOf('SCTASK') === 0) return 'sc_task';
         if (p === 'KB0') return 'kb_knowledge';
+        // R5 - Vulnerability Response records, so focus / watchlist /
+        // navigate_to_record / update_field work on VITs and VUL groups.
+        if (p === 'VIT') return 'sn_vul_vulnerable_item';
+        if (p === 'VUL') return 'sn_vul_vulnerability_group';
         return null;
     }
 
@@ -3909,7 +4116,12 @@
         'hello', 'hi', 'hey', 'thanks', 'thank you', 'please', 'sorry',
         // Netra-specific
         'Netra', 'sentinel', 'sleep', 'wake', 'pause', 'resume', 'dictate',
-        'briefing', 'workload', 'focus', 'watchlist', 'remember', 'recall'
+        'briefing', 'workload', 'focus', 'watchlist', 'remember', 'recall',
+        // R5 - Vulnerability Response + instance performance terms
+        'vulnerability', 'vulnerabilities', 'vulnerable', 'CVE', 'VIT',
+        'remediate', 'remediation', 'defer', 'deferred', 'false positive',
+        'risk score', 'exposure', 'exploit', 'asset', 'criticals',
+        'triage', 'aging', 'overdue', 'scheduled job', 'integration'
     ];
 
     function _getVocab() {

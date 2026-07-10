@@ -77,6 +77,7 @@ NetraScanner.prototype = {
             count += this._scanIncidentAssignments(userSysId, since);
             count += this._scanChangeAssignments(userSysId, since);
             count += this._scanCatalogTasks(userSysId, since);
+            count += this._scanVitAssignments(userSysId, since);
         }
         if (pref.watch_approvals) {
             count += this._scanApprovals(userSysId, since);
@@ -113,6 +114,36 @@ NetraScanner.prototype = {
                 kind: 'incident_assigned',
                 message: 'Heads up. Incident ' + this._spokenNumber(String(gr.number)) +
                          ' has been assigned to you. The issue is: ' + String(gr.short_description) + '.'
+            });
+            n++;
+        }
+        return n;
+    },
+
+    // R5 - Vulnerability Response: announce vulnerable items assigned to me.
+    // Silently a no-op when the VR plugin is absent (gr.isValid() false).
+    _scanVitAssignments: function (userSysId, since) {
+        var gr = new GlideRecord('sn_vul_vulnerable_item');
+        if (!gr.isValid()) return 0;
+        gr.addQuery('active', true);
+        gr.addQuery('assigned_to', userSysId);
+        gr.addQuery('sys_updated_on', '>=', since);
+        gr.addQuery('state', 'NOT IN', '3,101'); // not closed/resolved
+        gr.setLimit(20);
+        gr.query();
+
+        var n = 0;
+        while (gr.next()) {
+            if (this._alreadyNotified(userSysId, String(gr.sys_id), 'vit_assigned')) continue;
+            var risk = parseInt(String(gr.risk_score), 10) || 0;
+            var band = risk >= 80 ? 'critical' : (risk >= 60 ? 'high' : (risk >= 40 ? 'medium' : 'low'));
+            this._enqueue(userSysId, {
+                ticket_sys_id: String(gr.sys_id),
+                ticket_number: String(gr.number),
+                kind: 'vit_assigned',
+                message: 'Heads up. Vulnerable item ' + this._spokenNumber(String(gr.number)) +
+                         ', risk ' + band + ', has been assigned to you. ' +
+                         String(gr.short_description || '').substring(0, 120)
             });
             n++;
         }

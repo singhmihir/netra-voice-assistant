@@ -284,8 +284,10 @@ NetraTools.prototype = {
         var gr = new GlideRecord('incident');
         gr.addQuery('number', String(number).toUpperCase());
         // either caller or assignee can read
-        gr.addQuery('caller_idORassigned_to', this.userSysId)
-          .addOrCondition('caller_id', this.userSysId);
+        // (R5 fix: 'caller_idORassigned_to' is not a real field - GlideRecord
+        //  silently dropped it, leaving the restriction weaker than intended)
+        gr.addQuery('caller_id', this.userSysId)
+          .addOrCondition('assigned_to', this.userSysId);
         gr.query();
         return gr.next() ? gr : null;
     },

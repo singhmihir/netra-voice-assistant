@@ -33,6 +33,7 @@ const sources = [
   ['NetraContext',            'script_includes/NetraContext.js'],
   ['NetraNavigator',          'script_includes/NetraNavigator.js'],
   ['NetraVulnerability',      'script_includes/NetraVulnerability.js'],
+  ['NetraPerformance',        'script_includes/NetraPerformance.js'],
   ['netra_notify_on_comment', 'business_rule/netra_notify_on_comment.js'],
   ['netra_watch',             'scheduled_jobs/netra_watch.js'],
   ['command',                 'scripted_rest/command.js'],

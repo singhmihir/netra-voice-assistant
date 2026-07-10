@@ -1,5 +1,11 @@
 /**
- * Netra Mic widget - CLIENT CONTROLLER (Release 2 - web + in-tab control)
+ * Netra Mic widget - CLIENT CONTROLLER (R5 - VR analyst expansion)
+ *
+ * R5 adds: spoken VIT / CVE number normalization ("v i t two three four
+ *   five" -> VIT0002345, "cve 2021 44228" -> CVE-2021-44228),
+ *   vulnerability + instance-health vocabulary in the JSGF recognition
+ *   grammar, and VR-flavored thinking fillers. Recognition lifecycle,
+ *   TTS engines, and notification polling are untouched in R5.
  *
  * R2 adds: web search via DuckDuckGo + Wikipedia, in-SP-tab navigation,
  *   in-SP-tab button click by label, faster Gemini round-trips through
@@ -793,6 +799,9 @@ api.controller = function ($scope, $timeout, $window) {
         out = out.replace(/\b[sS][\s.,]+[cC][\s.,]+[tT][\s.,]+[aA][\s.,]+[sS][\s.,]+[kK]\b/g, 'SCTASK');
         out = out.replace(/\b[pP][\s.,]+[rR][\s.,]+[bB]\b/g, 'PRB');
         out = out.replace(/\b[kK][\s.,]+[bB]\b/g, 'KB');
+        // R5 - Vulnerability Response prefixes spoken letter-by-letter
+        out = out.replace(/\b[vV][\s.,]+[iI][\s.,]+[tT]\b/g, 'VIT');
+        out = out.replace(/\b[cC][\s.,]+[vV][\s.,]+[eE]\b/g, 'CVE');
 
         // common misheard prefixes
         out = out.replace(/\bink\b/gi, 'INC');
@@ -810,15 +819,22 @@ api.controller = function ($scope, $timeout, $window) {
         out = out.replace(/\bproblem\s+(\d+)\b/gi, function(_,d){return 'PRB' + d;});
         out = out.replace(/\brequest\s+(\d+)\b/gi, function(_,d){return 'REQ' + d;});
         out = out.replace(/\b(?:knowledge|article|kbase)\s+(\d+)\b/gi, function(_,d){return 'KB' + d;});
+        // R5 - "vulnerable item 2345" / "vit 2345" -> VIT0002345
+        out = out.replace(/\b(?:vulnerable\s+item|vulnerability\s+item|vit)\s+(\d+)\b/gi, function(_,d){return 'VIT' + d;});
 
         // coalesce PREFIX + digits possibly separated by spaces
-        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK)\s*([\d\s]+)/g, function (_, prefix, digits) {
+        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK|VIT)\s*([\d\s]+)/g, function (_, prefix, digits) {
             var cleaned = digits.replace(/\s+/g,'');
             // pad to 7 digits for ticket-like prefixes
-            if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB|REQ|TASK)$/.test(prefix)) {
+            if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB|REQ|TASK|VIT)$/.test(prefix)) {
                 while (cleaned.length < 7) cleaned = '0' + cleaned;
             }
             return prefix + cleaned;
+        });
+
+        // R5 - CVE identifiers: "CVE 2021 44228" / "cve-2021-44228" -> CVE-2021-44228
+        out = out.replace(/\bCVE[\s\-.]*(\d{4})[\s\-.]+(\d{3,7})\b/gi, function (_, y, n) {
+            return 'CVE-' + y + '-' + n;
         });
 
         return out.trim();
@@ -852,8 +868,45 @@ api.controller = function ($scope, $timeout, $window) {
     // (log line "Manifest: property 'start_url' ignored, URL is invalid").
     // Build all URLs against window.location.origin.
     var _PWA_ORIGIN   = (window.location.origin || '');
-    var PWA_ICON_URL  = _PWA_ORIGIN + '/sys_attachment.do?sys_id=a73423ab9370c350936af0a75d03d62e';
-    var PWA_BADGE_URL = _PWA_ORIGIN + '/sys_attachment.do?sys_id=1144e32393b0c350936af0a75d03d62d';
+    // R5 - refreshed to the on-brand violet Netra app-tile (green iris + violet voice-ring)
+    var PWA_ICON_URL  = _PWA_ORIGIN + '/sys_attachment.do?sys_id=81b10af0930ecb10e3aef0aefaba1073';
+    var PWA_BADGE_URL = _PWA_ORIGIN + '/sys_attachment.do?sys_id=edb1c634930ecb10e3aef0aefaba10de';
+    // R5 - self-contained browser favicon (the Service Portal tab otherwise
+    // shows the generic ServiceNow globe). Inline SVG data URI, no attachment
+    // dependency: the violet voice-ring + green Netra eye, matching the orb.
+    function _installFavicon() {
+        try {
+            var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+                '<defs>' +
+                '<radialGradient id="fi" cx="38%" cy="34%" r="66%">' +
+                '<stop offset="0%" stop-color="#eafff2"/><stop offset="18%" stop-color="#7fffb0"/>' +
+                '<stop offset="55%" stop-color="#2eb858"/><stop offset="100%" stop-color="#021a0d"/>' +
+                '</radialGradient>' +
+                '<linearGradient id="fr" x1="0" y1="0" x2="1" y2="1">' +
+                '<stop offset="0%" stop-color="#8b3df0"/><stop offset="55%" stop-color="#c660ff"/>' +
+                '<stop offset="72%" stop-color="#ffb84d"/><stop offset="100%" stop-color="#6920b8"/>' +
+                '</linearGradient></defs>' +
+                '<rect width="64" height="64" rx="15" fill="#12081f"/>' +
+                '<g fill="none" stroke="url(#fr)" stroke-width="3.4" stroke-linecap="round" opacity="0.95">' +
+                '<path d="M12 32 A20 20 0 0 1 32 12"/><path d="M52 32 A20 20 0 0 1 32 52"/></g>' +
+                '<path d="M14 32 Q32 16 50 32 Q32 48 14 32 Z" fill="#0a0614" stroke="#d8c8ff" stroke-width="2.4" stroke-linejoin="round"/>' +
+                '<circle cx="32" cy="32" r="11.5" fill="url(#fi)"/>' +
+                '<circle cx="32" cy="32" r="4.6" fill="#001a0a"/>' +
+                '<circle cx="28.5" cy="28.5" r="1.9" fill="#fff" opacity="0.9"/></svg>';
+            var href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+            var prior = document.querySelectorAll('link[rel~="icon"], link[data-netra-fav]');
+            for (var i = 0; i < prior.length; i++) prior[i].parentNode.removeChild(prior[i]);
+            var link = document.createElement('link');
+            link.rel = 'icon';
+            link.type = 'image/svg+xml';
+            link.href = href;
+            link.setAttribute('data-netra-fav', '1');
+            document.head.appendChild(link);
+        } catch (e) {
+            logEvent('pwa', 'favicon install failed: ' + (e && e.message ? e.message : e));
+        }
+    }
+
     function _installPWA() {
         try {
             if (document.querySelector('link[data-netra-pwa]')) return;
@@ -916,6 +969,7 @@ api.controller = function ($scope, $timeout, $window) {
     c.$onInit = function () {
         setState('boot');
         logEvent('init', 'controller v8 booting, SR=' + c.hasSR + ' TTS=' + c.hasTTS + ' GrammarList=' + !!SGL);
+        _installFavicon();
         _installPWA();
 
         if (c.hasTTS) {
@@ -1861,13 +1915,17 @@ api.controller = function ($scope, $timeout, $window) {
                     'pause | resume | stop | sleep | wake | wake up | listen | restart | repeat | again ;\n' +
                 'public <noun> = ticket | tickets | incident | incidents | issue | issues | problem | ' +
                     'request | change | approval | approvals | task | knowledge | base | article | articles | ' +
-                    'KB | INC | CHG | RITM | SCTASK | PRB | ' +
+                    'KB | INC | CHG | RITM | SCTASK | PRB | VIT | CVE | ' +
+                    'vulnerability | vulnerabilities | vulnerable item | vulnerable items | ' +
+                    'risk | risk score | exposure | remediation | patch | asset | assets | ' +
+                    'false positive | triage | queue | aging | scheduled job | scheduled jobs | integration | integrations | ' +
                     'status | state | priority | impact | severity | urgency | assignee | watcher | ' +
                     'VPN | email | password | network | computer | laptop | monitor | keyboard | wifi | server | ' +
                     'account | access | login | reset | unlock | enable | disable ;\n' +
                 'public <modifier> = urgent | critical | high | medium | low | normal | ' +
                     'P1 | P2 | P3 | P4 | priority one | priority two | priority three | ' +
                     'open | closed | resolved | pending | new | in progress | assigned | ' +
+                    'deferred | overdue | remediate | remediated | defer | investigate | ' +
                     'today | yesterday | this week | last week ;\n' +
                 'public <digit> = zero | one | two | three | four | five | six | seven | eight | nine | ' +
                     'ten | eleven | twelve | thirteen | fourteen | fifteen | sixteen | seventeen | eighteen | nineteen | ' +
@@ -2351,11 +2409,11 @@ api.controller = function ($scope, $timeout, $window) {
             });
         }
         // Step 1: collapse runs of asterisks. **word** -> emphasis sentinel.
-        t = t.replace(/\*\*([^*]+)\*\*/g, 'EM$1/EM');
+        t = t.replace(/\*\*([^*]+)\*\*/g, '\uE000EM\uE000$1\uE000/EM\uE000');
         // Strip any leftover lone asterisks so they don't leak in.
         t = t.replace(/\*/g, '');
         // Step 2: ellipsis = thinking pause (~350ms)
-        t = t.replace(/\.{3,}/g, 'LP');
+        t = t.replace(/\.{3,}/g, '\uE000LP\uE000');
         // Step 3: XML escape everything else
         t = t.replace(/&/g, '&amp;')
              .replace(/</g, '&lt;')
@@ -2371,9 +2429,9 @@ api.controller = function ($scope, $timeout, $window) {
         t = t.replace(/\b(umm+|uhh*|ahh+|hmm+|mm+|well)\b(?=,)/gi,
                       '<prosody pitch="-2st" rate="-15%" volume="-2dB">$1</prosody>');
         // Step 6: expand sentinels
-        t = t.replace(/EM/g, '<emphasis level="strong">');
-        t = t.replace(/\/EM/g, '</emphasis>');
-        t = t.replace(/LP/g, '<break time="380ms"/>');
+        t = t.replace(/\uE000EM\uE000/g, '<emphasis level="strong">');
+        t = t.replace(/\uE000\/EM\uE000/g, '</emphasis>');
+        t = t.replace(/\uE000LP\uE000/g, '<break time="380ms"/>');
         return '<speak version=\'1.0\' xml:lang=\'en-IN\'>' +
                '<voice name=\'' + voice + '\'>' +
                '<prosody rate=\'+0%\' pitch=\'+1st\'>' + t + '</prosody>' +
@@ -2875,7 +2933,12 @@ api.controller = function ($scope, $timeout, $window) {
         'Let me check on that quickly, should only take a moment.',
         'Just a moment please, I am getting that sorted out for you.',
         'Hang on for a second, I am cross-checking the details right now.',
-        'Alright, looking into that for you, should have it shortly.'
+        'Alright, looking into that for you, should have it shortly.',
+        // R5 - VR analyst flavored (MEDIUM)
+        'Checking the vulnerability queue now.',
+        'Scanning the risk data, one moment.',
+        'Let me pull the exposure numbers.',
+        'Digging into the security backlog for you.'
     ];
     var fillerCache = [];   // [{url, text}]
     var lastFillerPlayedAt = 0;
