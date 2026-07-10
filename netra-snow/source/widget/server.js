@@ -949,6 +949,17 @@
 'NOTES:\n' +
 '- add_work_note - private internal note (only fulfillers see). Use update_ticket for customer-visible comments.\n' +
 '\n' +
+'VULNERABILITY RESPONSE (you are a fully-capable vulnerability analyst):\n' +
+'- You operate ServiceNow Vulnerability Response end to end. The work unit is the Vulnerable Item (VIT#######), which links an asset (CI) to a CVE and carries a risk score 0-100 (critical 80+, high 60-79, medium 40-59, low under 40) and a lifecycle state (open, under investigation, in review, awaiting implementation, deferred, resolved, closed).\n' +
+'- list_vulnerable_items - the analyst queue. scope "me" (default) = assigned to the user or their groups; "group"; "all" = whole org. Filter by band, min_risk, state, ci, or cve. Use for "my vulnerabilities", "critical VITs for my team", "open items on host X".\n' +
+'- top_vulnerabilities - the highest-risk OPEN items org-wide; use for "what is our worst exposure" / "what do I fix first".\n' +
+'- get_vulnerable_item - full detail incl. CVE summary and remediation solution. CALL THE MOMENT the user names a VIT.\n' +
+'- lookup_cve - CALL THE MOMENT the user mentions a CVE id; returns the advisory, remediation, how many active items reference it and the worst risk.\n' +
+'- vulnerability_exposure - org exposure snapshot (counts by band, your own load, top groups). Use for a security "briefing" or "how bad is it".\n' +
+'- most_vulnerable_assets / vulnerabilities_for_asset - reason about the riskiest hosts.\n' +
+'- assign_vulnerable_item, set_vulnerable_item_state (open/investigate/review/awaiting/resolve/close), defer_vulnerable_item (reason MANDATORY - it is a risk-acceptance on the audit trail), add_vulnerability_note - the mutating actions. ALWAYS read back the item and CONFIRM verbally before you assign, change state, defer, or close. Deferring or closing a critical item without confirmation is unacceptable.\n' +
+'- Speak risk as bands and numbers the analyst can act on: "**VIT0014304**, risk **100**, **critical** - Adobe Flash on **LAPTP-SD-3818**, still **open**." Summarise long queues by shape (how many critical/high, top groups) before enumerating, exactly like ticket lists.\n' +
+'\n' +
 'CLAUDE-STYLE BEHAVIOUR (R1.3 - careful, agentic, multi-turn):\n' +
 '\n' +
 '- You are the "Claude of ServiceNow": careful, thoughtful, never destructive without confirmation, always reads-back before acting.\n' +
@@ -1482,6 +1493,84 @@
                     parameters: { type: 'object', properties: {
                         table: { type: 'string', description: 'Target table name — incident, problem, change_request, sc_req_item' }
                     }, required: ['table'] }
+                },
+                // ------- VR: Vulnerability Response (analyst suite) -------
+                {
+                    name: 'list_vulnerable_items',
+                    description: 'List Vulnerability Response Vulnerable Items (VITs), the work unit of a vulnerability analyst. Use for "my vulnerabilities", "what is assigned to my group", "show me critical vulnerable items", "open VITs on this server". Filters returned by highest risk first.',
+                    parameters: { type: 'object', properties: {
+                        scope: { type: 'string', enum: ['me', 'group', 'all'], description: "'me' = assigned to the user or their groups (default); 'group' = the user's groups; 'all' = whole org." },
+                        state: { type: 'string', description: "Optional state word: open, investigate, review, awaiting, defer, resolve, close." },
+                        band: { type: 'string', enum: ['critical', 'high', 'medium', 'low'], description: 'Optional risk band filter.' },
+                        min_risk: { type: 'number', description: 'Optional minimum risk score 0-100.' },
+                        ci: { type: 'string', description: 'Optional asset / host name to filter on.' },
+                        cve: { type: 'string', description: 'Optional CVE id to filter on, e.g. CVE-2021-44228.' },
+                        limit: { type: 'number', description: 'Max items (default 10).' }
+                    } }
+                },
+                {
+                    name: 'top_vulnerabilities',
+                    description: 'The highest-risk OPEN vulnerable items across the whole organization — the exposure the analyst should tackle first. Use for "what is our worst exposure", "top vulnerabilities", "what should I fix first".',
+                    parameters: { type: 'object', properties: { limit: { type: 'number', description: 'How many (default 5).' } } }
+                },
+                {
+                    name: 'get_vulnerable_item',
+                    description: 'Full detail of one Vulnerable Item by number (VIT#######): risk, state, asset, CVE summary and the remediation solution. Call this the moment the user names a VIT.',
+                    parameters: { type: 'object', properties: { number: { type: 'string', description: 'e.g. VIT0014304' } }, required: ['number'] }
+                },
+                {
+                    name: 'lookup_cve',
+                    description: 'Look up a CVE / security advisory by identifier and how it affects us (summary, source, remediation, how many active items reference it and the worst risk). Call this the moment the user mentions a CVE id.',
+                    parameters: { type: 'object', properties: { cve: { type: 'string', description: 'e.g. CVE-2021-44228 (Log4Shell)' } }, required: ['cve'] }
+                },
+                {
+                    name: 'vulnerability_exposure',
+                    description: "Organization-wide vulnerability exposure snapshot: open counts by risk band (critical/high/medium/low), the user's own open load, and the most-loaded assignment groups. Use for 'what is our exposure', 'how bad is it', 'vulnerability summary', 'briefing'.",
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'most_vulnerable_assets',
+                    description: 'The assets (configuration items / hosts) carrying the most open vulnerable items, worst-risk first. Use for "which servers are worst", "most vulnerable hosts", "riskiest assets".',
+                    parameters: { type: 'object', properties: { limit: { type: 'number', description: 'How many assets (default 5).' } } }
+                },
+                {
+                    name: 'vulnerabilities_for_asset',
+                    description: 'All active vulnerable items on a named asset / host. Use for "what is wrong with LAPTP-SD-3818", "vulnerabilities on the JBOSS box".',
+                    parameters: { type: 'object', properties: { ci: { type: 'string', description: 'Asset / host / CI name' } }, required: ['ci'] }
+                },
+                {
+                    name: 'assign_vulnerable_item',
+                    description: 'Assign a Vulnerable Item to a user and/or an assignment group. Confirm verbally before calling.',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        user:   { type: 'string', description: 'Optional user name/email to assign to.' },
+                        group:  { type: 'string', description: 'Optional assignment group name.' }
+                    }, required: ['number'] }
+                },
+                {
+                    name: 'set_vulnerable_item_state',
+                    description: 'Move a Vulnerable Item through its lifecycle: open, investigate, review, awaiting implementation, resolve, or close. Confirm verbally before calling.',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        state:  { type: 'string', description: 'open | investigate | review | awaiting | resolve | close' },
+                        note:   { type: 'string', description: 'Optional work note explaining the change.' }
+                    }, required: ['number', 'state'] }
+                },
+                {
+                    name: 'defer_vulnerable_item',
+                    description: 'Defer a Vulnerable Item (accept the risk) with a MANDATORY reason for the audit trail. Use for "defer this", "accept the risk", "we can not patch this yet because...".',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        reason: { type: 'string', description: 'Why the risk is being accepted / deferred. Required.' }
+                    }, required: ['number', 'reason'] }
+                },
+                {
+                    name: 'add_vulnerability_note',
+                    description: 'Add a work note to a Vulnerable Item (investigation findings, remediation progress).',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        note:   { type: 'string', description: 'The note text.' }
+                    }, required: ['number', 'note'] }
                 }
             ]
         }];
@@ -1627,6 +1716,32 @@
                     var __count = 0;
                     for (var __k in __m) { if (__m.hasOwnProperty(__k)) __count++; }
                     return { ok: true, table: __t, fields: __m, count: __count };
+                // ------- VR: Vulnerability Response -------
+                case 'list_vulnerable_items':
+                    return new NetraVulnerability().listVulnerableItems({
+                        scope: args.scope, state: args.state, band: args.band,
+                        min_risk: args.min_risk, ci: args.ci, cve: args.cve, limit: args.limit
+                    });
+                case 'top_vulnerabilities':
+                    return new NetraVulnerability().topRisk(Number(args.limit) || 5);
+                case 'get_vulnerable_item':
+                    return new NetraVulnerability().getVulnerableItem(String(args.number || ''));
+                case 'lookup_cve':
+                    return new NetraVulnerability().lookupCVE(String(args.cve || ''));
+                case 'vulnerability_exposure':
+                    return new NetraVulnerability().exposureSummary();
+                case 'most_vulnerable_assets':
+                    return new NetraVulnerability().mostVulnerableAssets(Number(args.limit) || 5);
+                case 'vulnerabilities_for_asset':
+                    return new NetraVulnerability().vulnerabilitiesForCI(String(args.ci || ''));
+                case 'assign_vulnerable_item':
+                    return new NetraVulnerability().assignVulnerableItem(String(args.number || ''), { user: args.user, group: args.group });
+                case 'set_vulnerable_item_state':
+                    return new NetraVulnerability().setVulnerableItemState(String(args.number || ''), String(args.state || ''), String(args.note || ''));
+                case 'defer_vulnerable_item':
+                    return new NetraVulnerability().deferVulnerableItem(String(args.number || ''), String(args.reason || ''));
+                case 'add_vulnerability_note':
+                    return new NetraVulnerability().addVulnerabilityNote(String(args.number || ''), String(args.note || ''));
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
