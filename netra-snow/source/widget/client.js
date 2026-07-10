@@ -2278,6 +2278,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (_chatInFlight) {
             _queuedUtterance = transcript;
             logEvent('srv', 'queued (chat in flight): "' + transcript + '"');
+            tone([620], 0.05);   // soft tick: "got it, one moment"
             return;
         }
         _chatInFlight = true;
@@ -2300,7 +2301,14 @@ api.controller = function ($scope, $timeout, $window) {
         }
 
         var hung = $timeout(function () {
-            logEvent('warn', 'server >18s, may be hung - speak again to retry');
+            // R6 - release the turn on a hung transport. _chatInFlight would
+            // otherwise gate every new utterance into the queue forever
+            // (SP's server.update() has no client timeout). If the promise
+            // settles later its reply is epoch-stale only if the user has
+            // spoken again - otherwise it still speaks, same as pre-R6.
+            logEvent('warn', 'server >18s, may be hung - releasing turn so new commands flow');
+            _chatInFlight = false;
+            _drainQueuedUtterance();
         }, 18000);
 
         var startedAt = Date.now();   // R1 - latency tracking
@@ -2385,7 +2393,9 @@ api.controller = function ($scope, $timeout, $window) {
                     c.stats.errors++;
                     setState('error');
                     stopFillerChain();
-                    speak('Sorry, the server returned an empty response.');
+                    speak('Sorry, the server returned an empty response.', function () {
+                        _drainQueuedUtterance();   // R6 - don't drop a barged request
+                    });
                     return;
                 }
                 if (Array.isArray(r.history)) geminiHistory = r.history;
@@ -2535,7 +2545,18 @@ api.controller = function ($scope, $timeout, $window) {
         _turnEpoch++;                           // any in-flight reply is now stale
         stopFillerChain();
         if (currentAudio) {
-            try { currentAudio.pause(); currentAudio.src = ''; } catch (e) {}
+            // Detach the engine's handlers FIRST: setting src='' fires an
+            // async 'error' event, and the classic engines' onerror is
+            // their fallback-RESPEAK path - without this, every barge on a
+            // short reply re-spoke the stale text via the next engine and
+            // incremented the persisted circuit breaker.
+            try {
+                currentAudio.onended = null;
+                currentAudio.onerror = null;
+                currentAudio.onplaying = null;
+                currentAudio.pause();
+                currentAudio.src = '';
+            } catch (e) {}
             try { detachOutputAnalyser(currentAudio); } catch (e) {}
             currentAudio = null;
         }
@@ -2550,7 +2571,7 @@ api.controller = function ($scope, $timeout, $window) {
         c.bargeFlash = true;
         $timeout(function () { c.bargeFlash = false; }, 700);
         logEvent('barge', 'yielded (' + reason + ')');
-        tone([440, 330], 70);                   // tiny falling blip: "go ahead"
+        tone([440, 330], 0.07);                 // tiny falling blip: "go ahead" (dur is SECONDS)
         if (c.state === 'speaking' || c.state === 'thinking') {
             setState(c.alert ? 'idle' : 'dormant');
         }
@@ -2816,25 +2837,29 @@ api.controller = function ($scope, $timeout, $window) {
                 audio.volume = _duckedForBarge ? 0.25 : 1.0;
                 currentAudio = audio;
                 attachOutputAnalyser(audio);
-                // refresh the echo-scorer with the segment actually playing
-                _speakingText = groups[i].replace(/\*\*/g, '');
+                // NOTE: _speakingText deliberately stays the FULL reply
+                // (set by speak() -> _markSpeaking). Recognizer finals lag
+                // real audio by 0.5-2s, so at segment boundaries the echo
+                // of the PREVIOUS segment must still score as echo -
+                // scoring against only the current segment made her
+                // interrupt herself mid-reply.
                 _speakingNow = true;
-                audio.onended = function () {
+                // One advance per segment, no matter how many of ended /
+                // error / play()-rejection fire (a bad blob fires both
+                // error AND the rejection - unguarded, that double-walked
+                // the queue and double-fired done()).
+                var segSettled = false;
+                var advanceOnce = function () {
+                    if (segSettled) return;
+                    segSettled = true;
                     detachOutputAnalyser(audio);
                     URL.revokeObjectURL(url);
                     if (currentAudio === audio) currentAudio = null;
                     playNext();
                 };
-                audio.onerror = function () {
-                    detachOutputAnalyser(audio);
-                    URL.revokeObjectURL(url);
-                    if (currentAudio === audio) currentAudio = null;
-                    playNext();
-                };
-                audio.play().catch(function () {
-                    if (currentAudio === audio) currentAudio = null;
-                    playNext();
-                });
+                audio.onended = advanceOnce;
+                audio.onerror = advanceOnce;
+                audio.play().catch(advanceOnce);
             };
             if (blobs[i] !== null) ready();
             else waiters[i] = ready;
