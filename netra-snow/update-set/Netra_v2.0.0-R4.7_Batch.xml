@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<unload unload_date="2026-07-09 06.19.37">
+<unload unload_date="2026-07-10 03.43.39">
 <sys_remote_update_set action="INSERT_OR_UPDATE">
     <application>26a2121093424710e3aef0aefaba106a</application>
     <application_name>Netra Voice Assistant</application_name>
@@ -20,7 +20,7 @@
     <sys_created_on>2026-07-09 04:37:09</sys_created_on>
     <sys_id>32a2961093424710e3aef0aefaba1082</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:07</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:41:27</sys_updated_on>
     <update_source/>
 </sys_remote_update_set>
 <sys_remote_update_set action="INSERT_OR_UPDATE">
@@ -43,7 +43,7 @@
     <sys_created_on>2026-07-09 04:37:09</sys_created_on>
     <sys_id>76a2961093424710e3aef0aefaba1082</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 04:44:04</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:41:27</sys_updated_on>
     <update_source/>
 </sys_remote_update_set>
 <sys_remote_update_set action="INSERT_OR_UPDATE">
@@ -66,7 +66,7 @@
     <sys_created_on>2026-07-09 04:37:09</sys_created_on>
     <sys_id>bea2961093424710e3aef0aefaba1083</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 04:44:04</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:41:27</sys_updated_on>
     <update_source/>
 </sys_remote_update_set>
 <sys_remote_update_set action="INSERT_OR_UPDATE">
@@ -89,7 +89,7 @@
     <sys_created_on>2026-07-09 04:37:09</sys_created_on>
     <sys_id>72a2961093424710e3aef0aefaba1085</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 04:45:04</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:41:27</sys_updated_on>
     <update_source/>
 </sys_remote_update_set>
 <sys_remote_update_set action="INSERT_OR_UPDATE">
@@ -112,7 +112,7 @@
     <sys_created_on>2026-07-09 04:37:09</sys_created_on>
     <sys_id>36a2961093424710e3aef0aefaba1086</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 04:44:04</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:41:27</sys_updated_on>
     <update_source/>
 </sys_remote_update_set>
 <sys_remote_update_set action="INSERT_OR_UPDATE">
@@ -135,7 +135,30 @@
     <sys_created_on>2026-07-09 04:37:09</sys_created_on>
     <sys_id>f6a2961093424710e3aef0aefaba1087</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:07</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:41:27</sys_updated_on>
+    <update_source/>
+</sys_remote_update_set>
+<sys_remote_update_set action="INSERT_OR_UPDATE">
+    <application>26a2121093424710e3aef0aefaba106a</application>
+    <application_name>Netra Voice Assistant</application_name>
+    <application_scope>x_196061_netra_v1</application_scope>
+    <application_version>2.0.0</application_version>
+    <collisions/>
+    <commit_date/>
+    <description>Netra batch 6: Vulnerability Response analyst capability - NetraVulnerability script include and cross-scope privileges for the sn_vul VR tables.</description>
+    <name>Netra 06 - Vulnerability Response</name>
+    <origin_sys_id>019c876c93428b10e3aef0aefaba108c</origin_sys_id>
+    <release_date/>
+    <remote_base_update_set/>
+    <remote_parent_id>32a2961093424710e3aef0aefaba1082</remote_parent_id>
+    <remote_sys_id>019c876c93428b10e3aef0aefaba108c</remote_sys_id>
+    <state>loaded</state>
+    <summary/>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-10 03:28:39</sys_created_on>
+    <sys_id>019c876c93428b10e3aef0aefaba108c</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-10 03:41:27</sys_updated_on>
     <update_source/>
 </sys_remote_update_set>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -10624,6 +10647,17 @@ api.controller = function ($scope, $timeout, $window) {
 'NOTES:\n' +
 '- add_work_note - private internal note (only fulfillers see). Use update_ticket for customer-visible comments.\n' +
 '\n' +
+'VULNERABILITY RESPONSE (you are a fully-capable vulnerability analyst):\n' +
+'- You operate ServiceNow Vulnerability Response end to end. The work unit is the Vulnerable Item (VIT#######), which links an asset (CI) to a CVE and carries a risk score 0-100 (critical 80+, high 60-79, medium 40-59, low under 40) and a lifecycle state (open, under investigation, in review, awaiting implementation, deferred, resolved, closed).\n' +
+'- list_vulnerable_items - the analyst queue. scope "me" (default) = assigned to the user or their groups; "group"; "all" = whole org. Filter by band, min_risk, state, ci, or cve. Use for "my vulnerabilities", "critical VITs for my team", "open items on host X".\n' +
+'- top_vulnerabilities - the highest-risk OPEN items org-wide; use for "what is our worst exposure" / "what do I fix first".\n' +
+'- get_vulnerable_item - full detail incl. CVE summary and remediation solution. CALL THE MOMENT the user names a VIT.\n' +
+'- lookup_cve - CALL THE MOMENT the user mentions a CVE id; returns the advisory, remediation, how many active items reference it and the worst risk.\n' +
+'- vulnerability_exposure - org exposure snapshot (counts by band, your own load, top groups). Use for a security "briefing" or "how bad is it".\n' +
+'- most_vulnerable_assets / vulnerabilities_for_asset - reason about the riskiest hosts.\n' +
+'- assign_vulnerable_item, set_vulnerable_item_state (open/investigate/review/awaiting/resolve/close), defer_vulnerable_item (reason MANDATORY - it is a risk-acceptance on the audit trail), add_vulnerability_note - the mutating actions. ALWAYS read back the item and CONFIRM verbally before you assign, change state, defer, or close. Deferring or closing a critical item without confirmation is unacceptable.\n' +
+'- Speak risk as bands and numbers the analyst can act on: "**VIT0014304**, risk **100**, **critical** - Adobe Flash on **LAPTP-SD-3818**, still **open**." Summarise long queues by shape (how many critical/high, top groups) before enumerating, exactly like ticket lists.\n' +
+'\n' +
 'CLAUDE-STYLE BEHAVIOUR (R1.3 - careful, agentic, multi-turn):\n' +
 '\n' +
 '- You are the "Claude of ServiceNow": careful, thoughtful, never destructive without confirmation, always reads-back before acting.\n' +
@@ -11157,6 +11191,84 @@ api.controller = function ($scope, $timeout, $window) {
                     parameters: { type: 'object', properties: {
                         table: { type: 'string', description: 'Target table name — incident, problem, change_request, sc_req_item' }
                     }, required: ['table'] }
+                },
+                // ------- VR: Vulnerability Response (analyst suite) -------
+                {
+                    name: 'list_vulnerable_items',
+                    description: 'List Vulnerability Response Vulnerable Items (VITs), the work unit of a vulnerability analyst. Use for "my vulnerabilities", "what is assigned to my group", "show me critical vulnerable items", "open VITs on this server". Filters returned by highest risk first.',
+                    parameters: { type: 'object', properties: {
+                        scope: { type: 'string', enum: ['me', 'group', 'all'], description: "'me' = assigned to the user or their groups (default); 'group' = the user's groups; 'all' = whole org." },
+                        state: { type: 'string', description: "Optional state word: open, investigate, review, awaiting, defer, resolve, close." },
+                        band: { type: 'string', enum: ['critical', 'high', 'medium', 'low'], description: 'Optional risk band filter.' },
+                        min_risk: { type: 'number', description: 'Optional minimum risk score 0-100.' },
+                        ci: { type: 'string', description: 'Optional asset / host name to filter on.' },
+                        cve: { type: 'string', description: 'Optional CVE id to filter on, e.g. CVE-2021-44228.' },
+                        limit: { type: 'number', description: 'Max items (default 10).' }
+                    } }
+                },
+                {
+                    name: 'top_vulnerabilities',
+                    description: 'The highest-risk OPEN vulnerable items across the whole organization — the exposure the analyst should tackle first. Use for "what is our worst exposure", "top vulnerabilities", "what should I fix first".',
+                    parameters: { type: 'object', properties: { limit: { type: 'number', description: 'How many (default 5).' } } }
+                },
+                {
+                    name: 'get_vulnerable_item',
+                    description: 'Full detail of one Vulnerable Item by number (VIT#######): risk, state, asset, CVE summary and the remediation solution. Call this the moment the user names a VIT.',
+                    parameters: { type: 'object', properties: { number: { type: 'string', description: 'e.g. VIT0014304' } }, required: ['number'] }
+                },
+                {
+                    name: 'lookup_cve',
+                    description: 'Look up a CVE / security advisory by identifier and how it affects us (summary, source, remediation, how many active items reference it and the worst risk). Call this the moment the user mentions a CVE id.',
+                    parameters: { type: 'object', properties: { cve: { type: 'string', description: 'e.g. CVE-2021-44228 (Log4Shell)' } }, required: ['cve'] }
+                },
+                {
+                    name: 'vulnerability_exposure',
+                    description: "Organization-wide vulnerability exposure snapshot: open counts by risk band (critical/high/medium/low), the user's own open load, and the most-loaded assignment groups. Use for 'what is our exposure', 'how bad is it', 'vulnerability summary', 'briefing'.",
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'most_vulnerable_assets',
+                    description: 'The assets (configuration items / hosts) carrying the most open vulnerable items, worst-risk first. Use for "which servers are worst", "most vulnerable hosts", "riskiest assets".',
+                    parameters: { type: 'object', properties: { limit: { type: 'number', description: 'How many assets (default 5).' } } }
+                },
+                {
+                    name: 'vulnerabilities_for_asset',
+                    description: 'All active vulnerable items on a named asset / host. Use for "what is wrong with LAPTP-SD-3818", "vulnerabilities on the JBOSS box".',
+                    parameters: { type: 'object', properties: { ci: { type: 'string', description: 'Asset / host / CI name' } }, required: ['ci'] }
+                },
+                {
+                    name: 'assign_vulnerable_item',
+                    description: 'Assign a Vulnerable Item to a user and/or an assignment group. Confirm verbally before calling.',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        user:   { type: 'string', description: 'Optional user name/email to assign to.' },
+                        group:  { type: 'string', description: 'Optional assignment group name.' }
+                    }, required: ['number'] }
+                },
+                {
+                    name: 'set_vulnerable_item_state',
+                    description: 'Move a Vulnerable Item through its lifecycle: open, investigate, review, awaiting implementation, resolve, or close. Confirm verbally before calling.',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        state:  { type: 'string', description: 'open | investigate | review | awaiting | resolve | close' },
+                        note:   { type: 'string', description: 'Optional work note explaining the change.' }
+                    }, required: ['number', 'state'] }
+                },
+                {
+                    name: 'defer_vulnerable_item',
+                    description: 'Defer a Vulnerable Item (accept the risk) with a MANDATORY reason for the audit trail. Use for "defer this", "accept the risk", "we can not patch this yet because...".',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        reason: { type: 'string', description: 'Why the risk is being accepted / deferred. Required.' }
+                    }, required: ['number', 'reason'] }
+                },
+                {
+                    name: 'add_vulnerability_note',
+                    description: 'Add a work note to a Vulnerable Item (investigation findings, remediation progress).',
+                    parameters: { type: 'object', properties: {
+                        number: { type: 'string', description: 'VIT number' },
+                        note:   { type: 'string', description: 'The note text.' }
+                    }, required: ['number', 'note'] }
                 }
             ]
         }];
@@ -11302,6 +11414,32 @@ api.controller = function ($scope, $timeout, $window) {
                     var __count = 0;
                     for (var __k in __m) { if (__m.hasOwnProperty(__k)) __count++; }
                     return { ok: true, table: __t, fields: __m, count: __count };
+                // ------- VR: Vulnerability Response -------
+                case 'list_vulnerable_items':
+                    return new NetraVulnerability().listVulnerableItems({
+                        scope: args.scope, state: args.state, band: args.band,
+                        min_risk: args.min_risk, ci: args.ci, cve: args.cve, limit: args.limit
+                    });
+                case 'top_vulnerabilities':
+                    return new NetraVulnerability().topRisk(Number(args.limit) || 5);
+                case 'get_vulnerable_item':
+                    return new NetraVulnerability().getVulnerableItem(String(args.number || ''));
+                case 'lookup_cve':
+                    return new NetraVulnerability().lookupCVE(String(args.cve || ''));
+                case 'vulnerability_exposure':
+                    return new NetraVulnerability().exposureSummary();
+                case 'most_vulnerable_assets':
+                    return new NetraVulnerability().mostVulnerableAssets(Number(args.limit) || 5);
+                case 'vulnerabilities_for_asset':
+                    return new NetraVulnerability().vulnerabilitiesForCI(String(args.ci || ''));
+                case 'assign_vulnerable_item':
+                    return new NetraVulnerability().assignVulnerableItem(String(args.number || ''), { user: args.user, group: args.group });
+                case 'set_vulnerable_item_state':
+                    return new NetraVulnerability().setVulnerableItemState(String(args.number || ''), String(args.state || ''), String(args.note || ''));
+                case 'defer_vulnerable_item':
+                    return new NetraVulnerability().deferVulnerableItem(String(args.number || ''), String(args.reason || ''));
+                case 'add_vulnerability_note':
+                    return new NetraVulnerability().addVulnerabilityNote(String(args.number || ''), String(args.note || ''));
                 default:
                     return { ok: false, error: 'Unknown tool: ' + name };
             }
@@ -13630,7 +13768,7 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
 })();
-]]&gt;&lt;/script&gt;&lt;servicenow&gt;false&lt;/servicenow&gt;&lt;sys_class_name&gt;sp_widget&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:42:54&lt;/sys_created_on&gt;&lt;sys_id&gt;f2f39ad093424710e3aef0aefaba10b1&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;Netra Mic&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sp_widget_f2f39ad093424710e3aef0aefaba10b1&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-09 04:42:54&lt;/sys_updated_on&gt;&lt;template&gt;&lt;![CDATA[&lt;!--
+]]&gt;&lt;/script&gt;&lt;servicenow&gt;false&lt;/servicenow&gt;&lt;sys_class_name&gt;sp_widget&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:42:54&lt;/sys_created_on&gt;&lt;sys_id&gt;f2f39ad093424710e3aef0aefaba10b1&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;Netra Mic&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sp_widget_f2f39ad093424710e3aef0aefaba10b1&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 03:28:40&lt;/sys_updated_on&gt;&lt;template&gt;&lt;![CDATA[&lt;!--
   Netra Mic widget template - R1.3 (Claude-of-ServiceNow)
 
   Minimal industry-standard icon. Simple circular eye with
@@ -14143,19 +14281,19 @@ api.controller = function ($scope, $timeout, $window) {
 
 &lt;/div&gt;
 ]]&gt;&lt;/template&gt;&lt;/sp_widget&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-474151877</payload_hash>
+    <payload_hash>-750012083</payload_hash>
     <remote_update_set>36a2961093424710e3aef0aefaba1086</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 04:42:54</sys_created_on>
-    <sys_id>03f39ad093424710e3aef0aefaba10b7</sys_id>
+    <sys_created_on>2026-07-10 03:28:41</sys_created_on>
+    <sys_id>2d9c876c93428b10e3aef0aefaba10e9</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 04:42:54</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>Netra Mic</target_name>
     <type>Widget</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>0bf39ad071424710eeb9014af8f76bb6</update_guid>
-    <update_guid_history>0bf39ad071424710eeb9014af8f76bb6:-474151877</update_guid_history>
+    <update_guid>a59c876c3c428b103e28cf929f1558e9</update_guid>
+    <update_guid_history>a59c876c3c428b103e28cf929f1558e9:-750012083,0bf39ad071424710eeb9014af8f76bb6:-474151877</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14182,20 +14320,20 @@ api.controller = function ($scope, $timeout, $window) {
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_properties_d9c39e9093424710e3aef0aefaba100d</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;Google AI Studio API key for Gemini. REQUIRED for the conversational brain and TTS. Get a free key at https://aistudio.google.com/apikey&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.gemini_api_key&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix&gt;gemini_api_key&lt;/suffix&gt;&lt;sys_class_name&gt;sys_properties&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:41:58&lt;/sys_created_on&gt;&lt;sys_id&gt;d9c39e9093424710e3aef0aefaba100d&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.gemini_api_key&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_d9c39e9093424710e3aef0aefaba100d&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-09 04:41:58&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value/&gt;&lt;write_roles/&gt;&lt;/sys_properties&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=d9c39e9093424710e3aef0aefaba100d"/&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-1498037380</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;Google AI Studio API key for Gemini. REQUIRED for the conversational brain and TTS. Get a free key at https://aistudio.google.com/apikey&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.gemini_api_key&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix&gt;gemini_api_key&lt;/suffix&gt;&lt;sys_class_name&gt;sys_properties&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:41:58&lt;/sys_created_on&gt;&lt;sys_id&gt;d9c39e9093424710e3aef0aefaba100d&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.gemini_api_key&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_d9c39e9093424710e3aef0aefaba100d&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-09 05:13:25&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value&gt;&lt;/value&gt;&lt;write_roles/&gt;&lt;/sys_properties&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=d9c39e9093424710e3aef0aefaba100d"/&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1545549082</payload_hash>
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 04:41:59</sys_created_on>
-    <sys_id>edc39e9093424710e3aef0aefaba1093</sys_id>
+    <sys_created_on>2026-07-09 05:13:31</sys_created_on>
+    <sys_id>d3fa1ad493824710e3aef0aefaba104a</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 04:41:59</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>x_196061_netra_v1.gemini_api_key</target_name>
     <type>System Property</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>a1c39e900642471060dcd64a0095d73c</update_guid>
-    <update_guid_history>a1c39e900642471060dcd64a0095d73c:-1498037380</update_guid_history>
+    <update_guid>5bfa1ad4ea824710416e3eda77a73049</update_guid>
+    <update_guid_history>5bfa1ad4ea824710416e3eda77a73049:1545549082,a1c39e900642471060dcd64a0095d73c:-1498037380</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14347,15 +14485,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>8c0a2e1893064710e3aef0aefaba1064</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>e3f9aa1893064710e3aef0aefaba10a2</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_properties</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>840a2e18de064710c808c4ff2e805d64</update_guid>
-    <update_guid_history>840a2e18de064710c808c4ff2e805d64:-1086979392,1ff9aa18ff0647108c1084c0959cbda1:-1086979392</update_guid_history>
+    <update_guid>1ff9aa18ff0647108c1084c0959cbda1</update_guid>
+    <update_guid_history>1ff9aa18ff0647108c1084c0959cbda1:-1086979392</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14367,15 +14505,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:07</sys_created_on>
-    <sys_id>180a2e1893064710e3aef0aefaba1069</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>a3f9aa1893064710e3aef0aefaba10b6</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:07</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_user_preference</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>100a2e18ae06471033204d590470d769</update_guid>
-    <update_guid_history>100a2e18ae06471033204d590470d769:1272999976,ebf9aa181a0647106caec113babbf0b5:1272999976</update_guid_history>
+    <update_guid>ebf9aa181a0647106caec113babbf0b5</update_guid>
+    <update_guid_history>ebf9aa181a0647106caec113babbf0b5:1272999976</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14387,15 +14525,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>d00a2e1893064710e3aef0aefaba1067</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>eff9aa1893064710e3aef0aefaba10a5</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_user_preference</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>d80a2e180c0647109744505ecd447066</update_guid>
-    <update_guid_history>d80a2e180c0647109744505ecd447066:1271263217,2bf9aa184c064710c513e0f7fefbbaa5:1271263217</update_guid_history>
+    <update_guid>2bf9aa184c064710c513e0f7fefbbaa5</update_guid>
+    <update_guid_history>2bf9aa184c064710c513e0f7fefbbaa5:1271263217</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14407,15 +14545,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>3bf9ea1893064710e3aef0aefaba10b4</sys_id>
+    <sys_created_on>2026-07-09 05:31:54</sys_created_on>
+    <sys_id>283f125093c24710e3aef0aefaba1077</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_user</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>33f9ea18370647105eade23a80fc3bb4</update_guid>
-    <update_guid_history>33f9ea18370647105eade23a80fc3bb4:1585285881,603f125088c24710738b78e1cbfe5777:1585285881</update_guid_history>
+    <update_guid>603f125088c24710738b78e1cbfe5777</update_guid>
+    <update_guid_history>603f125088c24710738b78e1cbfe5777:1585285881</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14427,15 +14565,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>c00aea1893064710e3aef0aefaba10e6</sys_id>
+    <sys_created_on>2026-07-09 05:13:49</sys_created_on>
+    <sys_id>bf0b9ed493824710e3aef0aefaba1003</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_choice</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>c80aea18f4064710b73a71cbaf3c3ee5</update_guid>
-    <update_guid_history>c80aea18f4064710b73a71cbaf3c3ee5:742202533,f70b9ed40f8247107d84f69e37d51203:742202533</update_guid_history>
+    <update_guid>f70b9ed40f8247107d84f69e37d51203</update_guid>
+    <update_guid_history>f70b9ed40f8247107d84f69e37d51203:742202533</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14447,15 +14585,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>7ff9ea1893064710e3aef0aefaba10b6</sys_id>
+    <sys_created_on>2026-07-09 05:13:49</sys_created_on>
+    <sys_id>b30b5ed493824710e3aef0aefaba10f2</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_user_group</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>77f9ea1842064710f1649388af9348b6</update_guid>
-    <update_guid_history>77f9ea1842064710f1649388af9348b6:1933823353,fb0b5ed42b8247105c092ec4e83a15f1:1933823353</update_guid_history>
+    <update_guid>fb0b5ed42b8247105c092ec4e83a15f1</update_guid>
+    <update_guid_history>fb0b5ed42b8247105c092ec4e83a15f1:1933823353</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14527,15 +14665,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>f3f9ea1893064710e3aef0aefaba10cf</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>1bf9aa1893064710e3aef0aefaba107a</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_script</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>fbf9ea186f0647101a165bad9be0f7ce</update_guid>
-    <update_guid_history>fbf9ea186f0647101a165bad9be0f7ce:2062400761,53f9aa18d70647101bee7e561dc3117a:2062400761</update_guid_history>
+    <update_guid>53f9aa18d70647101bee7e561dc3117a</update_guid>
+    <update_guid_history>53f9aa18d70647101bee7e561dc3117a:2062400761</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14547,15 +14685,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>840a2e1893064710e3aef0aefaba1006</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>1bf9aa1893064710e3aef0aefaba1087</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>problem</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>8c0a2e18d6064710ff5dcf7399f6a905</update_guid>
-    <update_guid_history>8c0a2e18d6064710ff5dcf7399f6a905:-1098971087,53f9aa187f064710acad96df36585b87:-1098971087</update_guid_history>
+    <update_guid>53f9aa187f064710acad96df36585b87</update_guid>
+    <update_guid_history>53f9aa187f064710acad96df36585b87:-1098971087</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14647,15 +14785,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>480a2e1893064710e3aef0aefaba1062</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>d7f9aa1893064710e3aef0aefaba109e</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_properties</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>400a2e182c064710ccd6e8eea0a3b962</update_guid>
-    <update_guid_history>400a2e182c064710ccd6e8eea0a3b962:710539721,13f9aa18810647107560d7dbdbe9c29e:710539721</update_guid_history>
+    <update_guid>13f9aa18810647107560d7dbdbe9c29e</update_guid>
+    <update_guid_history>13f9aa18810647107560d7dbdbe9c29e:710539721</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14847,15 +14985,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>f7f9ea1893064710e3aef0aefaba10bb</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>5bf9aa1893064710e3aef0aefaba105e</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_dictionary</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>fff9ea1840064710f8bc5b505c9111ba</update_guid>
-    <update_guid_history>fff9ea1840064710f8bc5b505c9111ba:-386297329,93f9aa18da0647101e7faae3017f135e:-386297329</update_guid_history>
+    <update_guid>93f9aa18da0647101e7faae3017f135e</update_guid>
+    <update_guid_history>93f9aa18da0647101e7faae3017f135e:-386297329</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14867,15 +15005,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>7bf9ea1893064710e3aef0aefaba10ca</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>5bf9aa1893064710e3aef0aefaba1066</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_app</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>73f9ea188106471072d1da2abfc20fca</update_guid>
-    <update_guid_history>73f9ea188106471072d1da2abfc20fca:1751874097,93f9aa18e3064710332e50daddecd466:1751874097</update_guid_history>
+    <update_guid>93f9aa18e3064710332e50daddecd466</update_guid>
+    <update_guid_history>93f9aa18e3064710332e50daddecd466:1751874097</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14887,15 +15025,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>800aea1893064710e3aef0aefaba10eb</sys_id>
+    <sys_created_on>2026-07-09 05:11:40</sys_created_on>
+    <sys_id>109a9a9493824710e3aef0aefaba106a</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>incident</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>880aea186d0647107139356c4a62bfea</update_guid>
-    <update_guid_history>880aea186d0647107139356c4a62bfea:1414289123,589a9a944382471086e4c20ede662d69:1414289123</update_guid_history>
+    <update_guid>589a9a944382471086e4c20ede662d69</update_guid>
+    <update_guid_history>589a9a944382471086e4c20ede662d69:1414289123</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14907,15 +15045,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>37f9ea1893064710e3aef0aefaba10ad</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>5ff9aa1893064710e3aef0aefaba1055</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sc_req_item</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>3ff9ea18820647103713c23ed5fc42ac</update_guid>
-    <update_guid_history>3ff9ea18820647103713c23ed5fc42ac:423757233,53f9aa18d9064710cd3bc8189ff29a55:423757233</update_guid_history>
+    <update_guid>53f9aa18d9064710cd3bc8189ff29a55</update_guid>
+    <update_guid_history>53f9aa18d9064710cd3bc8189ff29a55:423757233</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14927,15 +15065,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>b3f9ea1893064710e3aef0aefaba10b9</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>5ff9aa1893064710e3aef0aefaba105a</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_attachment</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>bbf9ea1842064710189dafac1c9278b8</update_guid>
-    <update_guid_history>bbf9ea1842064710189dafac1c9278b8:551389609,97f9aa189e064710df57d880e7354d5a:551389609</update_guid_history>
+    <update_guid>97f9aa189e064710df57d880e7354d5a</update_guid>
+    <update_guid_history>97f9aa189e064710df57d880e7354d5a:551389609</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14947,15 +15085,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>37f9ea1893064710e3aef0aefaba10c8</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>5ff9aa1893064710e3aef0aefaba1062</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_db_object</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>3ff9ea1833064710a2309be68df1eec7</update_guid>
-    <update_guid_history>3ff9ea1833064710a2309be68df1eec7:546831057,97f9aa18f30647100b6e5c5a450e7362:546831057</update_guid_history>
+    <update_guid>97f9aa18f30647100b6e5c5a450e7362</update_guid>
+    <update_guid_history>97f9aa18f30647100b6e5c5a450e7362:546831057</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14967,15 +15105,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>bff9ea1893064710e3aef0aefaba10cc</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>57f9aa1893064710e3aef0aefaba106a</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_script_include</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>b7f9ea18a5064710d69e0e52bdc1a7cc</update_guid>
-    <update_guid_history>b7f9ea18a5064710d69e0e52bdc1a7cc:-2112260661,9ff9aa187606471085da655955d71569:-2112260661</update_guid_history>
+    <update_guid>9ff9aa187606471085da655955d71569</update_guid>
+    <update_guid_history>9ff9aa187606471085da655955d71569:-2112260661</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -15047,15 +15185,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>cc0a2e1893064710e3aef0aefaba100d</sys_id>
+    <sys_created_on>2026-07-09 05:11:40</sys_created_on>
+    <sys_id>d49a9a9493824710e3aef0aefaba10e1</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sysapproval_approver</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>c40a2e1848064710f898c5604988c50d</update_guid>
-    <update_guid_history>c40a2e1848064710f898c5604988c50d:-1419778201,109a9a947b82471091593c6226fe34e1:-1419778201</update_guid_history>
+    <update_guid>109a9a947b82471091593c6226fe34e1</update_guid>
+    <update_guid_history>109a9a947b82471091593c6226fe34e1:-1419778201</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -15127,15 +15265,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>840aea1893064710e3aef0aefaba10d9</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>9bf9aa1893064710e3aef0aefaba107e</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sp_widget</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>8c0aea184f0647103a1caec98b2a16d8</update_guid>
-    <update_guid_history>8c0aea184f0647103a1caec98b2a16d8:-583749295,d3f9aa186e0647105f08aa0fc9b24d7e:-583749295</update_guid_history>
+    <update_guid>d3f9aa186e0647105f08aa0fc9b24d7e</update_guid>
+    <update_guid_history>d3f9aa186e0647105f08aa0fc9b24d7e:-583749295</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -15147,15 +15285,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>000aea1893064710e3aef0aefaba10f5</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>9bf9aa1893064710e3aef0aefaba1083</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>change_request</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>080aea18b40647108d13c5b3a58622f4</update_guid>
-    <update_guid_history>080aea18b40647108d13c5b3a58622f4:1707279990,d3f9aa1811064710e7357d6efee21d83:1707279990</update_guid_history>
+    <update_guid>d3f9aa1811064710e7357d6efee21d83</update_guid>
+    <update_guid_history>d3f9aa1811064710e7357d6efee21d83:1707279990</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -15167,15 +15305,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>040a2e1893064710e3aef0aefaba1010</sys_id>
+    <sys_created_on>2026-07-09 06:19:03</sys_created_on>
+    <sys_id>9bf9aa1893064710e3aef0aefaba108b</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sysapproval_approver</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>0c0a2e1866064710e31ded180053fb0f</update_guid>
-    <update_guid_history>0c0a2e1866064710e31ded180053fb0f:249247198,d3f9aa1834064710bf01f91231ef228b:249247198</update_guid_history>
+    <update_guid>d3f9aa1834064710bf01f91231ef228b</update_guid>
+    <update_guid_history>d3f9aa1834064710bf01f91231ef228b:249247198</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -15187,15 +15325,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:06</sys_created_on>
-    <sys_id>c80aea1893064710e3aef0aefaba10f2</sys_id>
+    <sys_created_on>2026-07-09 05:11:40</sys_created_on>
+    <sys_id>989a9a9493824710e3aef0aefaba10dd</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:06</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>change_request</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>c00aea180b064710237feeca7d0121f2</update_guid>
-    <update_guid_history>c00aea180b064710237feeca7d0121f2:-790168193,d09a9a943a82471015b0f69789c85fdd:-790168193</update_guid_history>
+    <update_guid>d09a9a943a82471015b0f69789c85fdd</update_guid>
+    <update_guid_history>d09a9a943a82471015b0f69789c85fdd:-790168193</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -15447,15 +15585,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:07</sys_created_on>
-    <sys_id>900a2e1893064710e3aef0aefaba106e</sys_id>
+    <sys_created_on>2026-07-09 06:19:04</sys_created_on>
+    <sys_id>abf9aa1893064710e3aef0aefaba10bd</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:07</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_user_preference</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>980a2e180f06471053e24f22d96aba6d</update_guid>
-    <update_guid_history>980a2e180f06471053e24f22d96aba6d:737801148,e3f9aa18e306471071b82ae3c6c051bd:737801148</update_guid_history>
+    <update_guid>e3f9aa18e306471071b82ae3c6c051bd</update_guid>
+    <update_guid_history>e3f9aa18e306471071b82ae3c6c051bd:737801148</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -15467,15 +15605,15 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:07</sys_created_on>
-    <sys_id>5c0a2e1893064710e3aef0aefaba106b</sys_id>
+    <sys_created_on>2026-07-09 06:19:04</sys_created_on>
+    <sys_id>aff9aa1893064710e3aef0aefaba10b9</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:07</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>sys_user_preference</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>540a2e18c9064710afbe814497ba776b</update_guid>
-    <update_guid_history>540a2e18c9064710afbe814497ba776b:235277003,e7f9aa188a064710bdb768c6e6aa9eb9:235277003</update_guid_history>
+    <update_guid>e7f9aa188a064710bdb768c6e6aa9eb9</update_guid>
+    <update_guid_history>e7f9aa188a064710bdb768c6e6aa9eb9:235277003</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -15487,15 +15625,516 @@ api.controller = function ($scope, $timeout, $window) {
     <remote_update_set>f6a2961093424710e3aef0aefaba1087</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-09 06:19:05</sys_created_on>
-    <sys_id>f3f9ea1893064710e3aef0aefaba10b2</sys_id>
+    <sys_created_on>2026-07-09 05:13:49</sys_created_on>
+    <sys_id>7f0b9ed493824710e3aef0aefaba1007</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-09 06:19:05</sys_updated_on>
+    <sys_updated_on>2026-07-10 03:38:39</sys_updated_on>
     <target_name>kb_knowledge</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>fbf9ea185a06471007ff956cf6da33b1</update_guid>
-    <update_guid_history>fbf9ea185a06471007ff956cf6da33b1:-15704341,b70b9ed4258247107fdc26aa70842507:-15704341</update_guid_history>
+    <update_guid>b70b9ed4258247107fdc26aa70842507</update_guid>
+    <update_guid_history>b70b9ed4258247107fdc26aa70842507:-15704341</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_519c876c93428b10e3aef0aefaba10d3</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 03:28:40&lt;/sys_created_on&gt;&lt;sys_id&gt;519c876c93428b10e3aef0aefaba10d3&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sn_vul_vulnerability_group&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_519c876c93428b10e3aef0aefaba10d3&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 03:28:40&lt;/sys_updated_on&gt;&lt;target_name&gt;sn_vul_vulnerability_group&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1859512779</payload_hash>
+    <remote_update_set>019c876c93428b10e3aef0aefaba108c</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-10 03:28:40</sys_created_on>
+    <sys_id>199c876c93428b10e3aef0aefaba10d5</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-10 03:28:40</sys_updated_on>
+    <target_name>sn_vul_vulnerability_group</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>519c876c31428b10c605d7a41336b2d5</update_guid>
+    <update_guid_history>519c876c31428b10c605d7a41336b2d5:1859512779</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_599c876c93428b10e3aef0aefaba10da</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 03:28:40&lt;/sys_created_on&gt;&lt;sys_id&gt;599c876c93428b10e3aef0aefaba10da&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;cmdb_ci&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_599c876c93428b10e3aef0aefaba10da&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 03:28:40&lt;/sys_updated_on&gt;&lt;target_name&gt;cmdb_ci&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-252570127</payload_hash>
+    <remote_update_set>019c876c93428b10e3aef0aefaba108c</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-10 03:28:40</sys_created_on>
+    <sys_id>119c876c93428b10e3aef0aefaba10dd</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-10 03:28:40</sys_updated_on>
+    <target_name>cmdb_ci</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>599c876c92428b10c7931342d65882dc</update_guid>
+    <update_guid_history>599c876c92428b10c7931342d65882dc:-252570127</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_5d9c876c93428b10e3aef0aefaba10d6</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 03:28:40&lt;/sys_created_on&gt;&lt;sys_id&gt;5d9c876c93428b10e3aef0aefaba10d6&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_user_grmember&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_5d9c876c93428b10e3aef0aefaba10d6&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 03:28:40&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_user_grmember&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1538443441</payload_hash>
+    <remote_update_set>019c876c93428b10e3aef0aefaba108c</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-10 03:28:40</sys_created_on>
+    <sys_id>159c876c93428b10e3aef0aefaba10d9</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-10 03:28:40</sys_updated_on>
+    <target_name>sys_user_grmember</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>5d9c876c92428b1068b88ffa75c324d8</update_guid>
+    <update_guid_history>5d9c876c92428b1068b88ffa75c324d8:1538443441</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_d59c876c93428b10e3aef0aefaba10b6</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 03:28:40&lt;/sys_created_on&gt;&lt;sys_id&gt;d59c876c93428b10e3aef0aefaba10b6&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sn_vul_entry&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_d59c876c93428b10e3aef0aefaba10b6&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 03:28:40&lt;/sys_updated_on&gt;&lt;target_name&gt;sn_vul_entry&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1931390729</payload_hash>
+    <remote_update_set>019c876c93428b10e3aef0aefaba108c</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-10 03:28:40</sys_created_on>
+    <sys_id>1d9c876c93428b10e3aef0aefaba10d1</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-10 03:28:40</sys_updated_on>
+    <target_name>sn_vul_entry</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>d59c876c0e428b10bbfe2b7ffac84bb8</update_guid>
+    <update_guid_history>d59c876c0e428b10bbfe2b7ffac84bb8:-1931390729</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_d6934d64938e0b10e3aef0aefaba106d</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;system&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 17:30:11&lt;/sys_created_on&gt;&lt;sys_id&gt;d6934d64938e0b10e3aef0aefaba106d&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sn_vul_vulnerable_item&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_d6934d64938e0b10e3aef0aefaba106d&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;system&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-09 17:30:11&lt;/sys_updated_on&gt;&lt;target_name&gt;sn_vul_vulnerable_item&lt;/target_name&gt;&lt;target_scope display_value="Vulnerability Response"&gt;054cdcc2ff200200158bffffffffff94&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1631410653</payload_hash>
+    <remote_update_set>019c876c93428b10e3aef0aefaba108c</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>system</sys_created_by>
+    <sys_created_on>2026-07-09 17:30:11</sys_created_on>
+    <sys_id>66934d64938e0b10e3aef0aefaba1072</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-10 03:40:09</sys_updated_on>
+    <target_name>sn_vul_vulnerable_item</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>6e934d648c8e0b10955d9245b1dbc071</update_guid>
+    <update_guid_history>6e934d648c8e0b10955d9245b1dbc071:1631410653</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_scope_privilege_dd9c876c93428b10e3aef0aefaba10b1</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;write&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 03:28:40&lt;/sys_created_on&gt;&lt;sys_id&gt;dd9c876c93428b10e3aef0aefaba10b1&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sn_vul_vulnerable_item&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_dd9c876c93428b10e3aef0aefaba10b1&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 03:28:40&lt;/sys_updated_on&gt;&lt;target_name&gt;sn_vul_vulnerable_item&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>250430366</payload_hash>
+    <remote_update_set>019c876c93428b10e3aef0aefaba108c</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-10 03:28:40</sys_created_on>
+    <sys_id>119c876c93428b10e3aef0aefaba10b5</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-10 03:28:40</sys_updated_on>
+    <target_name>sn_vul_vulnerable_item</target_name>
+    <type>Cross scope privilege</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>199c876c12428b106a09ccdbcbeb1ab4</update_guid>
+    <update_guid_history>199c876c12428b106a09ccdbcbeb1ab4:250430366</update_guid_history>
+    <view/>
+</sys_update_xml>
+<sys_update_xml action="INSERT_OR_UPDATE">
+    <action>INSERT_OR_UPDATE</action>
+    <category>customer</category>
+    <name>sys_script_include_419c876c93428b10e3aef0aefaba1093</name>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_script_include"&gt;&lt;sys_script_include action="INSERT_OR_UPDATE"&gt;&lt;access&gt;package_private&lt;/access&gt;&lt;active&gt;true&lt;/active&gt;&lt;api_name&gt;x_196061_netra_v1.NetraVulnerability&lt;/api_name&gt;&lt;caller_access/&gt;&lt;client_callable&gt;false&lt;/client_callable&gt;&lt;description&gt;Vulnerability Response analyst operations: triage, exposure, CVE lookup, assign, state, defer, notes.&lt;/description&gt;&lt;mobile_callable&gt;false&lt;/mobile_callable&gt;&lt;name&gt;NetraVulnerability&lt;/name&gt;&lt;sandbox_callable&gt;false&lt;/sandbox_callable&gt;&lt;script&gt;&lt;![CDATA[/**
+ * NetraVulnerability — server-side Vulnerability Response (VR) operations for
+ * the Netra voice assistant. Gives Netra full coverage of a vulnerability
+ * analyst's day: triage the queue, understand exposure, look up CVEs, assign,
+ * investigate, defer, resolve and close Vulnerable Items (VITs), and reason
+ * about the riskiest assets.
+ *
+ * Tables (ServiceNow Vulnerability Response, global scope):
+ *   sn_vul_vulnerable_item   Vulnerable Item (VIT) — the analyst's work unit
+ *   sn_vul_entry             Vulnerability entry (the CVE / advisory)
+ *   sn_vul_vulnerability_group  Remediation grouping
+ *
+ * Every method returns { ok: true, ... } or { ok: false, error }. Results are
+ * shaped for spoken read-back: numbers, risk bands, CI names, states as words.
+ */
+var NetraVulnerability = Class.create();
+NetraVulnerability.prototype = {
+
+    VIT:   'sn_vul_vulnerable_item',
+    ENTRY: 'sn_vul_entry',
+    GROUP: 'sn_vul_vulnerability_group',
+
+    // sn_vul_vulnerable_item.state choices on this instance
+    STATE: {
+        OPEN: '1', UNDER_INVESTIGATION: '2', AWAITING_IMPLEMENTATION: '10',
+        IN_REVIEW: '11', DEFERRED: '12', RESOLVED: '101', CLOSED: '3'
+    },
+    STATE_LABEL: {
+        '1': 'open', '2': 'under investigation', '10': 'awaiting implementation',
+        '11': 'in review', '12': 'deferred', '101': 'resolved', '3': 'closed'
+    },
+    // spoken word -&gt; state value (what the analyst says -&gt; what we set)
+    STATE_WORD: {
+        'open': '1', 'reopen': '1',
+        'investigate': '2', 'investigating': '2', 'under investigation': '2', 'in progress': '2',
+        'awaiting': '10', 'awaiting implementation': '10', 'implement': '10',
+        'review': '11', 'in review': '11',
+        'defer': '12', 'deferred': '12', 'accept risk': '12', 'risk accept': '12',
+        'resolve': '101', 'resolved': '101', 'remediate': '101', 'remediated': '101', 'fixed': '101',
+        'close': '3', 'closed': '3'
+    },
+
+    initialize: function () {
+        this.userSysId = gs.getUserID();
+        this.userName  = gs.getUserName();
+    },
+
+    // ============================================================
+    //  Helpers
+    // ============================================================
+    _normVit: function (num) {
+        num = String(num || '').toUpperCase().replace(/\s+/g, '');
+        if (/^\d+$/.test(num)) num = 'VIT' + ('0000000' + num).slice(-7);
+        return num;
+    },
+
+    _riskBand: function (score) {
+        score = parseInt(score, 10) || 0;
+        if (score &gt;= 80) return 'critical';
+        if (score &gt;= 60) return 'high';
+        if (score &gt;= 40) return 'medium';
+        if (score &gt; 0)   return 'low';
+        return 'none';
+    },
+
+    _myGroupIds: function () {
+        var ids = [];
+        var gm = new GlideRecord('sys_user_grmember');
+        gm.addQuery('user', this.userSysId);
+        gm.query();
+        while (gm.next()) ids.push(String(gm.group));
+        return ids;
+    },
+
+    _shapeVit: function (gr) {
+        return {
+            number:      String(gr.number),
+            sys_id:      String(gr.sys_id),
+            summary:     String(gr.short_description),
+            risk_score:  parseInt(String(gr.risk_score), 10) || 0,
+            risk_band:   this._riskBand(gr.risk_score),
+            state:       String(gr.state),
+            state_label: this.STATE_LABEL[String(gr.state)] || ('state ' + gr.state),
+            ci:          gr.cmdb_ci.nil() ? '' : String(gr.cmdb_ci.getDisplayValue()),
+            cve:         gr.vulnerability.nil() ? '' : String(gr.vulnerability.getDisplayValue()),
+            group:       gr.assignment_group.nil() ? '' : String(gr.assignment_group.getDisplayValue()),
+            assigned_to: gr.assigned_to.nil() ? '' : String(gr.assigned_to.getDisplayValue()),
+            first_found: gr.first_found.nil() ? '' : String(gr.first_found.getDisplayValue())
+        };
+    },
+
+    _findVit: function (number) {
+        var gr = new GlideRecord(this.VIT);
+        if (gr.get('number', this._normVit(number))) return gr;
+        return null;
+    },
+
+    // ============================================================
+    //  Triage &amp; read
+    // ============================================================
+    /**
+     * List vulnerable items with flexible analyst filters.
+     * opts: { scope:'me'|'group'|'all', state, min_risk, band, ci, cve, limit }
+     */
+    listVulnerableItems: function (opts) {
+        opts = opts || {};
+        var gr = new GlideRecord(this.VIT);
+        gr.addQuery('active', true);
+
+        var scope = String(opts.scope || 'me').toLowerCase();
+        if (scope === 'me') {
+            var groups = this._myGroupIds();
+            var q = 'assigned_to=' + this.userSysId;
+            if (groups.length) q += '^ORassignment_groupIN' + groups.join(',');
+            gr.addEncodedQuery(q);
+        } else if (scope === 'group') {
+            var g2 = this._myGroupIds();
+            if (g2.length) gr.addQuery('assignment_group', 'IN', g2.join(','));
+            else return { ok: true, count: 0, items: [], note: 'You are not a member of any assignment group.' };
+        }
+
+        if (opts.state) {
+            var st = this.STATE_WORD[String(opts.state).toLowerCase()] || String(opts.state);
+            gr.addQuery('state', st);
+        }
+        if (opts.min_risk) gr.addQuery('risk_score', '&gt;=', parseInt(opts.min_risk, 10) || 0);
+        if (opts.band) {
+            var b = String(opts.band).toLowerCase();
+            var ranges = { critical: [80, 100], high: [60, 79], medium: [40, 59], low: [1, 39] };
+            if (ranges[b]) { gr.addQuery('risk_score', '&gt;=', ranges[b][0]); gr.addQuery('risk_score', '&lt;=', ranges[b][1]); }
+        }
+        if (opts.ci)  gr.addQuery('cmdb_ci.name', 'CONTAINS', String(opts.ci));
+        if (opts.cve) gr.addQuery('vulnerability.id', String(opts.cve).toUpperCase());
+
+        gr.orderByDesc('risk_score');
+        gr.setLimit(parseInt(opts.limit, 10) || 10);
+        gr.query();
+        var items = [];
+        while (gr.next()) items.push(this._shapeVit(gr));
+        return { ok: true, count: items.length, scope: scope, items: items };
+    },
+
+    /** Highest-risk active vulnerable items across the whole org (exposure view). */
+    topRisk: function (limit) {
+        var gr = new GlideRecord(this.VIT);
+        gr.addQuery('active', true);
+        gr.addQuery('state', 'NOT IN', this.STATE.CLOSED + ',' + this.STATE.RESOLVED);
+        gr.orderByDesc('risk_score');
+        gr.setLimit(parseInt(limit, 10) || 5);
+        gr.query();
+        var items = [];
+        while (gr.next()) items.push(this._shapeVit(gr));
+        return { ok: true, count: items.length, items: items };
+    },
+
+    /** Full detail of one VIT, including CVE summary and remediation solution. */
+    getVulnerableItem: function (number) {
+        var gr = this._findVit(number);
+        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' not found.' };
+        var out = this._shapeVit(gr);
+        out.ok = true;
+        out.notes = String(gr.work_notes.getJournalEntry(1) || '').substring(0, 600);
+        // pull the CVE entry for summary + solution
+        if (!gr.vulnerability.nil()) {
+            var e = new GlideRecord(this.ENTRY);
+            if (e.get(String(gr.vulnerability))) {
+                out.cve_id      = String(e.id);
+                out.cve_summary = String(e.summary || '').substring(0, 800);
+                out.cve_source  = String(e.source || '');
+                out.solution    = this._stripHtml(String(e.solution || '')).substring(0, 800);
+            }
+        }
+        return out;
+    },
+
+    /** Look up a CVE / advisory by id (e.g. CVE-2014-0322) and how it hits us. */
+    lookupCVE: function (cveId) {
+        cveId = String(cveId || '').toUpperCase().replace(/\s+/g, '');
+        if (!cveId) return { ok: false, error: 'Which CVE? Give me an identifier like CVE-2021-44228.' };
+        var e = new GlideRecord(this.ENTRY);
+        e.addQuery('id', cveId);
+        e.setLimit(1); e.query();
+        if (!e.next()) return { ok: false, error: 'No vulnerability entry for ' + cveId + ' in the library.' };
+        // how many active VITs reference it, and the worst risk
+        var agg = new GlideAggregate(this.VIT);
+        agg.addQuery('vulnerability', String(e.sys_id));
+        agg.addQuery('active', true);
+        agg.addAggregate('COUNT');
+        agg.addAggregate('MAX', 'risk_score');
+        agg.query();
+        var affected = 0, worst = 0;
+        if (agg.next()) { affected = parseInt(agg.getAggregate('COUNT'), 10) || 0; worst = parseInt(agg.getAggregate('MAX', 'risk_score'), 10) || 0; }
+        return {
+            ok: true,
+            cve_id: cveId,
+            summary: String(e.summary || '').substring(0, 900),
+            source:  String(e.source || ''),
+            solution: this._stripHtml(String(e.solution || '')).substring(0, 900),
+            affected_items: affected,
+            worst_risk: worst,
+            worst_band: this._riskBand(worst)
+        };
+    },
+
+    // ============================================================
+    //  Exposure analytics
+    // ============================================================
+    /** Org-wide exposure snapshot: counts by state, risk band, top groups &amp; CVEs. */
+    exposureSummary: function () {
+        var out = { ok: true };
+
+        // by risk band (active, not closed/resolved)
+        var bands = { critical: 0, high: 0, medium: 0, low: 0 };
+        var byBand = new GlideAggregate(this.VIT);
+        byBand.addQuery('active', true);
+        byBand.addQuery('state', 'NOT IN', this.STATE.CLOSED + ',' + this.STATE.RESOLVED);
+        byBand.addAggregate('COUNT');
+        byBand.groupBy('risk_score');
+        byBand.query();
+        var totalOpen = 0;
+        while (byBand.next()) {
+            var c = parseInt(byBand.getAggregate('COUNT'), 10) || 0;
+            totalOpen += c;
+            bands[this._riskBand(byBand.risk_score)] = (bands[this._riskBand(byBand.risk_score)] || 0) + c;
+        }
+        out.open_total = totalOpen;
+        out.by_band = bands;
+
+        // top 3 assignment groups by open count
+        var byGroup = new GlideAggregate(this.VIT);
+        byGroup.addQuery('active', true);
+        byGroup.addQuery('state', 'NOT IN', this.STATE.CLOSED + ',' + this.STATE.RESOLVED);
+        byGroup.addAggregate('COUNT');
+        byGroup.groupBy('assignment_group');
+        byGroup.orderByAggregate('COUNT');
+        byGroup.query();
+        out.top_groups = [];
+        while (byGroup.next() &amp;&amp; out.top_groups.length &lt; 3) {
+            if (byGroup.assignment_group.nil()) continue;
+            out.top_groups.push({ group: String(byGroup.assignment_group.getDisplayValue()), count: parseInt(byGroup.getAggregate('COUNT'), 10) || 0 });
+        }
+
+        // mine
+        var mine = this.listVulnerableItems({ scope: 'me', limit: 1 });
+        var myAgg = new GlideAggregate(this.VIT);
+        myAgg.addQuery('active', true);
+        var grp = this._myGroupIds();
+        var mq = 'assigned_to=' + this.userSysId;
+        if (grp.length) mq += '^ORassignment_groupIN' + grp.join(',');
+        myAgg.addEncodedQuery(mq + '^stateNOT IN' + this.STATE.CLOSED + ',' + this.STATE.RESOLVED);
+        myAgg.addAggregate('COUNT');
+        myAgg.query();
+        out.mine_open = myAgg.next() ? (parseInt(myAgg.getAggregate('COUNT'), 10) || 0) : 0;
+
+        return out;
+    },
+
+    /** Assets (CIs) carrying the most open vulnerable items — the riskiest hosts. */
+    mostVulnerableAssets: function (limit) {
+        var agg = new GlideAggregate(this.VIT);
+        agg.addQuery('active', true);
+        agg.addQuery('state', 'NOT IN', this.STATE.CLOSED + ',' + this.STATE.RESOLVED);
+        agg.addNotNullQuery('cmdb_ci');
+        agg.addAggregate('COUNT');
+        agg.addAggregate('MAX', 'risk_score');
+        agg.groupBy('cmdb_ci');
+        agg.orderByAggregate('COUNT');
+        agg.query();
+        var assets = [];
+        while (agg.next() &amp;&amp; assets.length &lt; (parseInt(limit, 10) || 5)) {
+            assets.push({
+                ci: String(agg.cmdb_ci.getDisplayValue()),
+                open_items: parseInt(agg.getAggregate('COUNT'), 10) || 0,
+                worst_risk: parseInt(agg.getAggregate('MAX', 'risk_score'), 10) || 0,
+                worst_band: this._riskBand(agg.getAggregate('MAX', 'risk_score'))
+            });
+        }
+        return { ok: true, count: assets.length, assets: assets };
+    },
+
+    /** All active vulnerable items on a named asset. */
+    vulnerabilitiesForCI: function (ciName) {
+        if (!ciName) return { ok: false, error: 'Which asset? Give me a host or CI name.' };
+        var gr = new GlideRecord(this.VIT);
+        gr.addQuery('active', true);
+        gr.addQuery('cmdb_ci.name', 'CONTAINS', String(ciName));
+        gr.orderByDesc('risk_score');
+        gr.setLimit(15);
+        gr.query();
+        var items = [];
+        while (gr.next()) items.push(this._shapeVit(gr));
+        return { ok: true, ci: ciName, count: items.length, items: items };
+    },
+
+    // ============================================================
+    //  Actions (mutating — Netra confirms verbally before calling)
+    // ============================================================
+    assignVulnerableItem: function (number, opts) {
+        opts = opts || {};
+        var gr = this._findVit(number);
+        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' not found.' };
+        var msg = [];
+        if (opts.group) {
+            var gg = new GlideRecord('sys_user_group');
+            gg.addQuery('active', true);
+            gg.addEncodedQuery('nameLIKE' + opts.group);
+            gg.setLimit(1); gg.query();
+            if (!gg.next()) return { ok: false, error: 'No group matching "' + opts.group + '".' };
+            gr.assignment_group = String(gg.sys_id);
+            msg.push('group ' + String(gg.name));
+        }
+        if (opts.user) {
+            var u = new GlideRecord('sys_user');
+            u.addQuery('active', true);
+            u.addEncodedQuery('nameLIKE' + opts.user + '^ORuser_nameLIKE' + opts.user + '^ORemailLIKE' + opts.user);
+            u.setLimit(1); u.query();
+            if (!u.next()) return { ok: false, error: 'No user matching "' + opts.user + '".' };
+            gr.assigned_to = String(u.sys_id);
+            msg.push(String(u.name));
+        }
+        if (!msg.length) return { ok: false, error: 'Give me a user or a group to assign to.' };
+        gr.work_notes = '[Netra] Assigned to ' + msg.join(' / ') + ' by ' + this.userName + ' via voice.';
+        gr.update();
+        return { ok: true, number: String(gr.number), message: String(gr.number) + ' assigned to ' + msg.join(' and ') + '.' };
+    },
+
+    setVulnerableItemState: function (number, stateWord, note) {
+        var gr = this._findVit(number);
+        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' not found.' };
+        var st = this.STATE_WORD[String(stateWord || '').toLowerCase()];
+        if (!st) return { ok: false, error: 'I did not recognise the state "' + stateWord + '". Try open, investigate, defer, resolve, or close.' };
+        gr.state = st;
+        if (note) gr.work_notes = '[Netra] ' + note;
+        else gr.work_notes = '[Netra] State set to ' + this.STATE_LABEL[st] + ' by ' + this.userName + ' via voice.';
+        gr.update();
+        return { ok: true, number: String(gr.number), state: this.STATE_LABEL[st], message: String(gr.number) + ' is now ' + this.STATE_LABEL[st] + '.' };
+    },
+
+    deferVulnerableItem: function (number, reason) {
+        if (!reason || String(reason).trim().length &lt; 3) return { ok: false, error: 'Deferring needs a reason for the audit trail. Why are we accepting this risk?' };
+        return this.setVulnerableItemState(number, 'defer', 'Deferred (risk accepted) by ' + this.userName + '. Reason: ' + reason);
+    },
+
+    addVulnerabilityNote: function (number, note) {
+        if (!note || String(note).trim().length &lt; 1) return { ok: false, error: 'The note is empty.' };
+        var gr = this._findVit(number);
+        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' not found.' };
+        gr.work_notes = '[Netra] ' + note;
+        gr.update();
+        return { ok: true, number: String(gr.number), message: 'Note added to ' + String(gr.number) + '.' };
+    },
+
+    // ============================================================
+    //  Utility
+    // ============================================================
+    _stripHtml: function (s) {
+        return String(s || '').replace(/&lt;[^&gt;]+&gt;/g, ' ').replace(/&amp;nbsp;/g, ' ').replace(/&amp;amp;/g, '&amp;').replace(/\s+/g, ' ').trim();
+    },
+
+    type: 'NetraVulnerability'
+};
+]]&gt;&lt;/script&gt;&lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 03:28:40&lt;/sys_created_on&gt;&lt;sys_id&gt;419c876c93428b10e3aef0aefaba1093&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;NetraVulnerability&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_script_include_419c876c93428b10e3aef0aefaba1093&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 03:29:58&lt;/sys_updated_on&gt;&lt;/sys_script_include&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>442413909</payload_hash>
+    <remote_update_set>019c876c93428b10e3aef0aefaba108c</remote_update_set>
+    <replace_on_upgrade>false</replace_on_upgrade>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2026-07-10 03:28:40</sys_created_on>
+    <sys_id>919c876c93428b10e3aef0aefaba10b0</sys_id>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2026-07-10 03:29:58</sys_updated_on>
+    <target_name>NetraVulnerability</target_name>
+    <type>Script Include</type>
+    <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
+    <update_guid>98ecc7acd4428b100cbb4fae86040475</update_guid>
+    <update_guid_history>98ecc7acd4428b100cbb4fae86040475:442413909,999c876c67428b10289d2c03a5c992af:1919062741</update_guid_history>
     <view/>
 </sys_update_xml>
 </unload>

@@ -7,7 +7,7 @@
 //     2. Substitutes the placeholder __NETRA_SCOPE__ in every embedded source
 //        string with the detected scope, then provisions every artifact:
 //          - 5 tables (notification, user_pref, context, watchlist, kb_embedding)
-//          - 9 Script Includes
+//          - 10 Script Includes (incl. NetraVulnerability for VR)
 //          - 1 Business Rule on sys_journal_field
 //          - 1 Scheduled Job ("Netra Watch", every 3 minutes)
 //          - 1 Scripted REST API + 3 resources (command, notifications, ping)
@@ -369,6 +369,7 @@
     upsertScriptInclude('NetraSummarizer', scopeSysId, scope, 'Extractive summary of long text (no LLM).',                         SRC.NetraSummarizer);
     upsertScriptInclude('NetraContext',    scopeSysId, scope, 'Per-user conversational context (last ticket etc.).',               SRC.NetraContext);
     upsertScriptInclude('NetraNavigator',  scopeSysId, scope, 'Resolves spoken destinations to portal URLs.',                      SRC.NetraNavigator);
+    upsertScriptInclude('NetraVulnerability', scopeSysId, scope, 'Vulnerability Response analyst operations: triage, exposure, CVE lookup, assign, state, defer, notes.', SRC.NetraVulnerability);
 
     /* ---- Business Rule ---- */
     say('');
@@ -444,7 +445,13 @@
         'live_group_profile': ['read', 'write', 'create'],
         'live_message': ['read', 'write', 'create'],
         'sys_properties': ['read', 'write'],
-        'sys_user_preference': ['read', 'write', 'create', 'delete']
+        'sys_user_preference': ['read', 'write', 'create', 'delete'],
+        // Vulnerability Response (VR analyst suite)
+        'sn_vul_vulnerable_item': ['read', 'write'],
+        'sn_vul_entry': ['read'],
+        'sn_vul_vulnerability_group': ['read'],
+        'sys_user_grmember': ['read'],
+        'cmdb_ci': ['read']
     };
     var privCreated = 0, privSkipped = 0;
     for (var privTable in privRules) {
