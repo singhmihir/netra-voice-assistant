@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<unload unload_date="2026-07-10 12.30.00">
+<unload unload_date="2026-07-10 12.00.00">
 <sys_remote_update_set action="INSERT_OR_UPDATE">
     <application>26a2121093424710e3aef0aefaba106a</application>
     <application_name>Netra Voice Assistant</application_name>
@@ -178,10 +178,10 @@
     <state>loaded</state>
     <summary/>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>b49a0bf418b063bbd7e97ca67371eefb</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <update_source/>
 </sys_remote_update_set>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -3056,20 +3056,20 @@ NetraScanner.prototype = {
 
     type: 'NetraScanner'
 };
-]]&gt;&lt;/script&gt;&lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:41:39&lt;/sys_created_on&gt;&lt;sys_id&gt;2cb3da9093424710e3aef0aefaba103d&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;NetraScanner&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_script_include_2cb3da9093424710e3aef0aefaba103d&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;/sys_script_include&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-1006159070</payload_hash>
+]]&gt;&lt;/script&gt;&lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:41:39&lt;/sys_created_on&gt;&lt;sys_id&gt;2cb3da9093424710e3aef0aefaba103d&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;NetraScanner&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_script_include_2cb3da9093424710e3aef0aefaba103d&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;/sys_script_include&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1046757473</payload_hash>
     <remote_update_set>bea2961093424710e3aef0aefaba1083</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
     <sys_created_on>2026-07-09 04:41:39</sys_created_on>
     <sys_id>e4b3da9093424710e3aef0aefaba1040</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>NetraScanner</target_name>
     <type>Script Include</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>5c4712a7c4c797c7ecac3e9f787a7255</update_guid>
-    <update_guid_history>5c4712a7c4c797c7ecac3e9f787a7255:-1006159070,20b3da900c4247101cfc4645415a9540:-326054199</update_guid_history>
+    <update_guid>bd6abd3fec88b8784bccc42e876291c2</update_guid>
+    <update_guid_history>bd6abd3fec88b8784bccc42e876291c2:-1046757473,20b3da900c4247101cfc4645415a9540:-326054199</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -3754,20 +3754,20 @@ NetraTools.prototype = {
 
     type: 'NetraTools'
 };
-]]&gt;&lt;/script&gt;&lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:41:39&lt;/sys_created_on&gt;&lt;sys_id&gt;64b3da9093424710e3aef0aefaba1029&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;NetraTools&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_script_include_64b3da9093424710e3aef0aefaba1029&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;/sys_script_include&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-1961865718</payload_hash>
+]]&gt;&lt;/script&gt;&lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:41:39&lt;/sys_created_on&gt;&lt;sys_id&gt;64b3da9093424710e3aef0aefaba1029&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;NetraTools&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_script_include_64b3da9093424710e3aef0aefaba1029&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;/sys_script_include&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-2002464121</payload_hash>
     <remote_update_set>bea2961093424710e3aef0aefaba1083</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
     <sys_created_on>2026-07-09 04:41:39</sys_created_on>
     <sys_id>20b3da9093424710e3aef0aefaba102c</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>NetraTools</target_name>
     <type>Script Include</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>d6c22ae1bf89169c94ea4693de876640</update_guid>
-    <update_guid_history>d6c22ae1bf89169c94ea4693de876640:-1961865718,68b3da9015424710ab2b8770bd56022b:1719347911</update_guid_history>
+    <update_guid>8f073d3af382e80e004fc8202ad733f9</update_guid>
+    <update_guid_history>8f073d3af382e80e004fc8202ad733f9:-2002464121,68b3da9015424710ab2b8770bd56022b:1719347911</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -4443,20 +4443,20 @@ var STOP = {
     return out;
 
 })(request, response);
-]]&gt;&lt;/operation_script&gt;&lt;operation_uri&gt;/api/x_196061_netra_v1/voice/ping&lt;/operation_uri&gt;&lt;produces&gt;application/json,application/xml,text/xml&lt;/produces&gt;&lt;produces_customized&gt;false&lt;/produces_customized&gt;&lt;relative_path&gt;/ping&lt;/relative_path&gt;&lt;request_example/&gt;&lt;requires_acl_authorization&gt;false&lt;/requires_acl_authorization&gt;&lt;requires_authentication&gt;true&lt;/requires_authentication&gt;&lt;requires_snc_internal_role&gt;true&lt;/requires_snc_internal_role&gt;&lt;short_description/&gt;&lt;support_trailing_slash&gt;false&lt;/support_trailing_slash&gt;&lt;sys_class_name&gt;sys_ws_operation&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:41:40&lt;/sys_created_on&gt;&lt;sys_id&gt;f0b3da9093424710e3aef0aefaba10c5&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;ping&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_ws_operation_f0b3da9093424710e3aef0aefaba10c5&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;web_service_definition display_value="Netra Voice"&gt;f8b3da9093424710e3aef0aefaba1066&lt;/web_service_definition&gt;&lt;web_service_version/&gt;&lt;/sys_ws_operation&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>1980454719</payload_hash>
+]]&gt;&lt;/operation_script&gt;&lt;operation_uri&gt;/api/x_196061_netra_v1/voice/ping&lt;/operation_uri&gt;&lt;produces&gt;application/json,application/xml,text/xml&lt;/produces&gt;&lt;produces_customized&gt;false&lt;/produces_customized&gt;&lt;relative_path&gt;/ping&lt;/relative_path&gt;&lt;request_example/&gt;&lt;requires_acl_authorization&gt;false&lt;/requires_acl_authorization&gt;&lt;requires_authentication&gt;true&lt;/requires_authentication&gt;&lt;requires_snc_internal_role&gt;true&lt;/requires_snc_internal_role&gt;&lt;short_description/&gt;&lt;support_trailing_slash&gt;false&lt;/support_trailing_slash&gt;&lt;sys_class_name&gt;sys_ws_operation&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:41:40&lt;/sys_created_on&gt;&lt;sys_id&gt;f0b3da9093424710e3aef0aefaba10c5&lt;/sys_id&gt;&lt;sys_mod_count&gt;1&lt;/sys_mod_count&gt;&lt;sys_name&gt;ping&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_ws_operation_f0b3da9093424710e3aef0aefaba10c5&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;web_service_definition display_value="Netra Voice"&gt;f8b3da9093424710e3aef0aefaba1066&lt;/web_service_definition&gt;&lt;web_service_version/&gt;&lt;/sys_ws_operation&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-1797468254</payload_hash>
     <remote_update_set>72a2961093424710e3aef0aefaba1085</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
     <sys_created_on>2026-07-09 04:41:40</sys_created_on>
     <sys_id>3cb3da9093424710e3aef0aefaba10c7</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>ping</target_name>
     <type>Scripted REST Resource</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>0f140d6e3638dcc19f41361ec302b589</update_guid>
-    <update_guid_history>0f140d6e3638dcc19f41361ec302b589:1980454719,74b3da9006424710d1c8c249565dadc7:-35940464</update_guid_history>
+    <update_guid>3725161452ef36d6c886991bea786ada</update_guid>
+    <update_guid_history>3725161452ef36d6c886991bea786ada:-1797468254,74b3da9006424710d1c8c249565dadc7:-35940464</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -14061,7 +14061,7 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
 })();
-]]&gt;&lt;/script&gt;&lt;servicenow&gt;false&lt;/servicenow&gt;&lt;sys_class_name&gt;sp_widget&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:42:54&lt;/sys_created_on&gt;&lt;sys_id&gt;f2f39ad093424710e3aef0aefaba10b1&lt;/sys_id&gt;&lt;sys_mod_count&gt;2&lt;/sys_mod_count&gt;&lt;sys_name&gt;Netra Mic&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sp_widget_f2f39ad093424710e3aef0aefaba10b1&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;template&gt;&lt;![CDATA[&lt;!--
+]]&gt;&lt;/script&gt;&lt;servicenow&gt;false&lt;/servicenow&gt;&lt;sys_class_name&gt;sp_widget&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-09 04:42:54&lt;/sys_created_on&gt;&lt;sys_id&gt;f2f39ad093424710e3aef0aefaba10b1&lt;/sys_id&gt;&lt;sys_mod_count&gt;2&lt;/sys_mod_count&gt;&lt;sys_name&gt;Netra Mic&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sp_widget_f2f39ad093424710e3aef0aefaba10b1&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;template&gt;&lt;![CDATA[&lt;!--
   Netra Mic widget template - R5 (Claude-of-ServiceNow)
 
   Minimal industry-standard icon. Simple circular eye with
@@ -14574,19 +14574,19 @@ api.controller = function ($scope, $timeout, $window) {
 
 &lt;/div&gt;
 ]]&gt;&lt;/template&gt;&lt;/sp_widget&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>1444891355</payload_hash>
+    <payload_hash>-186857282</payload_hash>
     <remote_update_set>36a2961093424710e3aef0aefaba1086</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
     <sys_created_on>2026-07-10 03:28:41</sys_created_on>
     <sys_id>2d9c876c93428b10e3aef0aefaba10e9</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>Netra Mic</target_name>
     <type>Widget</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>a4a4d0c218efcf3d9dd00a8e493256d8</update_guid>
-    <update_guid_history>a4a4d0c218efcf3d9dd00a8e493256d8:1444891355,a59c876c3c428b103e28cf929f1558e9:-750012083,0bf39ad071424710eeb9014af8f76bb6:-474151877</update_guid_history>
+    <update_guid>0bd964c4b81f0eceac0d9848d6965eae</update_guid>
+    <update_guid_history>0bd964c4b81f0eceac0d9848d6965eae:-186857282,a59c876c3c428b103e28cf929f1558e9:-750012083,0bf39ad071424710eeb9014af8f76bb6:-474151877</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -17220,20 +17220,20 @@ NetraVulnerability.prototype = {
 
     type: 'NetraVulnerability'
 };
-]]&gt;&lt;/script&gt;&lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 03:28:40&lt;/sys_created_on&gt;&lt;sys_id&gt;419c876c93428b10e3aef0aefaba1093&lt;/sys_id&gt;&lt;sys_mod_count&gt;2&lt;/sys_mod_count&gt;&lt;sys_name&gt;NetraVulnerability&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_script_include_419c876c93428b10e3aef0aefaba1093&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;/sys_script_include&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>1160473916</payload_hash>
+]]&gt;&lt;/script&gt;&lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 03:28:40&lt;/sys_created_on&gt;&lt;sys_id&gt;419c876c93428b10e3aef0aefaba1093&lt;/sys_id&gt;&lt;sys_mod_count&gt;2&lt;/sys_mod_count&gt;&lt;sys_name&gt;NetraVulnerability&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_script_include_419c876c93428b10e3aef0aefaba1093&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;/sys_script_include&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1119875513</payload_hash>
     <remote_update_set>019c876c93428b10e3aef0aefaba108c</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
     <sys_created_on>2026-07-10 03:28:40</sys_created_on>
     <sys_id>919c876c93428b10e3aef0aefaba10b0</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>NetraVulnerability</target_name>
     <type>Script Include</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>921616f1bb5125d75b10c5a73e67e8f4</update_guid>
-    <update_guid_history>921616f1bb5125d75b10c5a73e67e8f4:1160473916,98ecc7acd4428b100cbb4fae86040475:442413909,999c876c67428b10289d2c03a5c992af:1919062741</update_guid_history>
+    <update_guid>9ec50cd39f822c3e3ddf0877a2490c4e</update_guid>
+    <update_guid_history>9ec50cd39f822c3e3ddf0877a2490c4e:1119875513,98ecc7acd4428b100cbb4fae86040475:442413909,999c876c67428b10289d2c03a5c992af:1919062741</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
@@ -17575,280 +17575,280 @@ NetraPerformance.prototype = {
 
     type: 'NetraPerformance'
 };
-]]&gt;&lt;/script&gt;&lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;386c30f0fbbedb91fab0d89747437a81&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;NetraPerformance&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_script_include_386c30f0fbbedb91fab0d89747437a81&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;/sys_script_include&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-1783528321</payload_hash>
+]]&gt;&lt;/script&gt;&lt;sys_class_name&gt;sys_script_include&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;386c30f0fbbedb91fab0d89747437a81&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;NetraPerformance&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_script_include_386c30f0fbbedb91fab0d89747437a81&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;/sys_script_include&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1042508857</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>e4e3c7e777c5663f213207799f98a14b</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>NetraPerformance</target_name>
     <type>Script Include</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>bfe687f138468fe95e7da9ee4f2c7040</update_guid>
-    <update_guid_history>bfe687f138468fe95e7da9ee4f2c7040:-1783528321</update_guid_history>
+    <update_guid>2dc6f1b8ee4d9bdd8c9806f99a3a81ce</update_guid>
+    <update_guid_history>2dc6f1b8ee4d9bdd8c9806f99a3a81ce:1042508857</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_properties_b5ac21465bc9bf028135889da208fa4c</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;R5: extra roles (comma list) allowed to READ Vulnerability Response data through Netra, in addition to the standard sn_vul roles.&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.vr_read_roles&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix/&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;b5ac21465bc9bf028135889da208fa4c&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.vr_read_roles&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_b5ac21465bc9bf028135889da208fa4c&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value&gt;&lt;/value&gt;&lt;write_roles/&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=b5ac21465bc9bf028135889da208fa4c"/&gt;&lt;/sys_properties&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-216500190</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;R5: extra roles (comma list) allowed to READ Vulnerability Response data through Netra, in addition to the standard sn_vul roles.&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.vr_read_roles&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix/&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;b5ac21465bc9bf028135889da208fa4c&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.vr_read_roles&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_b5ac21465bc9bf028135889da208fa4c&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value&gt;&lt;/value&gt;&lt;write_roles/&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=b5ac21465bc9bf028135889da208fa4c"/&gt;&lt;/sys_properties&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>4837698</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>dcf6cb18c3bd20598088964fd6cbacf6</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>x_196061_netra_v1.vr_read_roles</target_name>
     <type>System Property</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>9cff65a210063d832a9808171159c421</update_guid>
-    <update_guid_history>9cff65a210063d832a9808171159c421:-216500190</update_guid_history>
+    <update_guid>583f8a3e59d6b9ecfdc4ae1332e0422a</update_guid>
+    <update_guid_history>583f8a3e59d6b9ecfdc4ae1332e0422a:4837698</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_properties_3137769492a451859e96edff73f6a363</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;R5: extra roles (comma list) allowed to CHANGE Vulnerability Response records through Netra, in addition to the standard sn_vul write roles.&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.vr_write_roles&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix/&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;3137769492a451859e96edff73f6a363&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.vr_write_roles&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_3137769492a451859e96edff73f6a363&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value&gt;&lt;/value&gt;&lt;write_roles/&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=3137769492a451859e96edff73f6a363"/&gt;&lt;/sys_properties&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-1526063325</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;R5: extra roles (comma list) allowed to CHANGE Vulnerability Response records through Netra, in addition to the standard sn_vul write roles.&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.vr_write_roles&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix/&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;3137769492a451859e96edff73f6a363&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.vr_write_roles&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_3137769492a451859e96edff73f6a363&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value&gt;&lt;/value&gt;&lt;write_roles/&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=3137769492a451859e96edff73f6a363"/&gt;&lt;/sys_properties&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-96163235</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>96e91b0f021a8c5d9e893286a7b853d4</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>x_196061_netra_v1.vr_write_roles</target_name>
     <type>System Property</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>18f8858342fbeffd7c8a98d57feb255a</update_guid>
-    <update_guid_history>18f8858342fbeffd7c8a98d57feb255a:-1526063325</update_guid_history>
+    <update_guid>56a596e9393697a55f912bfad71c6e78</update_guid>
+    <update_guid_history>56a596e9393697a55f912bfad71c6e78:-96163235</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_properties_7e5fdab68f6fee0727cd6609785e7172</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;R5: extra roles (comma list) allowed to use the read-only instance-health voice tools (default: admin only).&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.perf_read_roles&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix/&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;7e5fdab68f6fee0727cd6609785e7172&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.perf_read_roles&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_7e5fdab68f6fee0727cd6609785e7172&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value&gt;&lt;/value&gt;&lt;write_roles/&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=7e5fdab68f6fee0727cd6609785e7172"/&gt;&lt;/sys_properties&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>1427461901</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;R5: extra roles (comma list) allowed to use the read-only instance-health voice tools (default: admin only).&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.perf_read_roles&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix/&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;7e5fdab68f6fee0727cd6609785e7172&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.perf_read_roles&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_7e5fdab68f6fee0727cd6609785e7172&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value&gt;&lt;/value&gt;&lt;write_roles/&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=7e5fdab68f6fee0727cd6609785e7172"/&gt;&lt;/sys_properties&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1668084589</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>dcb8a95fc5b6864e256d09e38c70c89f</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>x_196061_netra_v1.perf_read_roles</target_name>
     <type>System Property</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>39333b641bea83914884f259c0057c2d</update_guid>
-    <update_guid_history>39333b641bea83914884f259c0057c2d:1427461901</update_guid_history>
+    <update_guid>b5fe6b20753300d3424ffb9e30972e70</update_guid>
+    <update_guid_history>b5fe6b20753300d3424ffb9e30972e70:1668084589</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_properties_66f9b1076c162901c2974590ba4f7fbe</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;R5: fallback age (days) after which an open vulnerable item counts as overdue when the remediation_target field is absent.&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.vr_overdue_days&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix/&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;66f9b1076c162901c2974590ba4f7fbe&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.vr_overdue_days&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_66f9b1076c162901c2974590ba4f7fbe&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value&gt;30&lt;/value&gt;&lt;write_roles/&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=66f9b1076c162901c2974590ba4f7fbe"/&gt;&lt;/sys_properties&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-280541377</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_properties"&gt;&lt;sys_properties action="INSERT_OR_UPDATE"&gt;&lt;choices/&gt;&lt;description&gt;R5: fallback age (days) after which an open vulnerable item counts as overdue when the remediation_target field is absent.&lt;/description&gt;&lt;ignore_cache&gt;false&lt;/ignore_cache&gt;&lt;is_private&gt;false&lt;/is_private&gt;&lt;name&gt;x_196061_netra_v1.vr_overdue_days&lt;/name&gt;&lt;read_roles/&gt;&lt;suffix/&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;66f9b1076c162901c2974590ba4f7fbe&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;x_196061_netra_v1.vr_overdue_days&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_properties_66f9b1076c162901c2974590ba4f7fbe&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;type&gt;string&lt;/type&gt;&lt;value&gt;30&lt;/value&gt;&lt;write_roles/&gt;&lt;sys_translated_text action="delete_multiple" query="documentkey=66f9b1076c162901c2974590ba4f7fbe"/&gt;&lt;/sys_properties&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-970372193</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>2314528bf52814ff3454814102731320</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>x_196061_netra_v1.vr_overdue_days</target_name>
     <type>System Property</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>b6e2a85dfd0c6f0b8c6589ed76a7236c</update_guid>
-    <update_guid_history>b6e2a85dfd0c6f0b8c6589ed76a7236c:-280541377</update_guid_history>
+    <update_guid>82a70f0e742a6729c757e1de49ad7e66</update_guid>
+    <update_guid_history>82a70f0e742a6729c757e1de49ad7e66:-970372193</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_scope_privilege_32d8922a89eac66f2dff66d79c198a7b</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;write&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;32d8922a89eac66f2dff66d79c198a7b&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sn_vul_vulnerability_group&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_32d8922a89eac66f2dff66d79c198a7b&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;target_name&gt;sn_vul_vulnerability_group&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-759465720</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;write&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;32d8922a89eac66f2dff66d79c198a7b&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sn_vul_vulnerability_group&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_32d8922a89eac66f2dff66d79c198a7b&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;target_name&gt;sn_vul_vulnerability_group&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1913762344</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>b9201885bc759bf296300d3ccc8246c9</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>sn_vul_vulnerability_group</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>2a6153dd7281f44fa924ff5e2789a4ad</update_guid>
-    <update_guid_history>2a6153dd7281f44fa924ff5e2789a4ad:-759465720</update_guid_history>
+    <update_guid>4f79dadf13cd641c2f3ab1e3a729ee32</update_guid>
+    <update_guid_history>4f79dadf13cd641c2f3ab1e3a729ee32:1913762344</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_scope_privilege_f72432299507f18beb3705a8f011ae4e</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;f72432299507f18beb3705a8f011ae4e&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;task&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_f72432299507f18beb3705a8f011ae4e&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;target_name&gt;task&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-113853675</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;f72432299507f18beb3705a8f011ae4e&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;task&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_f72432299507f18beb3705a8f011ae4e&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;target_name&gt;task&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-2043250571</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>b096eb9e92bbd350d76c6c9abf19394c</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>task</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>d050a45405ff71e41eb9a447c8313776</update_guid>
-    <update_guid_history>d050a45405ff71e41eb9a447c8313776:-113853675</update_guid_history>
+    <update_guid>01cf17872c23ccdc62394682a1490382</update_guid>
+    <update_guid_history>01cf17872c23ccdc62394682a1490382:-2043250571</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_scope_privilege_5ef2c2a4710597a548d7606ecc5885c8</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;5ef2c2a4710597a548d7606ecc5885c8&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_trigger&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_5ef2c2a4710597a548d7606ecc5885c8&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_trigger&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-1647340217</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;5ef2c2a4710597a548d7606ecc5885c8&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_trigger&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_5ef2c2a4710597a548d7606ecc5885c8&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_trigger&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-544801459</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>d773e392bb651d363bc742169c05fd07</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>sys_trigger</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>459f3663765f2d02a362ac24c6d1d92c</update_guid>
-    <update_guid_history>459f3663765f2d02a362ac24c6d1d92c:-1647340217</update_guid_history>
+    <update_guid>6f108f5f0de23718a380125be3635242</update_guid>
+    <update_guid_history>6f108f5f0de23718a380125be3635242:-544801459</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_scope_privilege_92979b35e6889caf8563e9e06529b049</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;92979b35e6889caf8563e9e06529b049&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sysauto&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_92979b35e6889caf8563e9e06529b049&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;target_name&gt;sysauto&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>1448431955</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;92979b35e6889caf8563e9e06529b049&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sysauto&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_92979b35e6889caf8563e9e06529b049&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;target_name&gt;sysauto&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1357813209</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>fc9a07fe7bfed80a891979f8deb7d7a6</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>sysauto</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>ea6228ed96bd6a233feadb2ac1d340d5</update_guid>
-    <update_guid_history>ea6228ed96bd6a233feadb2ac1d340d5:1448431955</update_guid_history>
+    <update_guid>29cefa12c359011a443e691b255b7770</update_guid>
+    <update_guid_history>29cefa12c359011a443e691b255b7770:1357813209</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_scope_privilege_b5a879fd4fcc966829cd14763e1c8ebb</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;b5a879fd4fcc966829cd14763e1c8ebb&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;syslog_transaction&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_b5a879fd4fcc966829cd14763e1c8ebb&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;target_name&gt;syslog_transaction&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-1445723115</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;b5a879fd4fcc966829cd14763e1c8ebb&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;syslog_transaction&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_b5a879fd4fcc966829cd14763e1c8ebb&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;target_name&gt;syslog_transaction&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-197775307</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>509fa5a3d98ee0e2ec358bcc63212476</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>syslog_transaction</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>6dde590d3655d6d1161803ba5971a5f2</update_guid>
-    <update_guid_history>6dde590d3655d6d1161803ba5971a5f2:-1445723115</update_guid_history>
+    <update_guid>5657edd02133f4e1fa5beb66d92685ac</update_guid>
+    <update_guid_history>5657edd02133f4e1fa5beb66d92685ac:-197775307</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_scope_privilege_67b757c009eb027f604c28440e0f1537</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;67b757c009eb027f604c28440e0f1537&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;scheduled_import_set&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_67b757c009eb027f604c28440e0f1537&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;target_name&gt;scheduled_import_set&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>1610700757</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;67b757c009eb027f604c28440e0f1537&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;scheduled_import_set&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_67b757c009eb027f604c28440e0f1537&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;target_name&gt;scheduled_import_set&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-109924555</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>dd05f9d9ceb48f82e5452300b7520cbb</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>scheduled_import_set</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>3f7d5da0d3d17d7fca8db687df62f8c8</update_guid>
-    <update_guid_history>3f7d5da0d3d17d7fca8db687df62f8c8:1610700757</update_guid_history>
+    <update_guid>f286c745dc5126e211af73476c2fabc9</update_guid>
+    <update_guid_history>f286c745dc5126e211af73476c2fabc9:-109924555</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_scope_privilege_1ecb7dcbb23868dd9a499bade545e812</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;1ecb7dcbb23868dd9a499bade545e812&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_rest_message&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_1ecb7dcbb23868dd9a499bade545e812&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_rest_message&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-872704107</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;1ecb7dcbb23868dd9a499bade545e812&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;sys_rest_message&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_1ecb7dcbb23868dd9a499bade545e812&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;target_name&gt;sys_rest_message&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>2067343477</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>45e33dc32d66ba742b66bc68882603bd</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>sys_rest_message</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>d005917d43adc2d57f21ecaf2e2828a2</update_guid>
-    <update_guid_history>d005917d43adc2d57f21ecaf2e2828a2:-872704107</update_guid_history>
+    <update_guid>01ed7e1b82e486e96c319efa72d81c4d</update_guid>
+    <update_guid_history>01ed7e1b82e486e96c319efa72d81c4d:2067343477</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_scope_privilege_9a61a5bc7c1f646a929cbed8819d5705</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;9a61a5bc7c1f646a929cbed8819d5705&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;ecc_agent&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_9a61a5bc7c1f646a929cbed8819d5705&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;target_name&gt;ecc_agent&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>797219031</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;9a61a5bc7c1f646a929cbed8819d5705&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;ecc_agent&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_9a61a5bc7c1f646a929cbed8819d5705&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;target_name&gt;ecc_agent&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>1141798685</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>91fe17f60fb1ba69c448f2ec1dc84223</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>ecc_agent</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>a4ad183ae302def95d44f3841704bcf6</update_guid>
-    <update_guid_history>a4ad183ae302def95d44f3841704bcf6:797219031</update_guid_history>
+    <update_guid>a5c6d0df3eaa9be5845274b32f58730a</update_guid>
+    <update_guid_history>a5c6d0df3eaa9be5845274b32f58730a:1141798685</update_guid_history>
     <view/>
 </sys_update_xml>
 <sys_update_xml action="INSERT_OR_UPDATE">
     <action>INSERT_OR_UPDATE</action>
     <category>customer</category>
     <name>sys_scope_privilege_f3d9bb97096eda4331770918f595a36d</name>
-    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:30:00&lt;/sys_created_on&gt;&lt;sys_id&gt;f3d9bb97096eda4331770918f595a36d&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;ldap_server_config&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_f3d9bb97096eda4331770918f595a36d&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:30:00&lt;/sys_updated_on&gt;&lt;target_name&gt;ldap_server_config&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
-    <payload_hash>-1371149643</payload_hash>
+    <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sys_scope_privilege"&gt;&lt;sys_scope_privilege action="INSERT_OR_UPDATE"&gt;&lt;operation&gt;read&lt;/operation&gt;&lt;source_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/source_scope&gt;&lt;status&gt;allowed&lt;/status&gt;&lt;sys_class_name&gt;sys_scope_privilege&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-07-10 12:00:00&lt;/sys_created_on&gt;&lt;sys_id&gt;f3d9bb97096eda4331770918f595a36d&lt;/sys_id&gt;&lt;sys_mod_count&gt;0&lt;/sys_mod_count&gt;&lt;sys_name&gt;ldap_server_config&lt;/sys_name&gt;&lt;sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Netra Voice Assistant"&gt;26a2121093424710e3aef0aefaba106a&lt;/sys_scope&gt;&lt;sys_update_name&gt;sys_scope_privilege_f3d9bb97096eda4331770918f595a36d&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-07-10 12:00:00&lt;/sys_updated_on&gt;&lt;target_name&gt;ldap_server_config&lt;/target_name&gt;&lt;target_scope display_value="Global"&gt;global&lt;/target_scope&gt;&lt;target_type&gt;sys_db_object&lt;/target_type&gt;&lt;/sys_scope_privilege&gt;&lt;/record_update&gt;</payload>
+    <payload_hash>-123201835</payload_hash>
     <remote_update_set>b49a0bf418b063bbd7e97ca67371eefb</remote_update_set>
     <replace_on_upgrade>false</replace_on_upgrade>
     <sys_created_by>admin</sys_created_by>
-    <sys_created_on>2026-07-10 12:30:00</sys_created_on>
+    <sys_created_on>2026-07-10 12:00:00</sys_created_on>
     <sys_id>4fde8e5a4a61763a282de7b1f4f80397</sys_id>
     <sys_updated_by>admin</sys_updated_by>
-    <sys_updated_on>2026-07-10 12:30:00</sys_updated_on>
+    <sys_updated_on>2026-07-10 12:00:00</sys_updated_on>
     <target_name>ldap_server_config</target_name>
     <type>Cross scope privilege</type>
     <update_domain>{'link': 'https://dev390397.service-now.com/api/now/table/sys_user_group/global', 'value': 'global'}</update_domain>
-    <update_guid>c9135c0eb13c158ecb2c29420b8dbd15</update_guid>
-    <update_guid_history>c9135c0eb13c158ecb2c29420b8dbd15:-1371149643</update_guid_history>
+    <update_guid>dc370574e1b23880ebab5d31fff52d18</update_guid>
+    <update_guid_history>dc370574e1b23880ebab5d31fff52d18:-123201835</update_guid_history>
     <view/>
 </sys_update_xml>
 </unload>
