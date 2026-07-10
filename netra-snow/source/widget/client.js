@@ -2371,11 +2371,11 @@ api.controller = function ($scope, $timeout, $window) {
             });
         }
         // Step 1: collapse runs of asterisks. **word** -> emphasis sentinel.
-        t = t.replace(/\*\*([^*]+)\*\*/g, 'EM$1/EM');
+        t = t.replace(/\*\*([^*]+)\*\*/g, '\uE000EM\uE000$1\uE000/EM\uE000');
         // Strip any leftover lone asterisks so they don't leak in.
         t = t.replace(/\*/g, '');
         // Step 2: ellipsis = thinking pause (~350ms)
-        t = t.replace(/\.{3,}/g, 'LP');
+        t = t.replace(/\.{3,}/g, '\uE000LP\uE000');
         // Step 3: XML escape everything else
         t = t.replace(/&/g, '&amp;')
              .replace(/</g, '&lt;')
@@ -2391,9 +2391,9 @@ api.controller = function ($scope, $timeout, $window) {
         t = t.replace(/\b(umm+|uhh*|ahh+|hmm+|mm+|well)\b(?=,)/gi,
                       '<prosody pitch="-2st" rate="-15%" volume="-2dB">$1</prosody>');
         // Step 6: expand sentinels
-        t = t.replace(/EM/g, '<emphasis level="strong">');
-        t = t.replace(/\/EM/g, '</emphasis>');
-        t = t.replace(/LP/g, '<break time="380ms"/>');
+        t = t.replace(/\uE000EM\uE000/g, '<emphasis level="strong">');
+        t = t.replace(/\uE000\/EM\uE000/g, '</emphasis>');
+        t = t.replace(/\uE000LP\uE000/g, '<break time="380ms"/>');
         return '<speak version=\'1.0\' xml:lang=\'en-IN\'>' +
                '<voice name=\'' + voice + '\'>' +
                '<prosody rate=\'+0%\' pitch=\'+1st\'>' + t + '</prosody>' +
