@@ -13,4 +13,4 @@ user focused on. Created on demand; one row per user.
 | `focus_sys_id`   | String (32)           | Last record sys_id                             |
 | `focus_number`   | String (32)           | Display number (e.g. INC0001234, KB0010001)    |
 | `focus_set_at`   | Date/Time             | When the focus was set (TTL = 12 h)            |
-| `last_utterance` | String (1000)         | Last spoken reply (for "repeat that")          |
+| `last_utterance` | String (250,000)      | 'CTX:'-prefixed JSON blob: draft, memory, vocab, aliases, sentiment - plus the last spoken reply (for "repeat that") |
