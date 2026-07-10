@@ -12,8 +12,8 @@
 //          - 1 Scheduled Job ("Netra Watch", every 3 minutes)
 //          - 1 Scripted REST API + 3 resources (command, notifications, ping)
 //          - 1 Service Portal Widget (netra-mic)
-//          - 4 scoped system properties (gemini_api_key, gemini_model,
-//            sentiment_llm, notify_author)
+//          - 5 scoped system properties (gemini_api_key, gemini_model,
+//            sentiment_llm, notify_author, ticket_writes)
 //          - Cross-scope privileges for every OOB table Netra touches
 //
 //   Idempotent — re-running updates records in place.
@@ -419,6 +419,7 @@
     upsertProp('gemini_model', 'gemini-flash-lite-latest', 'Primary Gemini model for chat + reasoning. Default tuned for voice-loop latency (~1s). Set to gemini-2.5-flash for richer reasoning at ~2-4s per call.');
     upsertProp('sentiment_llm', 'false', 'When true, refine keyword-detected frustration with an extra Gemini classification call on the reply path (adds ~1-2s on frustrated turns).');
     upsertProp('notify_author', 'false', 'When true, the comment business rule also notifies the comment author.');
+    upsertProp('ticket_writes', 'false', 'Release X ticket safety policy. Netra is READ-ONLY on tickets: creation is permanently disabled, and modification tools (resolve, comment, reassign, priority, field edits) only exist when this is exactly "true". Default false.');
 
     /* ---- Cross-scope privileges ---- */
     say('');

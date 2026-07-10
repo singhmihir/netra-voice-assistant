@@ -1,5 +1,9 @@
 <!--
-  Netra Mic widget template - R5 (Claude-of-ServiceNow)
+  Netra Mic widget template - R6 "Release X" (Claude-of-ServiceNow)
+
+  R6: human turn-taking surfaces - barge-in flash on the orb, periodic
+  eyelid blink so the eye reads as alive, interruption stats + read-only
+  ticket badge in the dev console, refreshed gate copy.
 
   Minimal industry-standard icon. Simple circular eye with
   pulsing halo glow. Default position top-left. Multi-turn
@@ -8,7 +12,7 @@
   Dev console is draggable from its header.
 -->
 <div class="netra-root"
-     ng-class="['netra-state-' + c.state]"
+     ng-class="['netra-state-' + c.state, {'netra-barged': c.bargeFlash}]"
      role="region"
      aria-label="Netra voice assistant">
 
@@ -46,7 +50,8 @@
           <circle cx="14.2" cy="14.2" r="1" fill="#fff" opacity="0.9"/>
         </svg>
         <span class="netra-dev-word">NETRA</span>
-        <span class="netra-dev-badge-vr">R5 · VR</span>
+        <span class="netra-dev-badge-vr">R6 · RELEASE X</span>
+        <span class="netra-dev-badge-ro" title="Ticket safety policy: Netra never creates or modifies tickets">TICKETS: READ-ONLY</span>
       </span>
       <span class="netra-dev-live" ng-class="{'on': c.recRunning}" title="Recognition {{c.recRunning ? 'running' : 'stopped'}}" aria-hidden="true"></span>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
@@ -98,6 +103,10 @@
       <div><span>errors</span><b ng-class="{'l-err': c.stats.errors > 0}">{{c.stats.errors || 0}}</b></div>
       <div><span>last model</span><b>{{c.stats.lastModel || '-'}}</b></div>
       <div><span>last latency</span><b>{{c.stats.lastLatencyMs ? (c.stats.lastLatencyMs + ' ms') : '-'}}</b></div>
+      <!-- R6 - human turn-taking telemetry -->
+      <div><span>barge-ins</span><b ng-class="{'on': c.stats.barges > 0}">{{c.stats.barges || 0}}</b></div>
+      <div><span>backchannels</span><b>{{c.stats.backchannels || 0}}</b></div>
+      <div><span>ticket mode</span><b class="ro">read-only</b></div>
     </section>
 
     <!-- R1 - REAL-TIME GRAPHS -->
@@ -245,6 +254,7 @@
       <span class="seg"><span class="seg-key">LV</span><span class="seg-val">{{c.micLevel || 0}}</span></span>
       <span class="seg" ng-show="c.stats.lastLatencyMs"><span class="seg-key">LAT</span><span class="seg-val">{{c.stats.lastLatencyMs}}ms</span></span>
       <span class="seg" ng-show="c.stats.lastModel && c.stats.lastModel !== '-'"><span class="seg-key">MODEL</span><span class="seg-val">{{c.stats.lastModel}}</span></span>
+      <span class="seg" ng-show="c.stats.barges > 0"><span class="seg-key">BRG</span><span class="seg-val">{{c.stats.barges}}</span></span>
       <span class="seg" ng-show="c.stats.errors > 0" ng-class="{'warn': c.stats.errors > 0}"><span class="seg-key">ERR</span><span class="seg-val">{{c.stats.errors}}</span></span>
     </footer>
   </div>
@@ -505,6 +515,11 @@
 
       <!-- Eyelid (only used in dormant state - covers iris when closed) -->
       <circle class="netra-eye-lid-top" cx="60" cy="60" r="50" fill="#0a1a14" opacity="0"/>
+      <!-- R6 - involuntary blink: a second lid that flicks closed for
+           ~140ms on a long randomized-feeling cycle (CSS keyframes), so
+           the eye reads as alive rather than painted. Hidden in dormant
+           (the main lid is already down). -->
+      <circle class="netra-eye-blink" cx="60" cy="60" r="50" fill="#0a1a14" opacity="0"/>
     </svg>
   </button>
 
@@ -527,7 +542,7 @@
     </span>
     <span class="netra-gate-text">
       <strong>Press here to start Netra</strong>
-      <span>Always listening. Just speak naturally. Say "stop listening" to pause.</span>
+      <span>Talk naturally - you can interrupt her any time, just start speaking. Say "stop listening" to pause.</span>
     </span>
   </button>
 

@@ -1393,3 +1393,62 @@
     .netra-dev  { width: calc(100vw - 24px); }
     .netra-dev-actions { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ============================================================
+ *  R6 "Release X" - HUMAN TURN-TAKING SURFACES
+ * ============================================================ */
+
+/* Involuntary blink. The legacy eye-blink-top animation translated a
+ * lid whose opacity is 0, so it never rendered; this dedicated layer
+ * actually shows. Slow cycle awake, slightly quicker while thinking,
+ * suppressed in dormant/error (the main lid or state already covers). */
+.netra-eye-blink { pointer-events: none; }
+.netra-state-idle .netra-eye-blink,
+.netra-state-awaiting .netra-eye-blink,
+.netra-state-listening .netra-eye-blink {
+    animation: netra-blink 7.3s ease-in-out infinite;
+}
+.netra-state-thinking .netra-eye-blink {
+    animation: netra-blink 4.7s ease-in-out infinite;
+}
+@keyframes netra-blink {
+    0%, 95.4%, 100% { opacity: 0; }
+    96.4%, 98.0%    { opacity: 0.92; }
+}
+
+/* Barge-in yield flash: one quick violet ripple through the halo the
+ * moment Netra stops for the user - "go ahead, I am listening". */
+.netra-barged .netra-eye-halo {
+    animation: netra-yield-flash 0.7s ease-out 1;
+}
+.netra-barged .netra-eye-sphere {
+    animation: netra-yield-dip 0.7s ease-out 1;
+}
+@keyframes netra-yield-flash {
+    0%   { opacity: 1;    r: 58px; }
+    30%  { opacity: 0.35; r: 66px; }
+    100% { opacity: 1;    r: 58px; }
+}
+@keyframes netra-yield-dip {
+    0%   { filter: brightness(1); }
+    25%  { filter: brightness(1.5) saturate(0.7); }
+    100% { filter: brightness(1); }
+}
+
+/* Read-only ticket badge in the dev console header */
+.netra-dev-badge-ro {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #9fe8c0;
+    background: rgba(46, 184, 88, 0.12);
+    border: 1px solid rgba(46, 184, 88, 0.45);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+/* Monitor tab: turn-taking telemetry rows */
+.netra-dev-status b.ro { color: #9fe8c0; }
+.netra-dev-status b.on { color: #c660ff; }
