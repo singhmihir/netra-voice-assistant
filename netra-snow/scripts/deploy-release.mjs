@@ -98,6 +98,9 @@ async function main() {
           'Human turn-taking (barge-in, interjections, turn epochs, pipelined TTS), read-only ticket safety policy, ' +
           'expanded conversation limits, violet voice-ring brand identity.',
       })).result;
+      // ServiceNow overrides `application` on insert with the session's
+      // current application picker - re-assert the Netra app explicitly.
+      await sn('PATCH', `/api/now/table/sys_update_set/${us.sys_id}`, { application: app.sys_id });
       log(`Created update set "${RELEASE_NAME}" [${us.sys_id}]`);
     }
   } else {
