@@ -868,8 +868,45 @@ api.controller = function ($scope, $timeout, $window) {
     // (log line "Manifest: property 'start_url' ignored, URL is invalid").
     // Build all URLs against window.location.origin.
     var _PWA_ORIGIN   = (window.location.origin || '');
-    var PWA_ICON_URL  = _PWA_ORIGIN + '/sys_attachment.do?sys_id=a73423ab9370c350936af0a75d03d62e';
-    var PWA_BADGE_URL = _PWA_ORIGIN + '/sys_attachment.do?sys_id=1144e32393b0c350936af0a75d03d62d';
+    // R5 - refreshed to the on-brand violet Netra app-tile (green iris + violet voice-ring)
+    var PWA_ICON_URL  = _PWA_ORIGIN + '/sys_attachment.do?sys_id=81b10af0930ecb10e3aef0aefaba1073';
+    var PWA_BADGE_URL = _PWA_ORIGIN + '/sys_attachment.do?sys_id=edb1c634930ecb10e3aef0aefaba10de';
+    // R5 - self-contained browser favicon (the Service Portal tab otherwise
+    // shows the generic ServiceNow globe). Inline SVG data URI, no attachment
+    // dependency: the violet voice-ring + green Netra eye, matching the orb.
+    function _installFavicon() {
+        try {
+            var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+                '<defs>' +
+                '<radialGradient id="fi" cx="38%" cy="34%" r="66%">' +
+                '<stop offset="0%" stop-color="#eafff2"/><stop offset="18%" stop-color="#7fffb0"/>' +
+                '<stop offset="55%" stop-color="#2eb858"/><stop offset="100%" stop-color="#021a0d"/>' +
+                '</radialGradient>' +
+                '<linearGradient id="fr" x1="0" y1="0" x2="1" y2="1">' +
+                '<stop offset="0%" stop-color="#8b3df0"/><stop offset="55%" stop-color="#c660ff"/>' +
+                '<stop offset="72%" stop-color="#ffb84d"/><stop offset="100%" stop-color="#6920b8"/>' +
+                '</linearGradient></defs>' +
+                '<rect width="64" height="64" rx="15" fill="#12081f"/>' +
+                '<g fill="none" stroke="url(#fr)" stroke-width="3.4" stroke-linecap="round" opacity="0.95">' +
+                '<path d="M12 32 A20 20 0 0 1 32 12"/><path d="M52 32 A20 20 0 0 1 32 52"/></g>' +
+                '<path d="M14 32 Q32 16 50 32 Q32 48 14 32 Z" fill="#0a0614" stroke="#d8c8ff" stroke-width="2.4" stroke-linejoin="round"/>' +
+                '<circle cx="32" cy="32" r="11.5" fill="url(#fi)"/>' +
+                '<circle cx="32" cy="32" r="4.6" fill="#001a0a"/>' +
+                '<circle cx="28.5" cy="28.5" r="1.9" fill="#fff" opacity="0.9"/></svg>';
+            var href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+            var prior = document.querySelectorAll('link[rel~="icon"], link[data-netra-fav]');
+            for (var i = 0; i < prior.length; i++) prior[i].parentNode.removeChild(prior[i]);
+            var link = document.createElement('link');
+            link.rel = 'icon';
+            link.type = 'image/svg+xml';
+            link.href = href;
+            link.setAttribute('data-netra-fav', '1');
+            document.head.appendChild(link);
+        } catch (e) {
+            logEvent('pwa', 'favicon install failed: ' + (e && e.message ? e.message : e));
+        }
+    }
+
     function _installPWA() {
         try {
             if (document.querySelector('link[data-netra-pwa]')) return;
@@ -932,6 +969,7 @@ api.controller = function ($scope, $timeout, $window) {
     c.$onInit = function () {
         setState('boot');
         logEvent('init', 'controller v8 booting, SR=' + c.hasSR + ' TTS=' + c.hasTTS + ' GrammarList=' + !!SGL);
+        _installFavicon();
         _installPWA();
 
         if (c.hasTTS) {

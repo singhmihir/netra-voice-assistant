@@ -34,17 +34,22 @@ inside a Deloitte engagement:
 mark. Deloitte's brand guidelines explicitly prohibit derivative
 fusions, and so does this repo.
 
-## Colours
+## Colours (R5 — aligned to the live orb)
+
+The icon and app tile now mirror the widget's own palette: a green iris
+sphere with a case-hardened **violet** voice ring (the signature Netra look),
+not the earlier flat blue.
 
 | Token | Hex | Use |
 |---|---|---|
-| Netra Navy | `#0E2E7A` | Wordmark, eye outline |
-| Netra Blue | `#1A56DB` | Iris, primary CTA |
-| Netra Sky  | `#3B82F6` | Iris highlight |
-| Voice Green| `#22B573` | Sound-wave accent |
-| Pupil      | `#0A1530` | Pupil |
-| Slate      | `#475569` | Tagline / secondary text |
-| Surface    | `#F8FAFC` | Light background |
+| Iris Bright | `#7FFFB0` | Iris highlight / sound-wave accent |
+| Iris Mid    | `#2EB858` | Iris body |
+| Iris Deep   | `#021A0D` | Iris core |
+| Voice Violet| `#8B3DF0` | Voice ring, dev-panel accent, primary CTA |
+| Voice Magenta| `#C660FF` | Voice ring mid-tone / wordmark gradient |
+| Heat Amber  | `#FFB84D` | Voice-ring heat-treatment patch, "R5 · VR" badge |
+| Lilac       | `#D8C8FF` | Eye lids, wordmark, DEV badge text |
+| Tile        | `#12081F` | App-tile / dev-panel backdrop |
 
 ## Regenerating the PNGs
 
