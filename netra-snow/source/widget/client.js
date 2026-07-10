@@ -1,5 +1,11 @@
 /**
- * Netra Mic widget - CLIENT CONTROLLER (Release 2 - web + in-tab control)
+ * Netra Mic widget - CLIENT CONTROLLER (R5 - VR analyst expansion)
+ *
+ * R5 adds: spoken VIT / CVE number normalization ("v i t two three four
+ *   five" -> VIT0002345, "cve 2021 44228" -> CVE-2021-44228),
+ *   vulnerability + instance-health vocabulary in the JSGF recognition
+ *   grammar, and VR-flavored thinking fillers. Recognition lifecycle,
+ *   TTS engines, and notification polling are untouched in R5.
  *
  * R2 adds: web search via DuckDuckGo + Wikipedia, in-SP-tab navigation,
  *   in-SP-tab button click by label, faster Gemini round-trips through
@@ -793,6 +799,9 @@ api.controller = function ($scope, $timeout, $window) {
         out = out.replace(/\b[sS][\s.,]+[cC][\s.,]+[tT][\s.,]+[aA][\s.,]+[sS][\s.,]+[kK]\b/g, 'SCTASK');
         out = out.replace(/\b[pP][\s.,]+[rR][\s.,]+[bB]\b/g, 'PRB');
         out = out.replace(/\b[kK][\s.,]+[bB]\b/g, 'KB');
+        // R5 - Vulnerability Response prefixes spoken letter-by-letter
+        out = out.replace(/\b[vV][\s.,]+[iI][\s.,]+[tT]\b/g, 'VIT');
+        out = out.replace(/\b[cC][\s.,]+[vV][\s.,]+[eE]\b/g, 'CVE');
 
         // common misheard prefixes
         out = out.replace(/\bink\b/gi, 'INC');
@@ -810,15 +819,22 @@ api.controller = function ($scope, $timeout, $window) {
         out = out.replace(/\bproblem\s+(\d+)\b/gi, function(_,d){return 'PRB' + d;});
         out = out.replace(/\brequest\s+(\d+)\b/gi, function(_,d){return 'REQ' + d;});
         out = out.replace(/\b(?:knowledge|article|kbase)\s+(\d+)\b/gi, function(_,d){return 'KB' + d;});
+        // R5 - "vulnerable item 2345" / "vit 2345" -> VIT0002345
+        out = out.replace(/\b(?:vulnerable\s+item|vulnerability\s+item|vit)\s+(\d+)\b/gi, function(_,d){return 'VIT' + d;});
 
         // coalesce PREFIX + digits possibly separated by spaces
-        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK)\s*([\d\s]+)/g, function (_, prefix, digits) {
+        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK|VIT)\s*([\d\s]+)/g, function (_, prefix, digits) {
             var cleaned = digits.replace(/\s+/g,'');
             // pad to 7 digits for ticket-like prefixes
-            if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB|REQ|TASK)$/.test(prefix)) {
+            if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB|REQ|TASK|VIT)$/.test(prefix)) {
                 while (cleaned.length < 7) cleaned = '0' + cleaned;
             }
             return prefix + cleaned;
+        });
+
+        // R5 - CVE identifiers: "CVE 2021 44228" / "cve-2021-44228" -> CVE-2021-44228
+        out = out.replace(/\bCVE[\s\-.]*(\d{4})[\s\-.]+(\d{3,7})\b/gi, function (_, y, n) {
+            return 'CVE-' + y + '-' + n;
         });
 
         return out.trim();
@@ -1861,13 +1877,17 @@ api.controller = function ($scope, $timeout, $window) {
                     'pause | resume | stop | sleep | wake | wake up | listen | restart | repeat | again ;\n' +
                 'public <noun> = ticket | tickets | incident | incidents | issue | issues | problem | ' +
                     'request | change | approval | approvals | task | knowledge | base | article | articles | ' +
-                    'KB | INC | CHG | RITM | SCTASK | PRB | ' +
+                    'KB | INC | CHG | RITM | SCTASK | PRB | VIT | CVE | ' +
+                    'vulnerability | vulnerabilities | vulnerable item | vulnerable items | ' +
+                    'risk | risk score | exposure | remediation | patch | asset | assets | ' +
+                    'false positive | triage | queue | aging | scheduled job | scheduled jobs | integration | integrations | ' +
                     'status | state | priority | impact | severity | urgency | assignee | watcher | ' +
                     'VPN | email | password | network | computer | laptop | monitor | keyboard | wifi | server | ' +
                     'account | access | login | reset | unlock | enable | disable ;\n' +
                 'public <modifier> = urgent | critical | high | medium | low | normal | ' +
                     'P1 | P2 | P3 | P4 | priority one | priority two | priority three | ' +
                     'open | closed | resolved | pending | new | in progress | assigned | ' +
+                    'deferred | overdue | remediate | remediated | defer | investigate | ' +
                     'today | yesterday | this week | last week ;\n' +
                 'public <digit> = zero | one | two | three | four | five | six | seven | eight | nine | ' +
                     'ten | eleven | twelve | thirteen | fourteen | fifteen | sixteen | seventeen | eighteen | nineteen | ' +
@@ -2875,7 +2895,12 @@ api.controller = function ($scope, $timeout, $window) {
         'Let me check on that quickly, should only take a moment.',
         'Just a moment please, I am getting that sorted out for you.',
         'Hang on for a second, I am cross-checking the details right now.',
-        'Alright, looking into that for you, should have it shortly.'
+        'Alright, looking into that for you, should have it shortly.',
+        // R5 - VR analyst flavored (MEDIUM)
+        'Checking the vulnerability queue now.',
+        'Scanning the risk data, one moment.',
+        'Let me pull the exposure numbers.',
+        'Digging into the security backlog for you.'
     ];
     var fillerCache = [];   // [{url, text}]
     var lastFillerPlayedAt = 0;
