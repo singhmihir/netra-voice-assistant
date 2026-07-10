@@ -210,11 +210,13 @@ async function main() {
   const capturedNames = (captured.result || []).map((r) => r.name);
   log(`\nCaptured in "${RELEASE_NAME}": ${capturedNames.length} update records`);
 
-  // Adopt strays: writes that ServiceNow tracked into some other set in
-  // this window (e.g. the scope's Default set if the preference did not
-  // apply to the API session) are moved into the release set.
+  // Adopt strays: writes that ServiceNow tracked into some other set of
+  // THIS app in this window (e.g. the scope's Default set if the
+  // preference did not apply to the API session) are moved into the
+  // release set. Tracked-update names are "<table>_<sys_id>", so match by
+  // the owning application, not by name.
   const strays = await sn('GET',
-    `/api/now/table/sys_update_xml?sysparm_query=update_set!=${us.sys_id}^sys_updated_on>=${encodeURIComponent(startedAt)}^nameLIKEnetra^ORnameLIKENetra&sysparm_fields=sys_id,name,update_set&sysparm_limit=200`);
+    `/api/now/table/sys_update_xml?sysparm_query=update_set!=${us.sys_id}^update_set.application=${app.sys_id}^sys_updated_on>=${encodeURIComponent(startedAt)}&sysparm_fields=sys_id,name,update_set&sysparm_limit=200`);
   for (const s of strays.result || []) {
     await sn('PATCH', `/api/now/table/sys_update_xml/${s.sys_id}`, { update_set: us.sys_id });
     log(`  adopted stray update: ${s.name}`);
@@ -231,16 +233,73 @@ async function main() {
     log(`\nUpdate set "${RELEASE_NAME}" marked COMPLETE.`);
   }
   if (EXPORT_FILE) {
-    const res = await fetch(`${INSTANCE}/export_update_set.do?sysparm_sys_id=${us.sys_id}`, {
-      headers: { Authorization: AUTH },
-    });
-    const xml = await res.text();
-    if (res.ok && xml.includes('<unload')) {
-      writeFileSync(EXPORT_FILE, xml);
-      log(`Exported update set XML -> ${EXPORT_FILE} (${(xml.length / 1024).toFixed(0)} KB)`);
-    } else {
-      log(`!! export endpoint returned ${res.status}; XML not saved`);
+    // The export_update_set.do processor refuses basic auth, so build the
+    // retrieved-update-set XML ourselves from REST data. The layout mirrors
+    // a real instance export (see update-set/Netra_v2.0.0-R4.7_Batch.xml):
+    // one <sys_remote_update_set> header + one <sys_update_xml> per update,
+    // with remote_update_set pointing at the header's sys_id.
+    const esc = (v) => String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+    const tag = (k, v) => (v == null || v === '') ? `    <${k}/>` : `    <${k}>${esc(v)}</${k}>`;
+
+    const setFull = (await sn('GET', `/api/now/table/sys_update_set/${us.sys_id}`)).result;
+    const updates = (await sn('GET',
+      `/api/now/table/sys_update_xml?sysparm_query=update_set=${us.sys_id}&sysparm_limit=500`)).result || [];
+
+    const now = new Date().toISOString().replace('T', ' ').replace(/:\d+\.\d+Z$/, m => m.slice(0, 3)).slice(0, 19);
+    const lines = [];
+    lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+    lines.push(`<unload unload_date="${now.replace(/:/g, '.')}">`);
+    lines.push('<sys_remote_update_set action="INSERT_OR_UPDATE">');
+    lines.push(tag('application', app.sys_id));
+    lines.push(tag('application_name', app.name));
+    lines.push(tag('application_scope', SCOPE));
+    lines.push(tag('application_version', '3.0.0'));
+    lines.push(tag('collisions', ''));
+    lines.push(tag('commit_date', ''));
+    lines.push(tag('description', setFull.description));
+    lines.push(tag('name', setFull.name));
+    lines.push(tag('origin_sys_id', us.sys_id));
+    lines.push(tag('release_date', ''));
+    lines.push(tag('remote_base_update_set', ''));
+    lines.push(tag('remote_parent_id', ''));
+    lines.push(tag('remote_sys_id', us.sys_id));
+    lines.push(tag('state', 'loaded'));
+    lines.push(tag('summary', ''));
+    lines.push(tag('sys_created_by', setFull.sys_created_by));
+    lines.push(tag('sys_created_on', setFull.sys_created_on));
+    lines.push(tag('sys_id', us.sys_id));
+    lines.push(tag('sys_updated_by', setFull.sys_updated_by));
+    lines.push(tag('sys_updated_on', setFull.sys_updated_on));
+    lines.push(tag('update_source', ''));
+    lines.push('</sys_remote_update_set>');
+    for (const u of updates) {
+      lines.push('<sys_update_xml action="INSERT_OR_UPDATE">');
+      lines.push(tag('action', u.action));
+      lines.push(tag('category', u.category));
+      lines.push(tag('name', u.name));
+      lines.push(tag('payload', u.payload));
+      lines.push(tag('payload_hash', u.payload_hash));
+      lines.push(tag('remote_update_set', us.sys_id));
+      lines.push(tag('replace_on_upgrade', u.replace_on_upgrade));
+      lines.push(tag('sys_created_by', u.sys_created_by));
+      lines.push(tag('sys_created_on', u.sys_created_on));
+      lines.push(tag('sys_id', u.sys_id));
+      lines.push(tag('sys_updated_by', u.sys_updated_by));
+      lines.push(tag('sys_updated_on', u.sys_updated_on));
+      lines.push(tag('target_name', u.target_name));
+      lines.push(tag('type', u.type));
+      lines.push(tag('update_domain', (u.update_domain && u.update_domain.value) || u.update_domain));
+      lines.push(tag('update_guid', u.update_guid));
+      lines.push(tag('update_guid_history', u.update_guid_history));
+      lines.push(tag('view', u.view));
+      lines.push('</sys_update_xml>');
     }
+    lines.push('</unload>');
+    const xml = lines.join('\n') + '\n';
+    writeFileSync(EXPORT_FILE, xml);
+    log(`Exported update set XML -> ${EXPORT_FILE} (${(xml.length / 1024).toFixed(0)} KB, ${updates.length} updates)`);
   }
   log('\nDeploy complete.');
 }
