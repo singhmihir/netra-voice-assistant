@@ -1,5 +1,28 @@
 /**
- * Netra Mic widget - CLIENT CONTROLLER (Release 2 - web + in-tab control)
+ * Netra Mic widget - CLIENT CONTROLLER (R6 "Release X" - human turn-taking)
+ *
+ * R6 adds true two-way interruption, like talking to a person:
+ *   - BARGE-IN: the mic stays hot while Netra speaks; her own voice is
+ *     rejected by token-overlap echo scoring, genuine user speech stops
+ *     her audio in ~100ms ("stop"/"wait" yield instantly, any sentence
+ *     interrupts). Interim speech ducks her volume so she audibly gives
+ *     way before you even finish.
+ *   - INTERJECTIONS: soft listener backchannels ("mm-hmm") during long
+ *     user turns, a single gentle nudge when her question goes
+ *     unanswered, and a polite "sorry to cut in" preface when a
+ *     notification lands mid-conversation.
+ *   - TURN EPOCHS: a reply that arrives after you interrupted its
+ *     question is kept in history but never spoken over you.
+ *   - PIPELINED EDGE TTS: long replies stream sentence-by-sentence, so
+ *     speech starts ~2-4x sooner and can be interrupted mid-stream.
+ *   - Humanized delivery: automatic contractions, adaptive command
+ *     debounce (short commands fire ~0.5s faster), expanded transcript
+ *     and history limits, universal Escape/stop silencer.
+ *
+ * R5 adds: spoken VIT / CVE number normalization ("v i t two three four
+ *   five" -> VIT0002345, "cve 2021 44228" -> CVE-2021-44228),
+ *   vulnerability + instance-health vocabulary in the JSGF recognition
+ *   grammar, and VR-flavored thinking fillers.
  *
  * R2 adds: web search via DuckDuckGo + Wikipedia, in-SP-tab navigation,
  *   in-SP-tab button click by label, faster Gemini round-trips through
@@ -57,6 +80,15 @@ api.controller = function ($scope, $timeout, $window) {
     var MIN_LENGTH          = 3;      // ignore utterances shorter than this many chars
     var RESTART_DELAY       = 250;    // ms before reopening recognition after onend
     var TTS_GUARD_MS        = 350;    // ignore mic finals this long after TTS ends
+    // R6 - human turn-taking. While Netra speaks the mic stays HOT: finals
+    // are no longer blanket-dropped for 15s; instead each one is scored
+    // against what she is saying (echo) vs genuine user speech (barge-in).
+    var BARGE_GUARD_MS      = 450;    // settle time after TTS starts before barge-in arms
+    var BARGE_MIN_CHARS     = 8;      // substantive interrupt needs at least this much text
+    var BARGE_MIN_CONF      = 0.30;   // reject noise-floor "speech" as interrupts
+    var ECHO_OVERLAP_RATIO  = 0.72;   // >= this token overlap with her own words = echo
+    var BACKCHANNEL_GAP_MS  = 15000;  // at most one "mm-hmm" per this window
+    var REPROMPT_AFTER_MS   = 9000;   // gentle nudge if her question goes unanswered
     var REMOTE_TTS_DEFAULT  = true;   // free StreamElements Raveena by default
     var REMOTE_TTS_VOICE    = 'Raveena';  // Indian English female (free, no API key)
 
@@ -793,6 +825,9 @@ api.controller = function ($scope, $timeout, $window) {
         out = out.replace(/\b[sS][\s.,]+[cC][\s.,]+[tT][\s.,]+[aA][\s.,]+[sS][\s.,]+[kK]\b/g, 'SCTASK');
         out = out.replace(/\b[pP][\s.,]+[rR][\s.,]+[bB]\b/g, 'PRB');
         out = out.replace(/\b[kK][\s.,]+[bB]\b/g, 'KB');
+        // R5 - Vulnerability Response prefixes spoken letter-by-letter
+        out = out.replace(/\b[vV][\s.,]+[iI][\s.,]+[tT]\b/g, 'VIT');
+        out = out.replace(/\b[cC][\s.,]+[vV][\s.,]+[eE]\b/g, 'CVE');
 
         // common misheard prefixes
         out = out.replace(/\bink\b/gi, 'INC');
@@ -810,15 +845,22 @@ api.controller = function ($scope, $timeout, $window) {
         out = out.replace(/\bproblem\s+(\d+)\b/gi, function(_,d){return 'PRB' + d;});
         out = out.replace(/\brequest\s+(\d+)\b/gi, function(_,d){return 'REQ' + d;});
         out = out.replace(/\b(?:knowledge|article|kbase)\s+(\d+)\b/gi, function(_,d){return 'KB' + d;});
+        // R5 - "vulnerable item 2345" / "vit 2345" -> VIT0002345
+        out = out.replace(/\b(?:vulnerable\s+item|vulnerability\s+item|vit)\s+(\d+)\b/gi, function(_,d){return 'VIT' + d;});
 
         // coalesce PREFIX + digits possibly separated by spaces
-        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK)\s*([\d\s]+)/g, function (_, prefix, digits) {
+        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK|VIT)\s*([\d\s]+)/g, function (_, prefix, digits) {
             var cleaned = digits.replace(/\s+/g,'');
             // pad to 7 digits for ticket-like prefixes
-            if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB|REQ|TASK)$/.test(prefix)) {
+            if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB|REQ|TASK|VIT)$/.test(prefix)) {
                 while (cleaned.length < 7) cleaned = '0' + cleaned;
             }
             return prefix + cleaned;
+        });
+
+        // R5 - CVE identifiers: "CVE 2021 44228" / "cve-2021-44228" -> CVE-2021-44228
+        out = out.replace(/\bCVE[\s\-.]*(\d{4})[\s\-.]+(\d{3,7})\b/gi, function (_, y, n) {
+            return 'CVE-' + y + '-' + n;
         });
 
         return out.trim();
@@ -852,8 +894,45 @@ api.controller = function ($scope, $timeout, $window) {
     // (log line "Manifest: property 'start_url' ignored, URL is invalid").
     // Build all URLs against window.location.origin.
     var _PWA_ORIGIN   = (window.location.origin || '');
-    var PWA_ICON_URL  = _PWA_ORIGIN + '/sys_attachment.do?sys_id=a73423ab9370c350936af0a75d03d62e';
-    var PWA_BADGE_URL = _PWA_ORIGIN + '/sys_attachment.do?sys_id=1144e32393b0c350936af0a75d03d62d';
+    // R5 - refreshed to the on-brand violet Netra app-tile (green iris + violet voice-ring)
+    var PWA_ICON_URL  = _PWA_ORIGIN + '/sys_attachment.do?sys_id=81b10af0930ecb10e3aef0aefaba1073';
+    var PWA_BADGE_URL = _PWA_ORIGIN + '/sys_attachment.do?sys_id=edb1c634930ecb10e3aef0aefaba10de';
+    // R5 - self-contained browser favicon (the Service Portal tab otherwise
+    // shows the generic ServiceNow globe). Inline SVG data URI, no attachment
+    // dependency: the violet voice-ring + green Netra eye, matching the orb.
+    function _installFavicon() {
+        try {
+            var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+                '<defs>' +
+                '<radialGradient id="fi" cx="38%" cy="34%" r="66%">' +
+                '<stop offset="0%" stop-color="#eafff2"/><stop offset="18%" stop-color="#7fffb0"/>' +
+                '<stop offset="55%" stop-color="#2eb858"/><stop offset="100%" stop-color="#021a0d"/>' +
+                '</radialGradient>' +
+                '<linearGradient id="fr" x1="0" y1="0" x2="1" y2="1">' +
+                '<stop offset="0%" stop-color="#8b3df0"/><stop offset="55%" stop-color="#c660ff"/>' +
+                '<stop offset="72%" stop-color="#ffb84d"/><stop offset="100%" stop-color="#6920b8"/>' +
+                '</linearGradient></defs>' +
+                '<rect width="64" height="64" rx="15" fill="#12081f"/>' +
+                '<g fill="none" stroke="url(#fr)" stroke-width="3.4" stroke-linecap="round" opacity="0.95">' +
+                '<path d="M12 32 A20 20 0 0 1 32 12"/><path d="M52 32 A20 20 0 0 1 32 52"/></g>' +
+                '<path d="M14 32 Q32 16 50 32 Q32 48 14 32 Z" fill="#0a0614" stroke="#d8c8ff" stroke-width="2.4" stroke-linejoin="round"/>' +
+                '<circle cx="32" cy="32" r="11.5" fill="url(#fi)"/>' +
+                '<circle cx="32" cy="32" r="4.6" fill="#001a0a"/>' +
+                '<circle cx="28.5" cy="28.5" r="1.9" fill="#fff" opacity="0.9"/></svg>';
+            var href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+            var prior = document.querySelectorAll('link[rel~="icon"], link[data-netra-fav]');
+            for (var i = 0; i < prior.length; i++) prior[i].parentNode.removeChild(prior[i]);
+            var link = document.createElement('link');
+            link.rel = 'icon';
+            link.type = 'image/svg+xml';
+            link.href = href;
+            link.setAttribute('data-netra-fav', '1');
+            document.head.appendChild(link);
+        } catch (e) {
+            logEvent('pwa', 'favicon install failed: ' + (e && e.message ? e.message : e));
+        }
+    }
+
     function _installPWA() {
         try {
             if (document.querySelector('link[data-netra-pwa]')) return;
@@ -916,6 +995,7 @@ api.controller = function ($scope, $timeout, $window) {
     c.$onInit = function () {
         setState('boot');
         logEvent('init', 'controller v8 booting, SR=' + c.hasSR + ' TTS=' + c.hasTTS + ' GrammarList=' + !!SGL);
+        _installFavicon();
         _installPWA();
 
         if (c.hasTTS) {
@@ -935,6 +1015,7 @@ api.controller = function ($scope, $timeout, $window) {
         $timeout(tryBoot, 600);
         $timeout(startMicLevelMeter, 1000);   // R1.2 - mic-level live VU
         $timeout(preloadFillers, 2500);       // R1.6 - thinking-cue cache
+        $timeout(preloadBackchannels, 3600);  // R6 - listener acknowledgements
     };
 
     c.$onDestroy = function () {
@@ -1585,14 +1666,41 @@ api.controller = function ($scope, $timeout, $window) {
                 var conf = (res[0] && res[0].confidence) || 0;
                 if (!res.isFinal) {
                     c.interim = t;
+                    // R6 - live turn-taking on interim speech:
+                    //  - while Netra speaks, duck her voice if this doesn't
+                    //    look like her own echo (she audibly gives way);
+                    //  - while SHE is quiet and the user holds a long turn,
+                    //    drop a soft listener backchannel.
+                    if (_speakingNow && t.trim().length >= 10 && !_looksLikeEcho(t)) {
+                        _duckForInterim();
+                    }
+                    if (!_speakingNow) {
+                        if (!_interimSpeechStart) _interimSpeechStart = Date.now();
+                        else if (Date.now() - _interimSpeechStart > 4000) {
+                            _maybeBackchannel();
+                            _interimSpeechStart = Date.now();   // rearm window
+                        }
+                    }
+                    _cancelReprompt();   // user is talking - no nudge needed
                     $scope.$applyAsync();
                     continue;
                 }
                 c.interim = '';
-                // Ignore echoes of Netra's own TTS
+                _interimSpeechStart = 0;
+                // R6 - hard guard only for the first ~450ms of TTS (audio
+                // ramp / AEC settle). Beyond that the mic stays HOT and
+                // every final is echo-scored instead of blanket-dropped.
                 if (Date.now() < ignoreFinalsUntil) {
                     logEvent('rec.echo', '"' + t.trim() + '" (ignored - within TTS guard)');
                     continue;
+                }
+                // R6 - BARGE-IN: Netra currently holds the floor (speaking,
+                // or filler chain running while she thinks). Score this
+                // final: her own echo is dropped; a reflex "stop" yields
+                // instantly; substantive user speech stops her audio and
+                // falls through to be processed as the next command.
+                if (_speakingNow || _fillerChainActive || currentFillerAudio || currentFillerUtter) {
+                    if (_handleFinalWhileSpeaking(t, conf)) continue;
                 }
                 // R2.2 - pick the best alternative against personal vocab
                 var picked = pickBestAlternative(res);
@@ -1861,13 +1969,17 @@ api.controller = function ($scope, $timeout, $window) {
                     'pause | resume | stop | sleep | wake | wake up | listen | restart | repeat | again ;\n' +
                 'public <noun> = ticket | tickets | incident | incidents | issue | issues | problem | ' +
                     'request | change | approval | approvals | task | knowledge | base | article | articles | ' +
-                    'KB | INC | CHG | RITM | SCTASK | PRB | ' +
+                    'KB | INC | CHG | RITM | SCTASK | PRB | VIT | CVE | ' +
+                    'vulnerability | vulnerabilities | vulnerable item | vulnerable items | ' +
+                    'risk | risk score | exposure | remediation | patch | asset | assets | ' +
+                    'false positive | triage | queue | aging | scheduled job | scheduled jobs | integration | integrations | ' +
                     'status | state | priority | impact | severity | urgency | assignee | watcher | ' +
                     'VPN | email | password | network | computer | laptop | monitor | keyboard | wifi | server | ' +
                     'account | access | login | reset | unlock | enable | disable ;\n' +
                 'public <modifier> = urgent | critical | high | medium | low | normal | ' +
                     'P1 | P2 | P3 | P4 | priority one | priority two | priority three | ' +
                     'open | closed | resolved | pending | new | in progress | assigned | ' +
+                    'deferred | overdue | remediate | remediated | defer | investigate | ' +
                     'today | yesterday | this week | last week ;\n' +
                 'public <digit> = zero | one | two | three | four | five | six | seven | eight | nine | ' +
                     'ten | eleven | twelve | thirteen | fourteen | fifteen | sixteen | seventeen | eighteen | nineteen | ' +
@@ -1936,6 +2048,18 @@ api.controller = function ($scope, $timeout, $window) {
     var _finalConfs   = [];
     var _finalTimer   = null;
     var FINAL_DEBOUNCE_MS = 1300;
+    // R6 - adaptive debounce: short punchy commands ("list my tickets")
+    // don't deserve the full 1.3s wait for possible continuation. Flush
+    // fast when the buffer looks complete; keep the long window only for
+    // flowing dictation. This alone shaves ~half a second off every
+    // simple voice command.
+    function _adaptiveDebounceMs() {
+        var joined = _finalBuffer.join(' ').trim();
+        var words = joined ? joined.split(/\s+/).length : 0;
+        if (/[.!?]$/.test(joined)) return 650;      // recognizer heard a full stop
+        if (words > 0 && words <= 6) return 850;    // short command shape
+        return FINAL_DEBOUNCE_MS;                    // long dictation - be patient
+    }
     function _enqueueFinalTranscript(text, conf) {
         if (!text || !text.trim()) return;
         _finalBuffer.push(text.trim());
@@ -1946,7 +2070,7 @@ api.controller = function ($scope, $timeout, $window) {
         c.interim = _finalBuffer.join(' ');
         $scope.$applyAsync();
         if (_finalTimer) $timeout.cancel(_finalTimer);
-        _finalTimer = $timeout(_flushFinalBuffer, FINAL_DEBOUNCE_MS);
+        _finalTimer = $timeout(_flushFinalBuffer, _adaptiveDebounceMs());
     }
     function _flushFinalBuffer() {
         if (_finalTimer) { $timeout.cancel(_finalTimer); _finalTimer = null; }
@@ -1971,11 +2095,11 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     function processFinalTranscript(text, conf) {
-        // R4.5 - cap merged transcript to 4000 chars. The debounce buffer
-        // can join many isFinal fragments and each downstream regex pass
-        // (matchSleep, matchesWake, applyAliases, normalizeNumbers, etc.)
-        // scales linearly with input length.
-        var clean = (text || '').trim().substring(0, 4000);
+        // R4.5 - cap merged transcript. The debounce buffer can join many
+        // isFinal fragments and each downstream regex pass scales linearly
+        // with input length. R6: 4000 -> 12000 so long dictations survive
+        // (the server now accepts 16000).
+        var clean = (text || '').trim().substring(0, 12000);
         if (!clean) return;
         var lower = clean.toLowerCase();
         c.lastHeard  = clean;
@@ -2147,6 +2271,20 @@ api.controller = function ($scope, $timeout, $window) {
      *  SERVER ROUND-TRIP
      * ============================================================ */
     function handleHeard(transcript) {
+        // R6 - one chat on the wire at a time. If the user barged in while
+        // the previous turn was still thinking, hold the newest utterance
+        // and fire it the moment the in-flight call settles (its reply is
+        // already stale via the turn epoch, so it won't be spoken).
+        if (_chatInFlight) {
+            _queuedUtterance = transcript;
+            logEvent('srv', 'queued (chat in flight): "' + transcript + '"');
+            tone([620], 0.05);   // soft tick: "got it, one moment"
+            return;
+        }
+        _chatInFlight = true;
+        var myEpoch = ++_turnEpoch;
+        _cancelReprompt();
+
         setState('thinking');
         cue('think');
         logEvent('srv', 'sending: "' + transcript + '"');
@@ -2163,7 +2301,14 @@ api.controller = function ($scope, $timeout, $window) {
         }
 
         var hung = $timeout(function () {
-            logEvent('warn', 'server >18s, may be hung - speak again to retry');
+            // R6 - release the turn on a hung transport. _chatInFlight would
+            // otherwise gate every new utterance into the queue forever
+            // (SP's server.update() has no client timeout). If the promise
+            // settles later its reply is epoch-stale only if the user has
+            // spoken again - otherwise it still speaks, same as pre-R6.
+            logEvent('warn', 'server >18s, may be hung - releasing turn so new commands flow');
+            _chatInFlight = false;
+            _drainQueuedUtterance();
         }, 18000);
 
         var startedAt = Date.now();   // R1 - latency tracking
@@ -2177,6 +2322,11 @@ api.controller = function ($scope, $timeout, $window) {
         c.server.update().then(
             function () {
                 $timeout.cancel(hung);
+                _chatInFlight = false;
+                // R6 - a barge-in after this call went out makes the reply
+                // stale: keep its history + stats, but never speak it over
+                // the user's newer request.
+                var stale = (myEpoch !== _turnEpoch);
                 // R1 - record latency + model + tools used
                 var elapsed = Date.now() - startedAt;
                 c.stats.lastLatencyMs = elapsed;
@@ -2200,7 +2350,8 @@ api.controller = function ($scope, $timeout, $window) {
                         geminiHistory = [];
                     }
                     // R2 - act on client directives from tools
-                    if (r.directives) {
+                    // R6 - never act on directives from a barged (stale) turn
+                    if (r.directives && !stale) {
                         if (r.directives.navigate_url) {
                             logEvent('nav', 'navigating to ' + r.directives.navigate_url);
                             $timeout(function () {
@@ -2242,10 +2393,18 @@ api.controller = function ($scope, $timeout, $window) {
                     c.stats.errors++;
                     setState('error');
                     stopFillerChain();
-                    speak('Sorry, the server returned an empty response.');
+                    speak('Sorry, the server returned an empty response.', function () {
+                        _drainQueuedUtterance();   // R6 - don't drop a barged request
+                    });
                     return;
                 }
                 if (Array.isArray(r.history)) geminiHistory = r.history;
+                if (stale) {
+                    logEvent('barge', 'reply arrived after barge-in - kept in history, not spoken');
+                    lastReply = r.message || lastReply;
+                    _drainQueuedUtterance();
+                    return;
+                }
                 if (r.ok) {
                     lastReply = r.message || '';
                     logEvent('srv', 'reply ok (' + lastReply.length + ' chars, ' + elapsed + ' ms)' + (r.model_used ? ' via ' + r.model_used : ''));
@@ -2255,6 +2414,9 @@ api.controller = function ($scope, $timeout, $window) {
                             setState('idle');
                             openConversation('after server reply');
                         }
+                        // R6 - if she asked a question, wait then nudge once
+                        _armReprompt(r.message);
+                        _drainQueuedUtterance();
                     });
                 } else {
                     logEvent('err', 'server says: ' + (r.message || 'unknown error'));
@@ -2263,11 +2425,13 @@ api.controller = function ($scope, $timeout, $window) {
                     cue('error');
                     deliverServerReply(r.message || 'Sorry, something went wrong.', function () {
                         if (c.alert) setState('idle');
+                        _drainQueuedUtterance();
                     });
                 }
             },
             function (err) {
                 $timeout.cancel(hung);
+                _chatInFlight = false;
                 c.stats.errors++;
                 setState('error');
                 cue('error');
@@ -2275,9 +2439,285 @@ api.controller = function ($scope, $timeout, $window) {
                 stopFillerChain();
                 speak('Sorry, I could not reach the server.', function () {
                     if (c.alert) setState('idle');
+                    _drainQueuedUtterance();
                 });
             }
         );
+    }
+
+    // R6 - fire the utterance that was queued while a chat was in flight.
+    function _drainQueuedUtterance() {
+        if (!_queuedUtterance) return;
+        var q = _queuedUtterance;
+        _queuedUtterance = null;
+        logEvent('srv', 'draining queued utterance: "' + q + '"');
+        $timeout(function () { handleHeard(q); }, 80);
+    }
+
+    /* ============================================================
+     *  R6 - HUMAN TURN-TAKING ENGINE
+     *
+     *  Three behaviours that make the conversation feel human:
+     *
+     *  1. BARGE-IN (user interrupts Netra). The old design deafened
+     *     the mic for 15s whenever TTS played. Now the mic stays hot:
+     *     every final that arrives while Netra is speaking is scored
+     *     for token overlap against her own current sentence(s). High
+     *     overlap = her own echo -> dropped. Low overlap = the user
+     *     talking over her -> her audio stops within ~100ms and the
+     *     utterance is processed as the next command. Short reflex
+     *     words ("stop", "wait", "hold on") yield instantly even at
+     *     one word. Interim (non-final) speech ducks her volume so
+     *     she audibly "gives way" while you're still mid-sentence.
+     *
+     *  2. INTERJECTION (Netra interrupts you, politely). While you
+     *     hold the floor for a long stretch she drops soft
+     *     backchannels ("mm-hmm", "right") like a human listener.
+     *     If she asked a question and hears nothing for a while she
+     *     nudges once, gently. Urgent notifications get a courteous
+     *     "sorry to cut in" preface instead of barging cold.
+     *
+     *  3. TURN EPOCHS. Every user turn bumps an epoch counter; a
+     *     barge-in bumps it again. A server reply that lands with a
+     *     stale epoch is applied to history but never spoken - so
+     *     answering an interrupted question never talks over the new
+     *     one.
+     * ============================================================ */
+    var _speakingNow    = false;   // any Netra audio actually playing
+    var _speakingSince  = 0;
+    var _speakingText   = '';      // what she is saying (for echo scoring)
+    var _fillerEchoText = '';      // last filler/backchannel line (also echo-scored)
+    var _turnEpoch      = 0;       // bumped per user turn AND per barge-in
+    var _chatInFlight   = false;
+    var _queuedUtterance = null;   // barge-in that arrived while a chat was in flight
+    var _speakSessionId = 0;       // aborts the pipelined-TTS queue on stop
+    var _duckedForBarge = false;
+    var _duckRestoreTimer = null;
+    var _lastBackchannelAt = 0;
+    var _interimSpeechStart = 0;
+    var _repromptTimer  = null;
+    var _repromptArmed  = false;
+
+    // Reflex interrupts - yield immediately even on a single word.
+    var HARD_INTERRUPT_RE = /^(netra[,!.\s]*)?(stop|wait|hold on|hang on|one sec(ond)?|shut up|be quiet|quiet|silence|pause|enough|okay okay|ok ok|no no|never ?mind|ruko|chup|bas)[.!,?\s]*$/i;
+
+    function _normTokens(s) {
+        return String(s || '').toLowerCase()
+            .replace(/[^a-z0-9\s']/g, ' ')
+            .split(/\s+/)
+            .filter(function (w) { return w.length > 1; });
+    }
+
+    // Score a heard final against what Netra is currently saying (plus the
+    // last filler line). High overlap means the mic picked up her own voice.
+    function _looksLikeEcho(heard) {
+        var heardToks = _normTokens(heard);
+        if (!heardToks.length) return true;   // nothing substantive
+        var own = {};
+        _normTokens(_speakingText).forEach(function (w) { own[w] = 1; });
+        _normTokens(_fillerEchoText).forEach(function (w) { own[w] = 1; });
+        var hits = 0;
+        for (var i = 0; i < heardToks.length; i++) if (own[heardToks[i]]) hits++;
+        var ratio = hits / heardToks.length;
+        // 1-2 word fragments that all appear in her sentence are echo
+        if (heardToks.length <= 2 && ratio >= 0.99) return true;
+        return ratio >= ECHO_OVERLAP_RATIO;
+    }
+
+    function _markSpeaking(text) {
+        _speakingNow   = true;
+        _speakingSince = Date.now();
+        if (text) _speakingText = String(text);
+        // Brief absolute guard while the audio ramps + AEC converges;
+        // after this the echo-scorer takes over (mic stays hot).
+        ignoreFinalsUntil = Date.now() + BARGE_GUARD_MS;
+    }
+
+    function _clearSpeaking() {
+        _speakingNow = false;
+        ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
+        _restoreDuck();
+    }
+
+    // Universal silencer - every engine, every filler, the pipeline queue.
+    function stopSpeaking(reason) {
+        _speakSessionId++;                      // aborts pipelined sentence queue
+        _turnEpoch++;                           // any in-flight reply is now stale
+        stopFillerChain();
+        if (currentAudio) {
+            // Detach the engine's handlers FIRST: setting src='' fires an
+            // async 'error' event, and the classic engines' onerror is
+            // their fallback-RESPEAK path - without this, every barge on a
+            // short reply re-spoke the stale text via the next engine and
+            // incremented the persisted circuit breaker.
+            try {
+                currentAudio.onended = null;
+                currentAudio.onerror = null;
+                currentAudio.onplaying = null;
+                currentAudio.pause();
+                currentAudio.src = '';
+            } catch (e) {}
+            try { detachOutputAnalyser(currentAudio); } catch (e) {}
+            currentAudio = null;
+        }
+        if (TTS && (TTS.speaking || TTS.pending)) {
+            try { TTS.cancel(); } catch (e) {}
+        }
+        _clearSpeaking();
+        _cancelReprompt();
+        c.stats.barges = (c.stats.barges || 0) + 1;
+        // R6 - orb feedback: quick violet flash so a sighted helper sees
+        // the yield too (the falling tone covers the blind user).
+        c.bargeFlash = true;
+        $timeout(function () { c.bargeFlash = false; }, 700);
+        logEvent('barge', 'yielded (' + reason + ')');
+        tone([440, 330], 0.07);                 // tiny falling blip: "go ahead" (dur is SECONDS)
+        if (c.state === 'speaking' || c.state === 'thinking') {
+            setState(c.alert ? 'idle' : 'dormant');
+        }
+        if (c.alert && !c.conversationOpen) openConversation('post barge-in');
+        $scope.$applyAsync();
+    }
+
+    // Interim speech while Netra talks -> duck her voice so she audibly
+    // gives way. Restored if the final turns out to be her own echo.
+    function _duckForInterim() {
+        if (!_speakingNow || _duckedForBarge) return;
+        if (currentAudio) {
+            _duckedForBarge = true;
+            try { currentAudio.volume = 0.25; } catch (e) {}
+            logEvent('barge', 'ducking - user speaking over me');
+        }
+        if (_duckRestoreTimer) $timeout.cancel(_duckRestoreTimer);
+        _duckRestoreTimer = $timeout(_restoreDuck, 1600);
+    }
+    function _restoreDuck() {
+        if (_duckRestoreTimer) { $timeout.cancel(_duckRestoreTimer); _duckRestoreTimer = null; }
+        if (!_duckedForBarge) return;
+        _duckedForBarge = false;
+        if (currentAudio) { try { currentAudio.volume = 1.0; } catch (e) {} }
+    }
+
+    // Decide what to do with a FINAL that arrived while Netra holds the
+    // floor (speaking, or filler chain running). Returns true when the
+    // final was consumed (echo or reflex-stop); false = process normally.
+    function _handleFinalWhileSpeaking(t, conf) {
+        var trimmed = String(t || '').trim();
+        if (!trimmed) return true;
+        if (_looksLikeEcho(trimmed)) {
+            logEvent('rec.echo', '"' + trimmed + '" (my own voice, overlap-matched)');
+            _restoreDuck();
+            return true;
+        }
+        if (HARD_INTERRUPT_RE.test(trimmed)) {
+            stopSpeaking('reflex "' + trimmed + '"');
+            _dropFinalBuffer('reflex interrupt');
+            return true;
+        }
+        var words = trimmed.split(/\s+/).length;
+        if (trimmed.length < BARGE_MIN_CHARS || words < 2 || (conf > 0 && conf < BARGE_MIN_CONF)) {
+            logEvent('rec.echo', '"' + trimmed + '" (too weak to barge: conf=' + (conf || 0).toFixed(2) + ')');
+            return true;
+        }
+        // Genuine barge-in: yield the floor, let the utterance flow on
+        // into the normal pipeline as the next command.
+        stopSpeaking('user barge-in');
+        return false;
+    }
+
+    /* ---- Netra-side interjections ---------------------------------- */
+    var BACKCHANNEL_PHRASES = ['Mm-hmm.', 'Right.', 'Okay...', 'Hmm.', 'Got it.'];
+    var backchannelCache = [];   // [{url, text}]
+    function preloadBackchannels() {
+        if (typeof WebSocket === 'undefined') return;
+        if (_edgeFails >= REMOTE_FAIL_LIMIT) return;
+        BACKCHANNEL_PHRASES.forEach(function (p) {
+            _edgeBlob(p, c.edgeVoice, function (blob) {
+                if (blob) backchannelCache.push({ url: URL.createObjectURL(blob), text: p });
+            });
+        });
+    }
+    // Soft listener acknowledgement while the user holds a long turn.
+    // Never fires while Netra speaks or thinks; throttled hard.
+    function _maybeBackchannel() {
+        if (!c.alert) return;
+        if (_speakingNow || c.state === 'thinking' || c.state === 'speaking') return;
+        if (!backchannelCache.length) return;
+        if (Date.now() - _lastBackchannelAt < BACKCHANNEL_GAP_MS) return;
+        _lastBackchannelAt = Date.now();
+        var pick = backchannelCache[Math.floor(Math.random() * backchannelCache.length)];
+        _fillerEchoText = pick.text;
+        var a = new Audio(pick.url);
+        a.volume = 0.38;   // an aside, not a statement
+        c.stats.backchannels = (c.stats.backchannels || 0) + 1;
+        logEvent('barge', 'backchannel: "' + pick.text + '"');
+        a.play().catch(function () {});
+    }
+
+    // If Netra asked a question and the user goes quiet, nudge ONCE.
+    function _repromptPhrases() {
+        var first = String(c.data && c.data.user_name || '').split(' ')[0];
+        return [
+            'Take your time... I am listening.',
+            'Still here whenever you are ready.',
+            first ? ('No rush, ' + first + '... I am with you.') : 'No rush... I am with you.'
+        ];
+    }
+    function _armReprompt(replyText) {
+        _cancelReprompt();
+        if (!/\?\s*$/.test(String(replyText || '').trim())) return;
+        _repromptArmed = true;
+        _repromptTimer = $timeout(function () {
+            if (!_repromptArmed || !c.alert) return;
+            if (_speakingNow || c.state === 'thinking' || c.state === 'speaking') return;
+            _repromptArmed = false;
+            var bank = _repromptPhrases();
+            var line = bank[Math.floor(Math.random() * bank.length)];
+            logEvent('barge', 'reprompt nudge');
+            speak(line);
+        }, REPROMPT_AFTER_MS);
+    }
+    function _cancelReprompt() {
+        _repromptArmed = false;
+        if (_repromptTimer) { $timeout.cancel(_repromptTimer); _repromptTimer = null; }
+    }
+
+    /* ---- R6 - text humanizer (contractions before TTS) -------------- */
+    // The prompt asks the model for contractions, but tool-generated and
+    // fallback strings still arrive stiff. Contract them just before
+    // synthesis so every engine (edge/gemini/stream/browser) benefits.
+    var _CONTRACTION_PAIRS = [
+        // [pattern, replacement, guardTail]  guardTail=true only contracts
+        // when a word follows (avoids "yes, it's." at clause end).
+        ['cannot', "can't", false],       ['can not', "can't", false],
+        ['will not', "won't", false],     ['do not', "don't", false],
+        ['does not', "doesn't", false],   ['did not', "didn't", false],
+        ['would not', "wouldn't", false], ['should not', "shouldn't", false],
+        ['could not', "couldn't", false], ['is not', "isn't", false],
+        ['are not', "aren't", false],     ['was not', "wasn't", false],
+        ['were not', "weren't", false],   ['has not', "hasn't", false],
+        ['have not', "haven't", false],   ['let us', "let's", false],
+        ['I will', "I'll", false],        ['I am', "I'm", true],
+        ['I have', "I've", true],         ['I would', "I'd", true],
+        ['you will', "you'll", false],    ['you are', "you're", true],
+        ['you have', "you've", true],     ['we will', "we'll", false],
+        ['we are', "we're", true],        ['we have', "we've", true],
+        ['they are', "they're", true],    ['it is', "it's", true],
+        ['that is', "that's", true],      ['there is', "there's", true]
+    ];
+    function _humanizeReply(text) {
+        var out = String(text || '');
+        for (var i = 0; i < _CONTRACTION_PAIRS.length; i++) {
+            var p = _CONTRACTION_PAIRS[i];
+            var re = new RegExp('\\b' + p[0].replace(/ /g, '\\s+') + '\\b' + (p[2] ? '(?=\\s+\\w)' : ''), 'gi');
+            out = out.replace(re, function (m) {
+                // preserve leading capitalization of the original match
+                return m.charAt(0) === m.charAt(0).toUpperCase()
+                    ? p[1].charAt(0).toUpperCase() + p[1].slice(1)
+                    : p[1];
+            });
+        }
+        return out;
     }
 
     /* ============================================================
@@ -2298,13 +2738,19 @@ api.controller = function ($scope, $timeout, $window) {
         // R3.8 - preserve **word** markdown (used for SSML emphasis on Edge
         // TTS) but strip everything else. The c.spoken display still gets
         // the fully-cleaned version so the dev panel reads naturally.
-        var clean = String(text)
+        // R6 - _humanizeReply first: contractions make every engine less stiff.
+        var clean = _humanizeReply(String(text))
             .replace(/```[\s\S]*?```/g, ' ')
             .replace(/[_`#>]/g, '')           // strip _ ` # > only - keep *
             .replace(/\s+/g, ' ')
             .trim();
         c.spoken = clean.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*/g, '');
         $scope.$applyAsync();
+
+        // R6 - register what she is about to say for the echo-scorer and
+        // clear any pending question-nudge (she is taking the floor).
+        _markSpeaking(c.spoken);
+        _cancelReprompt();
 
         // R1: wrap the done callback so state ALWAYS resets to idle/dormant
         // after TTS finishes - prevents "stuck in speaking" bug.
@@ -2318,12 +2764,147 @@ api.controller = function ($scope, $timeout, $window) {
         if (engine === 'gemini') {
             speakGemini(clean, wrappedDone);
         } else if (engine === 'edge') {
-            speakEdgeTTS(clean, wrappedDone);
+            // R6 - long replies stream sentence-by-sentence: first audio in
+            // ~1 synth round-trip instead of waiting for the whole reply.
+            if (clean.length > 220) speakEdgePipelined(clean, wrappedDone);
+            else speakEdgeTTS(clean, wrappedDone);
         } else if (engine === 'stream') {
             speakStreamElements(clean, wrappedDone);
         } else {
             speakBrowser(clean, wrappedDone);
         }
+    }
+
+    /* ============================================================
+     *  R6 - PIPELINED EDGE TTS (sentence-streamed speech)
+     *
+     *  Splits the reply into sentence groups (~<=200 chars), synthesizes
+     *  group 1 immediately and starts playing it while group 2 renders in
+     *  the background - so long answers begin in the time it takes to
+     *  synthesize ONE sentence. Prosody stays natural because breaks land
+     *  on real sentence boundaries. A bumped _speakSessionId (barge-in /
+     *  stop) abandons the queue instantly. Any synth failure falls back
+     *  to the classic single-shot path for the remaining text.
+     * ============================================================ */
+    function _splitSentenceGroups(text, maxLen) {
+        var sentences = String(text || '').match(/[^.!?]+[.!?]+["']?\s*|[^.!?]+$/g) || [String(text || '')];
+        var groups = [], cur = '';
+        for (var i = 0; i < sentences.length; i++) {
+            var s = sentences[i];
+            if (cur && (cur.length + s.length) > maxLen) { groups.push(cur.trim()); cur = s; }
+            else cur += s;
+        }
+        if (cur.trim()) groups.push(cur.trim());
+        return groups;
+    }
+
+    function speakEdgePipelined(text, done) {
+        if (_edgeFails >= REMOTE_FAIL_LIMIT || typeof WebSocket === 'undefined') {
+            return speakEdgeTTS(text, done);
+        }
+        var session = ++_speakSessionId;
+        var groups = _splitSentenceGroups(text, 200);
+        if (groups.length <= 1) return speakEdgeTTS(text, done);
+
+        setState('speaking');
+        var blobs = new Array(groups.length);   // null=pending, false=failed, Blob=ready
+        var waiters = new Array(groups.length);
+        groups.forEach(function (g, i) {
+            blobs[i] = null;
+            _edgeSsmlBlob(g, c.edgeVoice, function (blob) {
+                blobs[i] = blob || false;
+                if (waiters[i]) { var w = waiters[i]; waiters[i] = null; w(); }
+            });
+        });
+        logEvent('tts', 'edge-pipeline: ' + groups.length + ' segments (' + text.length + ' chars)');
+
+        var idx = 0;
+        function playNext() {
+            if (session !== _speakSessionId) return;                 // barged / stopped
+            if (idx >= groups.length) { _clearSpeaking(); if (done) done(); return; }
+            var i = idx++;
+            var ready = function () {
+                if (session !== _speakSessionId) return;
+                if (blobs[i] === false) {
+                    // synth failed - speak the rest via the classic path
+                    var rest = groups.slice(i).join(' ');
+                    logEvent('warn', 'edge-pipeline segment ' + (i + 1) + ' failed - single-shot fallback for rest');
+                    return speakEdgeTTS(rest, done);
+                }
+                var url = URL.createObjectURL(blobs[i]);
+                var audio = new Audio(url);
+                audio.playbackRate = 1.15;
+                audio.volume = _duckedForBarge ? 0.25 : 1.0;
+                currentAudio = audio;
+                attachOutputAnalyser(audio);
+                // NOTE: _speakingText deliberately stays the FULL reply
+                // (set by speak() -> _markSpeaking). Recognizer finals lag
+                // real audio by 0.5-2s, so at segment boundaries the echo
+                // of the PREVIOUS segment must still score as echo -
+                // scoring against only the current segment made her
+                // interrupt herself mid-reply.
+                _speakingNow = true;
+                // One advance per segment, no matter how many of ended /
+                // error / play()-rejection fire (a bad blob fires both
+                // error AND the rejection - unguarded, that double-walked
+                // the queue and double-fired done()).
+                var segSettled = false;
+                var advanceOnce = function () {
+                    if (segSettled) return;
+                    segSettled = true;
+                    detachOutputAnalyser(audio);
+                    URL.revokeObjectURL(url);
+                    if (currentAudio === audio) currentAudio = null;
+                    playNext();
+                };
+                audio.onended = advanceOnce;
+                audio.onerror = advanceOnce;
+                audio.play().catch(advanceOnce);
+            };
+            if (blobs[i] !== null) ready();
+            else waiters[i] = ready;
+        }
+        playNext();
+    }
+
+    // SSML-aware variant of _edgeBlob: same WSS transport, but runs the
+    // text through _buildHumanSSML so pipelined segments keep the stress /
+    // breath / hesitation prosody of the single-shot path.
+    function _edgeSsmlBlob(text, voice, cb) {
+        try {
+            var requestId = _edgeConnectId();
+            var ws = new WebSocket(EDGE_WSS_URL + '&ConnectionId=' + requestId);
+            ws.binaryType = 'arraybuffer';
+            var chunks = [];
+            var settled = false;
+            var watchdog = $timeout(function () {
+                if (!settled) { settled = true; try { ws.close(); } catch (e) {} cb(null); }
+            }, 6000);
+            ws.onopen = function () {
+                var cfg = '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
+                ws.send('X-Timestamp:' + new Date().toISOString() + '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' + cfg);
+                var ssml = _buildHumanSSML(text, voice || c.edgeVoice);
+                ws.send('X-RequestId:' + requestId + '\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:' + new Date().toISOString() + '\r\nPath:ssml\r\n\r\n' + ssml);
+            };
+            ws.onmessage = function (ev) {
+                if (typeof ev.data === 'string') {
+                    if (ev.data.indexOf('Path:turn.end') >= 0) {
+                        try { ws.close(); } catch (e) {}
+                        if (settled) return;
+                        settled = true;
+                        $timeout.cancel(watchdog);
+                        cb(chunks.length ? new Blob(chunks, { type: 'audio/mp3' }) : null);
+                    }
+                } else {
+                    var data = new Uint8Array(ev.data);
+                    if (data.length < 2) return;
+                    var headerLen = (data[0] << 8) | data[1];
+                    if (data.length > 2 + headerLen) chunks.push(data.slice(2 + headerLen));
+                }
+            };
+            ws.onerror = function () { if (!settled) { settled = true; $timeout.cancel(watchdog); cb(null); } };
+            ws.onclose = function () { if (!settled) { settled = true; $timeout.cancel(watchdog); cb(null); } };
+        } catch (e) { cb(null); }
     }
 
     // Build SSML body with natural breath breaks between sentences.
@@ -2351,11 +2932,11 @@ api.controller = function ($scope, $timeout, $window) {
             });
         }
         // Step 1: collapse runs of asterisks. **word** -> emphasis sentinel.
-        t = t.replace(/\*\*([^*]+)\*\*/g, 'EM$1/EM');
+        t = t.replace(/\*\*([^*]+)\*\*/g, '\uE000EM\uE000$1\uE000/EM\uE000');
         // Strip any leftover lone asterisks so they don't leak in.
         t = t.replace(/\*/g, '');
         // Step 2: ellipsis = thinking pause (~350ms)
-        t = t.replace(/\.{3,}/g, 'LP');
+        t = t.replace(/\.{3,}/g, '\uE000LP\uE000');
         // Step 3: XML escape everything else
         t = t.replace(/&/g, '&amp;')
              .replace(/</g, '&lt;')
@@ -2363,7 +2944,14 @@ api.controller = function ($scope, $timeout, $window) {
              .replace(/"/g, '&quot;')
              .replace(/'/g, '&apos;');
         // Step 4: sentence / comma / em-dash breath breaks (lengthened)
-        t = t.replace(/([.!?]+)(\s|$)/g, '$1<break time="320ms"/>$2');
+        // R6 - vary the sentence breath with the sentence that FOLLOWS
+        // was implicit; instead vary by simple alternation so back-to-back
+        // sentences never get the identical metronome gap (280/340/300ms).
+        var _breathSeq = [280, 340, 300], _breathIx = 0;
+        t = t.replace(/([.!?]+)(\s|$)/g, function (_, p, sp) {
+            var ms = _breathSeq[_breathIx++ % _breathSeq.length];
+            return p + '<break time="' + ms + 'ms"/>' + sp;
+        });
         t = t.replace(/(,)(\s)/g, '$1<break time="150ms"/>$2');
         t = t.replace(/( - | -- | — )/g, '<break time="240ms"/>$1');
         // Step 5: pitch-dip on natural verbal fillers so umm/uh/ah sound
@@ -2371,9 +2959,9 @@ api.controller = function ($scope, $timeout, $window) {
         t = t.replace(/\b(umm+|uhh*|ahh+|hmm+|mm+|well)\b(?=,)/gi,
                       '<prosody pitch="-2st" rate="-15%" volume="-2dB">$1</prosody>');
         // Step 6: expand sentinels
-        t = t.replace(/EM/g, '<emphasis level="strong">');
-        t = t.replace(/\/EM/g, '</emphasis>');
-        t = t.replace(/LP/g, '<break time="380ms"/>');
+        t = t.replace(/\uE000EM\uE000/g, '<emphasis level="strong">');
+        t = t.replace(/\uE000\/EM\uE000/g, '</emphasis>');
+        t = t.replace(/\uE000LP\uE000/g, '<break time="380ms"/>');
         return '<speak version=\'1.0\' xml:lang=\'en-IN\'>' +
                '<voice name=\'' + voice + '\'>' +
                '<prosody rate=\'+0%\' pitch=\'+1st\'>' + t + '</prosody>' +
@@ -2492,6 +3080,9 @@ api.controller = function ($scope, $timeout, $window) {
 
     // Unified post-TTS handler: reset state, ensure mic is open, fire user callback.
     function _afterTTS(userDone) {
+        // R6 - whatever path got us here, the floor is free again.
+        _speakingNow = false;
+        _restoreDuck();
         // Reset state if we're still in "speaking" - some callbacks may have
         // already moved us forward (e.g. thinking -> speaking -> idle).
         if (c.state === 'speaking') {
@@ -2583,7 +3174,7 @@ api.controller = function ($scope, $timeout, $window) {
         c.data.action = 'gemini_tts';
         c.data.text   = text;
         c.data.voice  = c.geminiVoice;
-        ignoreFinalsUntil = Date.now() + 15000;
+        _markSpeaking(text);   // R6 - hot mic: echo-scored, not deafened
         var resolved = false;
         var watchdog = $timeout(function () {
             if (!resolved) { resolved = true;
@@ -2627,7 +3218,7 @@ api.controller = function ($scope, $timeout, $window) {
                     detachOutputAnalyser(audio);
                     URL.revokeObjectURL(url);
                     if (currentAudio === audio) currentAudio = null;
-                    ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
+                    _clearSpeaking();   // R6
                     if (done) try { done(); } catch (e) {}
                 };
                 audio.onerror = function () {
@@ -2743,7 +3334,7 @@ api.controller = function ($scope, $timeout, $window) {
                 //    inside, rather than multiple TTS calls per sentence.
                 var ssml = _buildHumanSSML(text, c.edgeVoice);
                 ws.send('X-RequestId:' + requestId + '\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:' + new Date().toISOString() + '\r\nPath:ssml\r\n\r\n' + ssml);
-                ignoreFinalsUntil = Date.now() + 15000;
+                _markSpeaking(text);   // R6 - hot mic: echo-scored, not deafened
                 setState('speaking');
             };
 
@@ -2778,7 +3369,7 @@ api.controller = function ($scope, $timeout, $window) {
                             detachOutputAnalyser(audio);
                             URL.revokeObjectURL(url);
                             if (currentAudio === audio) currentAudio = null;
-                            ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
+                            _clearSpeaking();   // R6
                             if (done) try { done(); } catch (e) {}
                         };
                         audio.onerror = function () {
@@ -2875,7 +3466,12 @@ api.controller = function ($scope, $timeout, $window) {
         'Let me check on that quickly, should only take a moment.',
         'Just a moment please, I am getting that sorted out for you.',
         'Hang on for a second, I am cross-checking the details right now.',
-        'Alright, looking into that for you, should have it shortly.'
+        'Alright, looking into that for you, should have it shortly.',
+        // R5 - VR analyst flavored (MEDIUM)
+        'Checking the vulnerability queue now.',
+        'Scanning the risk data, one moment.',
+        'Let me pull the exposure numbers.',
+        'Digging into the security backlog for you.'
     ];
     var fillerCache = [];   // [{url, text}]
     var lastFillerPlayedAt = 0;
@@ -3032,6 +3628,7 @@ api.controller = function ($scope, $timeout, $window) {
             a.volume = 0.85;
             a.playbackRate = 1.0;
             currentFillerAudio = a;
+            _fillerEchoText = f.text;   // R6 - echo-scorer must know this line
             _currentFillerStart = Date.now();
             _currentFillerEst = _estimateFillerMs(f.text);
             lastFillerPlayedAt = Date.now();
@@ -3054,6 +3651,7 @@ api.controller = function ($scope, $timeout, $window) {
         // browser TTS. Slightly less natural than Aria/Raveena but always
         // works on networks where Edge WSS and StreamElements are blocked.
         var phrase = FILLER_PHRASES[Math.floor(Math.random() * FILLER_PHRASES.length)];
+        _fillerEchoText = phrase;   // R6 - echo-scorer must know this line
         _currentFillerStart = Date.now();
         _currentFillerEst = _estimateFillerMs(phrase);
         lastFillerPlayedAt = Date.now();
@@ -3167,7 +3765,7 @@ api.controller = function ($scope, $timeout, $window) {
 
         // R1.1 - cap to 15s. If TTS hangs, mic stays blocked for at most 15s
         // instead of a full minute. onended/onerror normally fires <10s.
-        ignoreFinalsUntil = Date.now() + 15000;
+        _markSpeaking(text);   // R6 - hot mic: echo-scored, not deafened
 
         var audio = new Audio();
         audio.src = url;
@@ -3191,7 +3789,7 @@ api.controller = function ($scope, $timeout, $window) {
             resolved = true;
             $timeout.cancel(watchdog);
             detachOutputAnalyser(audio);
-            ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
+            _clearSpeaking();   // R6
             if (currentAudio === audio) currentAudio = null;
             if (done) done();
         };
@@ -3235,7 +3833,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (!text) { if (done) done(); return; }
 
         // R1.1 - 15s cap (was 60s). Watchdog also clears stale guards.
-        ignoreFinalsUntil = Date.now() + 15000;
+        _markSpeaking(text);   // R6 - hot mic: echo-scored, not deafened
 
         if (TTS.speaking || TTS.pending) {
             TTS.cancel();
@@ -3280,13 +3878,13 @@ api.controller = function ($scope, $timeout, $window) {
         };
         u.onend = function () {
             $timeout.cancel(startWatchdog);
-            ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
+            _clearSpeaking();   // R6
             logEvent('tts', 'onend');
             if (done) done();
         };
         u.onerror = function (ev) {
             $timeout.cancel(startWatchdog);
-            ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
+            _clearSpeaking();   // R6
             logEvent('err', 'TTS error: ' + (ev && ev.error));
             if (done) done();
         };
@@ -3447,9 +4045,11 @@ api.controller = function ($scope, $timeout, $window) {
                 $scope.$applyAsync();
             }
             if (e.key === 'Escape') {
-                if (TTS) TTS.cancel();
-                ignoreFinalsUntil = Date.now() + TTS_GUARD_MS;
-                setState(c.alert ? 'idle' : 'dormant');
+                // R6 - Escape now silences EVERYTHING (remote audio, browser
+                // TTS, filler chain, pipeline queue) via the universal stopper.
+                // The old handler only cancelled browser TTS, so Escape did
+                // nothing during Edge/Gemini/Stream playback.
+                stopSpeaking('Escape key');
                 $scope.$applyAsync();
             }
         });
@@ -3487,11 +4087,20 @@ api.controller = function ($scope, $timeout, $window) {
                                 delete seenIds[_seenKeys[_si]];
                             }
                         }
-                        if (c.state === 'listening' || c.state === 'speaking' || c.state === 'awaiting') return;
+                        if (c.state === 'listening' || c.state === 'speaking' || c.state === 'awaiting' || c.state === 'thinking') return;
                         if (!c.alert) return;  // don't disturb when dormant
-                        c.spoken = n.message;
+                        // R6 - interjection etiquette: if we are mid-conversation
+                        // (user spoke within the last 45s), Netra excuses herself
+                        // before delivering, like a colleague leaning in.
+                        var msg = n.message;
+                        var recentlyTalking = c.conversationOpen && (Date.now() - (recLastActivityAt || 0) < 45000);
+                        if (recentlyTalking) {
+                            var lead = ['Sorry to cut in - ', 'Oh - one quick thing - ', 'Pardon the interruption - '];
+                            msg = lead[Math.floor(Math.random() * lead.length)] + msg;
+                        }
+                        c.spoken = msg;
                         $scope.$applyAsync();
-                        speak(n.message);
+                        speak(msg);
                     });
                 },
                 function () { /* silent */ }

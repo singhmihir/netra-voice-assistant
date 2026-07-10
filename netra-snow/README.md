@@ -1,6 +1,17 @@
-# Netra on ServiceNow 🎙️ v2.0.0
+# Netra on ServiceNow 🎙️ v3.0.0 — R6 "Release X"
 
 A voice-first, fully accessible assistant that runs **natively inside ServiceNow** as a scoped application. Zero external services, zero recurring cost. Designed for blind and visually-impaired ServiceNow users.
+
+---
+
+## v3 "Release X" — what's new
+
+- **Human turn-taking** — interrupt Netra mid-sentence and she yields in ~100 ms (echo-scored hot mic, reflex "stop/wait", volume ducking while you start talking). She interjects politely too: soft "mm-hmm" backchannels, one gentle nudge on unanswered questions, "sorry to cut in" before mid-conversation notifications.
+- **Read-only on tickets, by policy and by code** — Netra never creates or modifies tickets (creation tools removed from the model's toolset and hard-refused server-side; mutations gated behind `x_196061_netra_v1.ticket_writes`, default off). She remains the fastest way to *know* about tickets: status, summaries, search, briefings, watchlists.
+- **Faster + more natural voice** — sentence-pipelined Edge TTS (first audio 2–4× sooner on long replies), adaptive command debounce (~0.5 s faster), automatic contractions, varied breath breaks, a blinking orb.
+- **Expanded conversation limits** — 40-turn / 180 KB history, 8 tool calls per turn, 2048-token replies, 16 K-char inputs, 200-exchange long-term memory.
+- **Violet voice-ring identity** — icon/logo/badge redrawn to match the in-app orb + favicon; dev console carries the `R6 · RELEASE X` badge and `TICKETS: READ-ONLY` pill.
+- **REST deployment pipeline** — `scripts/deploy-release.mjs` pushes the whole source tree to an instance and captures it in a named update set. See [docs/RELEASE-X.md](docs/RELEASE-X.md).
 
 ---
 
@@ -21,16 +32,15 @@ A voice-first, fully accessible assistant that runs **natively inside ServiceNow
 
 ## Voice command reference
 
-### Tickets
+### Tickets (read-only since Release X)
 | You say | Netra does |
 |---|---|
-| *"Create a ticket for my email is broken"* | Opens INC, reads back the number |
-| *"Open a ticket"* | Asks *"Sure, what's the issue?"* — you reply, she opens it |
+| *"Create a ticket for my email is broken"* | Explains she's read-only, then **searches existing incidents** for "email is broken" and briefs you on what she finds |
 | *"List my tickets"* / *"What's on my plate?"* | Reads up to 5 open tickets |
-| *"Resolve INC0001234"* / *"Close INC0001234"* | Marks resolved |
-| *"Resolve a ticket"* | Asks *"Which I N C number?"* |
-| *"Update INC0001234 with I rebooted"* | Adds comment |
 | *"Status of INC0001234"* | Reads state + priority + assignee |
+| *"Summarize INC0001234"* | Full spoken summary: description, state, priority, assignee, latest comments |
+| *"Watch INC0001234"* | Adds to her watchlist — she announces changes proactively |
+| *"Resolve INC0001234"* / *"Update INC0001234 with…"* | Politely declines (modification is disabled unless the admin sets `ticket_writes=true`) |
 
 ### Pause / resume notifications
 | You say | Netra does |

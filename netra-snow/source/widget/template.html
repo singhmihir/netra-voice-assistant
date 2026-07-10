@@ -1,5 +1,9 @@
 <!--
-  Netra Mic widget template - R1.3 (Claude-of-ServiceNow)
+  Netra Mic widget template - R6 "Release X" (Claude-of-ServiceNow)
+
+  R6: human turn-taking surfaces - barge-in flash on the orb, periodic
+  eyelid blink so the eye reads as alive, interruption stats + read-only
+  ticket badge in the dev console, refreshed gate copy.
 
   Minimal industry-standard icon. Simple circular eye with
   pulsing halo glow. Default position top-left. Multi-turn
@@ -8,7 +12,7 @@
   Dev console is draggable from its header.
 -->
 <div class="netra-root"
-     ng-class="['netra-state-' + c.state]"
+     ng-class="['netra-state-' + c.state, {'netra-barged': c.bargeFlash}]"
      role="region"
      aria-label="Netra voice assistant">
 
@@ -24,9 +28,32 @@
         DEV PANEL  (visible when c.devOn === true)
         ==================================================== -->
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
-    <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
-      <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <span class="netra-dev-ver">R3.7</span>
+    <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the developer console">
+      <span class="netra-dev-brand" aria-hidden="true">
+        <svg class="netra-dev-glyph" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="ndg-iris" cx="38%" cy="34%" r="66%">
+              <stop offset="0%" stop-color="#eafff2"/><stop offset="20%" stop-color="#7fffb0"/>
+              <stop offset="58%" stop-color="#2eb858"/><stop offset="100%" stop-color="#021a0d"/>
+            </radialGradient>
+            <linearGradient id="ndg-ring" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#8b3df0"/><stop offset="55%" stop-color="#c660ff"/>
+              <stop offset="72%" stop-color="#ffb84d"/><stop offset="100%" stop-color="#6920b8"/>
+            </linearGradient>
+          </defs>
+          <g fill="none" stroke="url(#ndg-ring)" stroke-width="2" stroke-linecap="round" ng-class="{'netra-dev-glyph-live': c.recRunning}">
+            <path d="M4 16 A12 12 0 0 1 16 4"/><path d="M28 16 A12 12 0 0 1 16 28"/>
+          </g>
+          <path d="M6 16 Q16 7 26 16 Q16 25 6 16 Z" fill="#0a0614" stroke="#d8c8ff" stroke-width="1.4" stroke-linejoin="round"/>
+          <circle cx="16" cy="16" r="6" fill="url(#ndg-iris)"/>
+          <circle cx="16" cy="16" r="2.4" fill="#001a0a"/>
+          <circle cx="14.2" cy="14.2" r="1" fill="#fff" opacity="0.9"/>
+        </svg>
+        <span class="netra-dev-word">NETRA</span>
+        <span class="netra-dev-badge-vr">R6 · RELEASE X</span>
+        <span class="netra-dev-badge-ro" title="Ticket safety policy: Netra never creates or modifies tickets">TICKETS: READ-ONLY</span>
+      </span>
+      <span class="netra-dev-live" ng-class="{'on': c.recRunning}" title="Recognition {{c.recRunning ? 'running' : 'stopped'}}" aria-hidden="true"></span>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
@@ -76,6 +103,10 @@
       <div><span>errors</span><b ng-class="{'l-err': c.stats.errors > 0}">{{c.stats.errors || 0}}</b></div>
       <div><span>last model</span><b>{{c.stats.lastModel || '-'}}</b></div>
       <div><span>last latency</span><b>{{c.stats.lastLatencyMs ? (c.stats.lastLatencyMs + ' ms') : '-'}}</b></div>
+      <!-- R6 - human turn-taking telemetry -->
+      <div><span>barge-ins</span><b ng-class="{'on': c.stats.barges > 0}">{{c.stats.barges || 0}}</b></div>
+      <div><span>backchannels</span><b>{{c.stats.backchannels || 0}}</b></div>
+      <div><span>ticket mode</span><b class="ro">read-only</b></div>
     </section>
 
     <!-- R1 - REAL-TIME GRAPHS -->
@@ -223,6 +254,7 @@
       <span class="seg"><span class="seg-key">LV</span><span class="seg-val">{{c.micLevel || 0}}</span></span>
       <span class="seg" ng-show="c.stats.lastLatencyMs"><span class="seg-key">LAT</span><span class="seg-val">{{c.stats.lastLatencyMs}}ms</span></span>
       <span class="seg" ng-show="c.stats.lastModel && c.stats.lastModel !== '-'"><span class="seg-key">MODEL</span><span class="seg-val">{{c.stats.lastModel}}</span></span>
+      <span class="seg" ng-show="c.stats.barges > 0"><span class="seg-key">BRG</span><span class="seg-val">{{c.stats.barges}}</span></span>
       <span class="seg" ng-show="c.stats.errors > 0" ng-class="{'warn': c.stats.errors > 0}"><span class="seg-key">ERR</span><span class="seg-val">{{c.stats.errors}}</span></span>
     </footer>
   </div>
@@ -483,6 +515,11 @@
 
       <!-- Eyelid (only used in dormant state - covers iris when closed) -->
       <circle class="netra-eye-lid-top" cx="60" cy="60" r="50" fill="#0a1a14" opacity="0"/>
+      <!-- R6 - involuntary blink: a second lid that flicks closed for
+           ~140ms on a long randomized-feeling cycle (CSS keyframes), so
+           the eye reads as alive rather than painted. Hidden in dormant
+           (the main lid is already down). -->
+      <circle class="netra-eye-blink" cx="60" cy="60" r="50" fill="#0a1a14" opacity="0"/>
     </svg>
   </button>
 
@@ -505,7 +542,7 @@
     </span>
     <span class="netra-gate-text">
       <strong>Press here to start Netra</strong>
-      <span>Always listening. Just speak naturally. Say "stop listening" to pause.</span>
+      <span>Talk naturally - you can interrupt her any time, just start speaking. Say "stop listening" to pause.</span>
     </span>
   </button>
 

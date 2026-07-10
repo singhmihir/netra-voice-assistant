@@ -11,9 +11,14 @@ hand-built SVG with no third-party trademark content.
 | [`netra-logo.png`](netra-logo.png) | Rasterised version of the primary logo (1440x440, 2x retina). |
 | [`netra-icon.png`](netra-icon.png) | Rasterised icon (512x512). |
 
-The mark is a stylised eye (Sanskrit *netra* = "eye") with a green sound-wave
-accent suggesting voice. Palette is deep navy `#0E2E7A` and accent green
-`#22B573`. Wordmark is Segoe UI 800 weight with `-2` letter-spacing.
+The mark is a stylised eye (Sanskrit *netra* = "eye") sitting inside an
+**open voice ring** — two case-hardened violet arcs whose gaps suggest
+turn-taking: there is always space to interrupt. Release X aligned the
+brand assets with the in-app orb, favicon and PWA tile: deep violet-black
+tile `#12081F`, violet ring gradient `#8B3DF0 → #C660FF → #FFB84D → #6920B8`
+(the amber patch is the "heat-treatment" patina), lavender lid `#D8C8FF`,
+and the green iris `#7FFFB0 → #2EB858 → #021A0D`. Wordmark is Segoe UI 800
+weight with `-2` letter-spacing in deep violet `#4C1D95`.
 
 ## Using with Deloitte branding
 
@@ -34,25 +39,29 @@ inside a Deloitte engagement:
 mark. Deloitte's brand guidelines explicitly prohibit derivative
 fusions, and so does this repo.
 
-## Colours
+## Colours (Release X)
 
 | Token | Hex | Use |
 |---|---|---|
-| Netra Navy | `#0E2E7A` | Wordmark, eye outline |
-| Netra Blue | `#1A56DB` | Iris, primary CTA |
-| Netra Sky  | `#3B82F6` | Iris highlight |
-| Voice Green| `#22B573` | Sound-wave accent |
-| Pupil      | `#0A1530` | Pupil |
-| Slate      | `#475569` | Tagline / secondary text |
-| Surface    | `#F8FAFC` | Light background |
+| Netra Void    | `#12081F` | Icon tile / dark surfaces |
+| Ring Violet   | `#8B3DF0` | Voice ring primary |
+| Ring Magenta  | `#C660FF` | Voice ring mid-tone |
+| Ring Amber    | `#FFB84D` | Heat-treatment patina accent |
+| Ring Deep     | `#6920B8` | Voice ring shadow end |
+| Lid Lavender  | `#D8C8FF` | Eye outline, dark-surface text |
+| Iris Bright   | `#7FFFB0` | Iris highlight |
+| Iris Green    | `#2EB858` | Iris body |
+| Iris Deep     | `#021A0D` | Iris edge / pupil ring |
+| Wordmark      | `#4C1D95` | Wordmark on light backgrounds |
+| Slate         | `#475569` | Tagline / secondary text |
 
 ## Regenerating the PNGs
 
 If you tweak the SVG and need a fresh PNG, run from the repo root:
 
-```powershell
-# Renders any *.svg in branding/ to PNG at 2x resolution
+```bash
+pip install cairosvg
 python branding/render.py
 ```
 
-(Uses Python + Pillow + cairosvg. See `render.py` for details.)
+The SVGs are the source of truth; `render.py` just rasterises them.

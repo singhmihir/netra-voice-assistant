@@ -1,33 +1,37 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Netra">
   <title>Netra</title>
+  <desc>Release X identity: the Netra eye (green iris) inside the case-hardened violet voice ring on a deep violet-black tile. Matches the in-app orb, favicon and PWA tile.</desc>
   <defs>
-    <radialGradient id="iris2" cx="50%" cy="45%" r="55%">
-      <stop offset="0%"   stop-color="#3b82f6"/>
-      <stop offset="55%"  stop-color="#1a56db"/>
-      <stop offset="100%" stop-color="#0e2e7a"/>
+    <radialGradient id="nx-iris" cx="38%" cy="34%" r="66%">
+      <stop offset="0%"   stop-color="#eafff2"/>
+      <stop offset="18%"  stop-color="#7fffb0"/>
+      <stop offset="55%"  stop-color="#2eb858"/>
+      <stop offset="100%" stop-color="#021a0d"/>
     </radialGradient>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%"  stop-color="#0e2e7a"/>
-      <stop offset="100%" stop-color="#1a3b8a"/>
+    <linearGradient id="nx-ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#8b3df0"/>
+      <stop offset="55%"  stop-color="#c660ff"/>
+      <stop offset="72%"  stop-color="#ffb84d"/>
+      <stop offset="100%" stop-color="#6920b8"/>
     </linearGradient>
   </defs>
 
-  <!-- Rounded square background -->
-  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="url(#bg)"/>
+  <!-- Deep violet-black tile -->
+  <rect width="256" height="256" rx="60" fill="#12081f"/>
 
-  <!-- Eye mark, centred -->
-  <g transform="translate(28, 76)">
-    <path d="M 0,52 Q 50,0 100,0 Q 150,0 200,52 Q 150,104 100,104 Q 50,104 0,52 Z"
-          fill="none" stroke="#ffffff" stroke-width="6" stroke-linejoin="round"/>
-    <circle cx="100" cy="52" r="36" fill="url(#iris2)"/>
-    <circle cx="100" cy="52" r="15" fill="#0a1530"/>
-    <circle cx="92"  cy="44" r="5"  fill="#ffffff" opacity="0.9"/>
+  <!-- Voice ring: two open arcs - the gaps suggest turn-taking (space to interrupt) -->
+  <g fill="none" stroke="url(#nx-ring)" stroke-width="13.6" stroke-linecap="round" opacity="0.95">
+    <path d="M48 128 A80 80 0 0 1 128 48"/>
+    <path d="M208 128 A80 80 0 0 1 128 208"/>
   </g>
 
-  <!-- Green sound accent above the eye -->
-  <g transform="translate(128, 38)" stroke="#22b573" stroke-width="4" stroke-linecap="round" fill="none">
-    <path d="M -10 22 Q 0 8 10 22"/>
-    <path d="M -18 22 Q 0 -2 18 22"/>
-  </g>
+  <!-- Almond eye (Sanskrit netra = eye) -->
+  <path d="M56 128 Q128 64 200 128 Q128 192 56 128 Z"
+        fill="#0a0614" stroke="#d8c8ff" stroke-width="9.6" stroke-linejoin="round"/>
+
+  <!-- Iris + pupil + catchlight -->
+  <circle cx="128" cy="128" r="46" fill="url(#nx-iris)"/>
+  <circle cx="128" cy="128" r="18.4" fill="#001a0a"/>
+  <circle cx="114" cy="114" r="7.6" fill="#ffffff" opacity="0.9"/>
 </svg>
