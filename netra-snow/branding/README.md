@@ -11,9 +11,13 @@ hand-built SVG with no third-party trademark content.
 | [`netra-logo.png`](netra-logo.png) | Rasterised version of the primary logo (1440x440, 2x retina). |
 | [`netra-icon.png`](netra-icon.png) | Rasterised icon (512x512). |
 
-The mark is a stylised eye (Sanskrit *netra* = "eye") with a green sound-wave
-accent suggesting voice. Palette is deep navy `#0E2E7A` and accent green
-`#22B573`. Wordmark is Segoe UI 800 weight with `-2` letter-spacing.
+The mark is a stylised eye (Sanskrit *netra* = "eye") crowned by an
+iridescent full-spectrum prism arc, with matching sound-wave accents
+suggesting voice - a nod to the R8.1 "Prism" UI, where Netra's colour
+shifts live with her own voice. Core palette is deep violet `#7A3DF0`
+on cosmic near-black `#0B0416`, with a spectrum accent running
+`#37E6A8 -> #41C6FF -> #C660FF -> #FFB84D -> #FF5F9E`. Wordmark is Segoe UI
+800 weight with `-2` letter-spacing filled with the violet gradient.
 
 ## Using with Deloitte branding
 

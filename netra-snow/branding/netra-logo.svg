@@ -1,41 +1,58 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" width="720" height="220" role="img" aria-label="Netra Voice Assistant">
   <title>Netra — Voice Assistant</title>
-  <desc>An eye-shaped mark in navy with a green sound-wave accent, followed by the Netra wordmark and 'Voice Assistant' tagline.</desc>
+  <desc>Prism edition: an eye mark with an iridescent full-spectrum arc and sound-waves, followed by the Netra wordmark and 'Voice Assistant' tagline.</desc>
 
   <defs>
-    <radialGradient id="iris" cx="50%" cy="45%" r="55%">
-      <stop offset="0%"   stop-color="#3b82f6"/>
-      <stop offset="55%"  stop-color="#1a56db"/>
-      <stop offset="100%" stop-color="#0e2e7a"/>
+    <radialGradient id="iris" cx="42%" cy="38%" r="62%">
+      <stop offset="0%"   stop-color="#f4ecff"/>
+      <stop offset="24%"  stop-color="#c7a6ff"/>
+      <stop offset="60%"  stop-color="#7a3df0"/>
+      <stop offset="100%" stop-color="#1c0a3d"/>
     </radialGradient>
     <linearGradient id="lid" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0e2e7a"/>
-      <stop offset="100%" stop-color="#1a3b8a"/>
+      <stop offset="0%" stop-color="#2a1560"/>
+      <stop offset="100%" stop-color="#4a2a8a"/>
+    </linearGradient>
+    <linearGradient id="prism" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#37e6a8"/>
+      <stop offset="28%"  stop-color="#41c6ff"/>
+      <stop offset="54%"  stop-color="#c660ff"/>
+      <stop offset="78%"  stop-color="#ffb84d"/>
+      <stop offset="100%" stop-color="#ff5f9e"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#2a1560"/>
+      <stop offset="70%"  stop-color="#7a3df0"/>
+      <stop offset="100%" stop-color="#c660ff"/>
     </linearGradient>
   </defs>
 
   <!-- =========================================================
-       Eye mark (Netra = "eye" in Sanskrit).
-       Almond shape + iris + pupil + highlight.
+       Eye mark (Netra = "eye" in Sanskrit), prism edition.
+       Almond shape + iridescent iris + pupil + highlight, with a
+       full-spectrum arc above (the voice's shifting hue) and
+       sound-waves to the right (audio emanation).
        ========================================================= -->
   <g transform="translate(40, 50)">
+    <!-- Prism arc crowning the eye -->
+    <path d="M 20 26 Q 130 -34 240 26"
+          fill="none" stroke="url(#prism)" stroke-width="9" stroke-linecap="round"/>
+
     <!-- Eye outline -->
     <path d="M 0,60 Q 60,0 130,0 Q 200,0 260,60 Q 200,120 130,120 Q 60,120 0,60 Z"
           fill="none" stroke="url(#lid)" stroke-width="6" stroke-linejoin="round"/>
     <!-- Iris -->
     <circle cx="130" cy="60" r="44" fill="url(#iris)"/>
     <!-- Pupil -->
-    <circle cx="130" cy="60" r="18" fill="#0a1530"/>
+    <circle cx="130" cy="60" r="18" fill="#07001a"/>
     <!-- Catch-light -->
-    <circle cx="120" cy="50" r="6"  fill="#ffffff" opacity="0.9"/>
+    <circle cx="120" cy="50" r="6"  fill="#ffffff" opacity="0.95"/>
     <circle cx="142" cy="68" r="3"  fill="#ffffff" opacity="0.55"/>
 
-    <!-- Sound-wave / voice accent: three concentric arcs in green
-         (suggests audio emanation from the eye).
-         Green dot remains a generic design accent and is not a
-         reproduction of any third-party brand mark. -->
-    <g stroke="#22b573" stroke-width="3.5" stroke-linecap="round" fill="none" opacity="0.92">
+    <!-- Sound-wave / voice accent: three concentric arcs sweeping the
+         prism spectrum (suggests audio emanation from the eye). -->
+    <g stroke="url(#prism)" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.95">
       <path d="M 220 60 Q 240 38 264  60"/>
       <path d="M 220 60 Q 248 24 280  60"/>
       <path d="M 220 60 Q 256 10 296  60"/>
@@ -46,7 +63,7 @@
        Wordmark
        ========================================================= -->
   <g transform="translate(360, 0)" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
-    <text x="0" y="125" font-size="84" font-weight="800" letter-spacing="-2" fill="#0e2e7a">Netra</text>
-    <text x="2" y="165" font-size="18" font-weight="600" letter-spacing="6" fill="#475569">VOICE ASSISTANT</text>
+    <text x="0" y="125" font-size="84" font-weight="800" letter-spacing="-2" fill="url(#word)">Netra</text>
+    <text x="2" y="165" font-size="18" font-weight="600" letter-spacing="6" fill="#6b5f8e">VOICE ASSISTANT</text>
   </g>
 </svg>

@@ -3,7 +3,7 @@
  *
  * Invoked by the "Netra Watch" scheduled job every 3 minutes.
  *
- * For every user with an __NETRA_SCOPE___user_pref row, scans for:
+ * For every user with an x_196061_netra_v1_user_pref row, scans for:
  *   1. Incidents newly assigned to them since their last scan
  *   2. Approvals newly waiting on them
  *   3. Service Catalog tasks newly assigned to them
@@ -12,7 +12,7 @@
  * Comments on tickets are handled separately by the Business Rule on
  * sys_journal_field (real-time, not part of this scan).
  *
- * Each fresh hit creates one __NETRA_SCOPE___notification row, deduplicated by
+ * Each fresh hit creates one x_196061_netra_v1_notification row, deduplicated by
  * a (table, sys_id, kind) key in the message so we never re-announce.
  */
 var NetraScanner = Class.create();
@@ -28,7 +28,13 @@ NetraScanner.prototype = {
         var processed = 0;
         var enqueued = 0;
 
-        var prefs = new GlideRecord('__NETRA_SCOPE___user_pref');
+        // R8.2 - promote due voice reminders BEFORE the per-user scans so
+        // they ride the very next widget poll.
+        try { enqueued += this.promoteDueReminders(); } catch (eR) {
+            gs.warn('[NetraScanner] reminder promotion failed: ' + eR);
+        }
+
+        var prefs = new GlideRecord('x_196061_netra_v1_user_pref');
         prefs.addQuery('active', true);
         prefs.query();
 
@@ -47,7 +53,31 @@ NetraScanner.prototype = {
     },
 
     /**
-     * @param {GlideRecord} pref  __NETRA_SCOPE___user_pref row, already loaded
+     * R8.2 - Voice reminders are stored by the widget as notification rows
+     * with kind 'reminder_scheduled', delivered=true (hidden from the poll)
+     * and the due epoch-ms in ticket_sys_id. Once due, flip them to a live
+     * notification the widget announces on its next poll.
+     */
+    promoteDueReminders: function () {
+        var nowMs = new GlideDateTime().getNumericValue();
+        var n = new GlideRecord('x_196061_netra_v1_notification');
+        n.addQuery('kind', 'reminder_scheduled');
+        n.query();
+        var promoted = 0;
+        while (n.next()) {
+            var dueMs = parseInt(String(n.ticket_sys_id), 10) || 0;
+            if (dueMs > nowMs) continue;
+            n.kind = 'reminder';
+            n.delivered = false;
+            n.update();
+            promoted++;
+        }
+        if (promoted) gs.info('[NetraScanner] promoted ' + promoted + ' due reminder(s).');
+        return promoted;
+    },
+
+    /**
+     * @param {GlideRecord} pref  x_196061_netra_v1_user_pref row, already loaded
      * @returns {number}          count of notifications enqueued for this user
      */
     scanForUser: function (pref) {
@@ -209,7 +239,7 @@ NetraScanner.prototype = {
     //  Dedupe + enqueue
     // ============================================================
     _alreadyNotified: function (userSysId, recordSysId, kind) {
-        var gr = new GlideRecord('__NETRA_SCOPE___notification');
+        var gr = new GlideRecord('x_196061_netra_v1_notification');
         gr.addQuery('user', userSysId);
         gr.addQuery('ticket_sys_id', recordSysId);
         gr.addQuery('kind', kind);
@@ -219,7 +249,7 @@ NetraScanner.prototype = {
     },
 
     _enqueue: function (userSysId, opts) {
-        var gr = new GlideRecord('__NETRA_SCOPE___notification');
+        var gr = new GlideRecord('x_196061_netra_v1_notification');
         gr.initialize();
         gr.user = userSysId;
         gr.ticket_sys_id = opts.ticket_sys_id;

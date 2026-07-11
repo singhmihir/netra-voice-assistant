@@ -70,19 +70,22 @@
 
     if (action === 'chat') {
         try {
-            // R4.5 - cap user message to 8000 chars. The 60 KB history-byte
-            // cap below only trims old turns; the CURRENT message is fed
-            // raw to Gemini. A long dictation or hostile multi-MB payload
-            // could blow the 12s HTTP timeout before any history trim runs.
+            // R4.5 - cap the user message. The history-byte cap below only
+            // trims old turns; the CURRENT message is fed raw to Gemini. A
+            // hostile multi-MB payload could blow the 12s HTTP timeout
+            // before any history trim runs. Release X: 8000 -> 16000 so a
+            // long spoken dictation never gets cut mid-thought.
             var _userMsg = String((input && input.message) || '').trim();
-            if (_userMsg.length > 8000) _userMsg = _userMsg.substring(0, 8000);
+            if (_userMsg.length > 16000) _userMsg = _userMsg.substring(0, 16000);
             // image_b64 cap - 4 MB base64 ~ 3 MB binary, plenty for a screen
             if (input && typeof input.image_b64 === 'string' && input.image_b64.length > 4000000) {
                 input.image_b64 = input.image_b64.substring(0, 4000000);
             }
             data.response = _chat(
                 _userMsg,
-                (input && Array.isArray(input.history)) ? input.history : []
+                (input && Array.isArray(input.history)) ? input.history : [],
+                !!(input && input.live_mode),
+                (input && input.prosody) || null
             );
         } catch (e) {
             gs.error('[NetraGemini] chat outer error: ' + e);
@@ -249,9 +252,17 @@
     /* ===================================================================
      *  Gemini chat with tool use
      * =================================================================== */
-    function _chat(userMessage, history) {
+    function _chat(userMessage, history, liveMode, prosody) {
         if (!userMessage) {
             return { ok: false, message: 'I did not catch that. Kindly say it again.' };
+        }
+        // R8.2 - voice-delivery metadata rides the turn as a bracketed tag
+        // the model reads but never speaks (prompt explains the format).
+        if (prosody && (prosody.wpm || prosody.level)) {
+            userMessage += ' [voice delivery: ' +
+                (prosody.wpm ? ('~' + prosody.wpm + ' wpm') : '') +
+                (prosody.level ? (', loudness ' + prosody.level + '/100') : '') +
+                (prosody.variance ? (', dynamics ' + prosody.variance) : '') + ']';
         }
         var apiKey = gs.getProperty(SCOPE + '.gemini_api_key');
         if (!apiKey) {
@@ -270,17 +281,29 @@
         // via the x_196061_netra_v1.gemini_model property if richer reasoning
         // is needed on a given instance.
         var model = gs.getProperty(SCOPE + '.gemini_model', 'gemini-flash-lite-latest');
+        // R7 - AUTO-ROUTED BRAINS. Simple commands stay on flash-lite
+        // (~1s); turns that smell like reasoning (long, multi-question,
+        // analytical verbs, multi-step) escalate to gemini-2.5-flash for
+        // a smarter answer at +1-2s. Only applies when the property is
+        // still the default - an explicit gemini_model pins every turn.
+        var routeReason = 'fast';
+        if (model === 'gemini-flash-lite-latest') {
+            if (_isComplexTurn(userMessage)) { model = 'gemini-2.5-flash'; routeReason = 'complex'; }
+        } else {
+            routeReason = 'pinned';
+        }
 
         // Build conversation history for Gemini.
-        // R2.7 - aggressive sanitisation to keep payloads under ~40KB even
-        // in 30-minute sessions:
-        //   - Keep last 12 turns
-        //   - Truncate any tool-response body over 1500 chars to a digest
+        // R2.7 sanitisation, Release X expansion: flash-lite carries a 1M-token
+        // context window, so the old 12-turn / 60KB guard rails were wasting
+        // most of the model's memory. New envelope:
+        //   - Keep last 40 turns
+        //   - Truncate tool-response bodies over 4000 chars to a digest
         //   - Strip any inlineData (screenshot frames) from past turns
-        //   - Hard byte cap: if still over 60KB, drop oldest turns
+        //   - Hard byte cap: if still over 180KB, drop oldest turns
         var contents = [];
         if (Array.isArray(history)) {
-            var start = Math.max(0, history.length - 12);
+            var start = Math.max(0, history.length - 40);
             for (var i = start; i < history.length; i++) {
                 var h = history[i];
                 if (!h || !h.role || !h.parts) continue;
@@ -295,18 +318,18 @@
                         var resp = part.functionResponse.response;
                         var s = '';
                         try { s = JSON.stringify(resp); } catch (eS) {}
-                        if (s.length > 1500) {
+                        if (s.length > 4000) {
                             sanitisedParts.push({
                                 functionResponse: {
                                     name: part.functionResponse.name,
-                                    response: { result: { ok: true, _truncated: true, summary: s.substring(0, 800) + '...[' + (s.length - 800) + ' more chars trimmed]' } }
+                                    response: { result: { ok: true, _truncated: true, summary: s.substring(0, 2000) + '...[' + (s.length - 2000) + ' more chars trimmed]' } }
                                 }
                             });
                         } else {
                             sanitisedParts.push(part);
                         }
-                    } else if (part.text && part.text.length > 2000) {
-                        sanitisedParts.push({ text: part.text.substring(0, 2000) + '...[truncated]' });
+                    } else if (part.text && part.text.length > 6000) {
+                        sanitisedParts.push({ text: part.text.substring(0, 6000) + '...[truncated]' });
                     } else {
                         sanitisedParts.push(part);
                     }
@@ -320,11 +343,11 @@
             // re-serialising the entire contents array on every iteration
             // (previously O(n^2) on long sessions).
             var size = JSON.stringify(contents).length;
-            while (contents.length > 2 && size > 60000) {
+            while (contents.length > 2 && size > 180000) {
                 var dropped = contents.shift();
                 size -= JSON.stringify(dropped).length + 1;   // +1 ~ comma separator
             }
-            if (size > 60000) {
+            if (size > 180000) {
                 gs.warn('[NetraGemini] history still ' + size + ' bytes after pruning; will rely on Gemini to handle');
             }
         }
@@ -341,14 +364,15 @@
         }
         contents.push({ role: 'user', parts: userParts });
 
-        var systemInstruction = _systemPrompt();
-        var tools = _toolDeclarations();
+        var systemInstruction = _systemPrompt(liveMode);
+        var tools = _toolDeclarations(liveMode);
 
-        // Tool-use loop (max 5 iterations to prevent runaway)
+        // Tool-use loop (max 8 iterations to prevent runaway; Release X
+        // raised from 5 so multi-step research turns don't bail early)
         var modelUsed = null;
         var toolsCalled = [];   // R1 - track which tools were invoked
         var clientDirectives = {};   // R2 - navigate_url, click_button_label, etc.
-        for (var iter = 0; iter < 5; iter++) {
+        for (var iter = 0; iter < 8; iter++) {
             var resp = _callGemini(apiKey, model, contents, tools, systemInstruction);
             if (resp._model_used) modelUsed = resp._model_used;
             if (resp.error) {
@@ -399,6 +423,11 @@
                     if (result && result.click_button_label) clientDirectives.click_button_label = result.click_button_label;
                     // R2.4 - open new tab directive
                     if (result && result.open_url)           clientDirectives.open_url           = result.open_url;
+                    // R8.2 - local reminder scheduling directive
+                    if (result && result.reminder_at_ms) {
+                        clientDirectives.reminder_at_ms = result.reminder_at_ms;
+                        clientDirectives.reminder_text  = result.reminder_text || 'Reminder.';
+                    }
                     gs.info('[NetraGemini] tool ' + fc.name + ' -> ' + JSON.stringify(result).substring(0, 200));
                     responseParts.push({
                         functionResponse: {
@@ -445,6 +474,7 @@
                 history: contents,
                 paused: data.paused,
                 model_used: modelUsed,
+                route_reason: routeReason,    // R7 - fast | complex | pinned
                 tools_called: toolsCalled,    // R1 - for dev panel graph
                 directives: clientDirectives, // R2 - navigate_url / click_button_label
                 sentiment: sentimentSignal    // R2.12 - {label, score, consecutive_frustrated, suggest_escalation}
@@ -592,6 +622,17 @@
      *  On 503/429/UNAVAILABLE, transparently retry on a sibling model.
      *  All in Google's free tier.
      * =================================================================== */
+    // R7 - complexity sniff for the model auto-router. Cheap heuristics
+    // only; anything ambiguous stays on the fast model.
+    function _isComplexTurn(msg) {
+        var m = String(msg || '');
+        if (m.length > 140) return true;
+        if ((m.match(/\?/g) || []).length >= 2) return true;
+        if (/\b(why|explain|analy[sz]e|summar|compare|comparison|plan|triage|brief(ing)?|recommend|suggest|should (i|we)|how (do|would|can) (i|we)|walk me|deep dive|investigate|root cause|strategy|pros and cons|trade ?offs?|what'?s the best|prioriti[sz]e|assess|evaluate)\b/i.test(m)) return true;
+        if (/\b(and (then|also)|after that|first .* then)\b/i.test(m)) return true;
+        return false;
+    }
+
     function _callGemini(apiKey, requestedModel, contents, tools, systemInstruction) {
         // R2.12.5 - SPEED-FIRST chain, empirically calibrated May 2026:
         //   gemini-flash-lite-latest:  ~1.0s  <-- alias to Google's current
@@ -670,7 +711,8 @@
                 // 512-token budget on hidden reasoning tokens, leaving the
                 // visible reply EMPTY ("I got an empty response"). Disabling
                 // thinking + giving more output budget restores chat replies.
-                maxOutputTokens: 1024,
+                // Release X: 1024 -> 2048 so long briefings never truncate.
+                maxOutputTokens: 2048,
                 topP: 0.95,
                 thinkingConfig: { thinkingBudget: 0 }
             },
@@ -817,13 +859,26 @@
     /* ===================================================================
      *  System prompt - Indian English persona
      * =================================================================== */
-    function _systemPrompt() {
+    function _systemPrompt(liveMode) {
+        // R8.2 - on the dedicated Live stage Netra never navigates away.
+        var liveAddendum = !liveMode ? '' :
+'\n' +
+'LIVE STAGE MODE (you are on the dedicated /sp?id=netra_live page):\n' +
+'- NEVER navigate away from this page, open records, click page buttons, or open URLs - those tools are disabled here. If the user asks to open something, DESCRIBE it fully by voice instead (summarize_ticket, describe_form, related_records) and mention they can open it in another tab while you keep talking here.\n';
+        // R8 - writes are on by default; the addendum flips to a notice
+        // only when the admin kill-switch has stripped the write tools.
+        var writeAddendum = _ticketWritesEnabled() ?
+'\n' +
+'FIELD vs COMMENT: if the user names a SPECIFIC FIELD ("change the urgency of INC1234 to high"), call update_field, NOT update_ticket. update_ticket is ONLY for free-form customer-visible comments.\n'
+        :
+'\n' +
+'TICKET WRITES ARE TEMPORARILY DISABLED (admin kill-switch). The create/modify tools are stripped from your toolset right now. If asked to create or change a ticket, say so in one graceful line and pivot to the read-only help you CAN give: status, summary, search, watchlist.\n';
         return {
             parts: [{
                 text:
 'You are Netra, a female voice assistant for ServiceNow, designed specifically for blind and visually-impaired users.\n' +
 'You are speaking with ' + gs.getUserDisplayName() + '. Call them by their first name "' + gs.getUserDisplayName().split(' ')[0] + '" naturally in conversation - not in every sentence, but at the start of replies and at transitions. ' +
-'Be warm. Be empathetic. You are their trusted colleague, not a robot.\n' +
+'PERSONALITY (R7 - witty companion): you are quick-witted, playful and a little cheeky - a sharp friend who happens to run ServiceNow. Light humor in SMALL doses: a wry aside, a playful jab at a P4 that has been open for 90 days, a dry "well, that\'s new" at a weird error. Humor NEVER delays the answer - the fact always lands first, the wit rides along. Never joke about security incidents, outages affecting people, or the user\'s mistakes. Be warm, be empathetic when it matters, and drop the comedy instantly if the user sounds stressed.\n' +
 '\n' +
 'CRITICAL - ACCESSIBILITY CONTEXT:\n' +
 '- The user is BLIND. They cannot see anything on the screen.\n' +
@@ -832,8 +887,8 @@
 '- Confirm every action verbally and completely. Do not assume the user can verify on screen.\n' +
 '- Speak the entire result, do not say things like "the list is shown above".\n' +
 '\n' +
-'VOICE & LANGUAGE STYLE - R3.8 (warm, human, with audible prosody):\n' +
-'- You speak in WARM INDIAN ENGLISH but DIRECTLY, not ceremoniously. Aim for tight, conversational phrasing - like a sharp colleague over chai, not a customer-service line.\n' +
+'VOICE & LANGUAGE STYLE - R7 (fluent, playful, with audible prosody):\n' +
+'- You speak FLUENT, MODERN CONVERSATIONAL ENGLISH - the register of a great voice assistant, not a call centre. Tight phrasing, natural rhythm, personality in the word choice. (Your voice is an international multilingual neural voice; mirror the user\'s own language or Hinglish mix per the LANGUAGE MIRRORING rules.)\n' +
 '- TIGHT IS BETTER THAN VERBOSE. Keep each reply to one or two short sentences. Long thoughts belong in follow-ups.\n' +
 '- USE NATURAL VERBAL FILLERS LIKE A HUMAN: "umm,", "uhh,", "hmm,", "well,", "ah,", "right," sprinkled at the start of a sentence or before a transition. One or two per reply, where a real person would think. Bad (none): "You have eight tickets." Bad (too many): "Hmm, well, umm, you have, ah, eight tickets." Good: "Hmm, right, you have eight tickets."\n' +
 '- WRAP IMPORTANT WORDS IN DOUBLE ASTERISKS so the TTS engine STRESSES them. Wrap: ticket numbers on first mention, priorities ("**P1**", "**critical**"), states ("**resolved**", "**in progress**"), key actions ("**escalating**", "**closed**"), counts ("**eight** incidents"), dates that matter ("**Friday**"). Example: "Mihir, **INC0008001** is **resolved**, marked **complete** five minutes ago." Aim for 2 to 4 stress words per non-trivial reply. SKIP STRESS only for pure greetings ("Hi Mihir") or one-line confirmations ("Done."). When the reply names a ticket, state, priority, count or date you MUST wrap at least one word.\n' +
@@ -845,8 +900,15 @@
 '  First mention: "**I N C zero zero zero eight zero zero one** is resolved."  Follow-up: "Want me to add a comment to it?"\n' +
 '- DO NOT GREET on every turn. Just answer. Greetings only at first contact and morning briefing.\n' +
 '- DO NOT end with "anything else?" every time. Sometimes just stop. Vary: "What next?" / "Want me to escalate?" / nothing.\n' +
-'- INDIAN ENGLISH IDIOMS: still warmly used, but sparingly. "Done", "Right", "No issues", "On it" are fine. Avoid every reply ending with "Kindly do the needful".\n' +
+'- IDIOMS: casual and current. "Done", "Right", "On it", "Easy", "Say less" are fine. Never "kindly", never "do the needful", never "please be informed".\n' +
 '- ALLOWED MARKDOWN: only **double-asterisk emphasis** and "..." for pauses. No headers, bullets, code blocks, or single asterisks for italics - those break the TTS.\n' +
+'\n' +
+'RELEASE X - HUMAN TURN-TAKING (the client now supports true barge-in):\n' +
+'- The user can talk over you and your voice stops instantly, exactly like interrupting a colleague. When a message arrives after an interruption, it IS the new topic - answer it directly. No "as I was saying", no resuming the old answer unless they ask.\n' +
+'- If the interrupted answer contained something genuinely important they did not get to hear, fold ONE short fragment of it into your next reply, naturally: "By the way, that P1 I started mentioning is still waiting on network."\n' +
+'- FRONT-LOAD every reply: the single most useful fact lands in the first five words, details after. The user may cut you off once they have what they need - design for that.\n' +
+'- Vary your acknowledgements. Never open two consecutive replies with the same word.\n' +
+'- When you get interrupted mid-task, never complain, never apologise more than two words. "Sure -" and move on.\n' +
 '\n' +
 'R2.10 - LANGUAGE MIRRORING:\n' +
 '- Detect the language the user spoke in (Hindi, Spanish, French, German, Tamil, Telugu, Marathi, etc.) and REPLY IN THAT LANGUAGE.\n' +
@@ -884,31 +946,37 @@
 '- The MOMENT the user mentions a CHG number (CHG followed by 7 digits), call summarize_change BEFORE responding. Use the returned risk, planned dates, and state to inform your reply.\n' +
 '- For INC / PRB / RITM / SCTASK numbers, you may call summarize_ticket if the user is asking about it; not strictly required if the user only wants to act on it.\n' +
 '\n' +
-'R2.13 - SLOT-FILLING (mandatory-field validation on submit):\n' +
-'- During a draft (after start_record_draft, before confirm_and_create), call list_mandatory_fields with the target table FIRST. Treat its `fields` map as the authoritative checklist.\n' +
-'- After the user gives an initial sentence, parse out every field value they mentioned and slot them into the draft in ONE PASS via set_record_field. Do not ask field-by-field for fields the user has already volunteered.\n' +
-'- For each remaining empty mandatory field, prompt the user ONE AT A TIME using the field\'s `label` from list_mandatory_fields. Example: "What is the Caller?" not "what is caller_id?".\n' +
-'- Only call confirm_and_create AFTER every mandatory field has a value. confirm_and_create itself validates and will refuse with a `next_prompt` if anything is still missing — read that prompt aloud and ask the user for it. Do NOT keep retrying confirm_and_create without addressing the missing field.\n' +
-'- For reference fields (caller_id, assignment_group, etc.), use the existing lookup_user / assign_ticket_to_group tools to resolve a name into a sys_id BEFORE calling set_record_field.\n' +
-'\n' +
 'YOUR ROLE:\n' +
 'A sighted helper logged this blind user into ServiceNow. From here onward, the user runs their entire\n' +
-'workflow through you, by voice. They will ask you to open tickets, update them, resolve them,\n' +
-'check approvals, search knowledge. Be patient, be clear, be brief.\n' +
+'workflow through you, by voice. You are their eyes on the platform: tickets, approvals, knowledge,\n' +
+'vulnerabilities, people, code. Be patient, be clear, be brief.\n' +
+'\n' +
+'TICKET POLICY - FULL CONTROL (R8): you can CREATE, EDIT and MODIFY any type of ticket:\n' +
+'- Incidents, problems, change requests, catalog requests, catalog tasks - you can open them, update them, comment on them, reassign them, reprioritise them, resolve them and close them. The tools are live. Use them.\n' +
+'- You ARE the expert on existing tickets. The moment one is mentioned, know it cold - status, summary, history, priority, assignee - without being asked twice.\n' +
+'- QUICK CREATE: for a simple incident ("my email is broken, raise a ticket"), call create_ticket directly with the description - no draft ceremony. Read the new number back letter-by-digit.\n' +
+'- GUIDED CREATE: for problems, changes, catalog tasks, or when the user wants control over fields, use start_record_draft -> set_record_field -> review_draft -> confirm_and_create. Read the draft back before confirming.\n' +
+'- EDITS: resolve_ticket, update_ticket (customer comment), add_work_note, change_priority, escalate_ticket, assign_ticket_to_group, assign_ticket_to_user, update_field (any field on any ticket type by number).\n' +
+'- CONFIRM BEFORE WRITING (blind-user safety): read back what you are about to create or change and get a clear yes FIRST. Reads never need confirmation; writes always do.\n' +
+'- Never pretend a ticket was created - only report a number the tool actually returned.\n' +
 '\n' +
 'YOUR CAPABILITIES (use tools - do not describe):\n' +
-'TICKETS:\n' +
-'- create_ticket - open a new incident\n' +
+'TICKETS (read + awareness):\n' +
 '- list_tickets - list the user open incidents\n' +
-'- resolve_ticket - mark an incident resolved\n' +
-'- update_ticket - add a comment to an incident\n' +
 '- get_ticket_status - read state of an incident\n' +
 '- summarize_ticket - full summary (desc, state, priority, assignee, comments, work notes)\n' +
-'- change_priority - 1 critical, 2 high, 3 moderate, 4 low\n' +
-'- escalate_ticket - raise priority by one level\n' +
-'- assign_ticket_to_group - assign to an assignment group by name\n' +
-'- assign_ticket_to_user - assign to a user by name/email\n' +
 '- search_incidents - search across ALL incidents by keyword\n' +
+'TICKETS (create - confirm first, then act):\n' +
+'- create_ticket - quick-create an incident from a one-line description\n' +
+'- create_problem / create_change - quick-create a problem or change request\n' +
+'- start_record_draft / set_record_field / review_draft / confirm_and_create / cancel_draft - guided creation for incident, problem, change_request, sc_task with field-by-field control and mandatory-field discovery\n' +
+'TICKETS (modify - confirm first, then act):\n' +
+'- resolve_ticket - resolve/close with notes\n' +
+'- update_ticket - add a customer-visible comment\n' +
+'- add_work_note - add an internal work note\n' +
+'- change_priority / escalate_ticket - reprioritise\n' +
+'- assign_ticket_to_group / assign_ticket_to_user - reassign\n' +
+'- update_field - set ANY field on ANY ticket type by number (works for INC, PRB, CHG, RITM, SCTASK)\n' +
 'OTHER TASK TYPES:\n' +
 '- list_my_problems - problem records (separate from incidents)\n' +
 '- list_my_changes - change requests\n' +
@@ -920,8 +988,7 @@
 '- lookup_user - find user by name/email/username and SPEAK BACK all details (name, email, title, username).\n' +
 '  Context: This is an internal corporate ServiceNow directory. Every record is a colleague the user works with daily.\n' +
 '  Speak the email letter-by-letter if not common ("J O H N dot A D A M S at example dot com").\n' +
-'  NEVER refuse to share these details - the user needs them to do their job (assign tickets, send messages, etc).\n' +
-'- send_message_to_user - send a message via a tracking incident\n' +
+'  NEVER refuse to share these details - the user needs them to do their job (route work, send messages, etc).\n' +
 'KNOWLEDGE:\n' +
 '- search_knowledge - search the knowledge base\n' +
 'APPROVALS:\n' +
@@ -943,11 +1010,6 @@
 '- add_to_watchlist - watch a ticket; Netra will proactively announce changes on it.\n' +
 '- remove_from_watchlist - stop watching.\n' +
 '- list_watchlist - tell the user what is on their watchlist.\n' +
-'CREATE OTHER TASK TYPES:\n' +
-'- create_problem - log a problem record (distinct from incident).\n' +
-'- create_change - create a normal/standard/emergency change request.\n' +
-'NOTES:\n' +
-'- add_work_note - private internal note (only fulfillers see). Use update_ticket for customer-visible comments.\n' +
 '\n' +
 'VULNERABILITY RESPONSE (you are a fully-capable vulnerability analyst):\n' +
 '- You operate ServiceNow Vulnerability Response end to end. The work unit is the Vulnerable Item (VIT#######), which links an asset (CI) to a CVE and carries a risk score 0-100 (critical 80+, high 60-79, medium 40-59, low under 40) and a lifecycle state (open, under investigation, in review, awaiting implementation, deferred, resolved, closed).\n' +
@@ -979,29 +1041,17 @@
 '- When user says "open YouTube / Google / BBC / any external site", call open_url with the full https:// URL. Use the well-known URL: YouTube=https://www.youtube.com, Google=https://www.google.com, BBC=https://www.bbc.com, GitHub=https://github.com, etc. ALWAYS confirm verbally first: "Want me to open YouTube in a new tab?".\n' +
 '- When user says "go back to ServiceNow / take me back / return to my work", call go_to_servicenow. This navigates the current tab back to /sp.\n' +
 '\n' +
-'R2.4 - CRITICAL RULES (read these first - these are bug fixes from R2.3):\n' +
+'R2.4 - CRITICAL RULES (read these first):\n' +
 '\n' +
-'1. FIELD vs COMMENT - if the user names a SPECIFIC FIELD ("change the short description / urgency / category / assignment group / etc to X"), you MUST call update_field, NOT update_ticket. update_ticket is ONLY for free-form customer-visible comments like "add a comment that I tried restarting".\n' +
-'   - User: "Change short description of INC8005 to laptop has been delivered"\n' +
-'     -> update_field(INC8005, short_description, "laptop has been delivered") - NOT update_ticket\n' +
-'   - User: "Set urgency of INC1234 to high"\n' +
-'     -> update_field(INC1234, urgency, "high")\n' +
-'   - User: "Add a comment that I restarted the router"\n' +
-'     -> update_ticket(INC1234, comment="restarted the router") - this one IS a comment\n' +
-'\n' +
-'2. AMBIGUOUS NAMES - never guess. If the user says "message John" with no last name or email, you MUST call lookup_user(John) first. If it returns multiple matches, ASK the user which one. Do NOT create a ticket with name "John". Messaging is NEVER create_ticket. Messaging is send_sidebar_message after you have a confirmed recipient.\n' +
+'1. AMBIGUOUS NAMES - never guess. If the user says "message John" with no last name or email, you MUST call lookup_user(John) first. If it returns multiple matches, ASK the user which one. Messaging is send_sidebar_message after you have a confirmed recipient.\n' +
 '   - User: "Message John"\n' +
 '     -> lookup_user(John) -> "I found two Johns: John Adams and John Smith. Which one?"\n' +
 '     -> User: "Adams" -> send_sidebar_message(recipient_name="John Adams", ...)\n' +
-'   - NEVER create_ticket with short_description=John just because you saw the word "message".\n' +
 '\n' +
-'3. CONFIRM BEFORE WRITING (blind-user safety) - for EVERY destructive or update operation, you MUST first describe what you are about to do and wait for explicit yes. Tools that need confirmation: update_field, update_ticket, resolve_ticket, escalate_ticket, change_priority, assign_ticket_to_*, decide_approval, send_sidebar_message, confirm_and_create_record, click_button (write actions), open_url, navigate_to_record (only if it leaves /sp), go_to_servicenow.\n' +
-'   - User: "Set urgency of INC1234 to high"\n' +
-'     -> "Just to confirm - set urgency of I N C zero zero one two three four from " + current + " to high?"\n' +
-'     -> User: "Yes" -> THEN call update_field.\n' +
-'   - For tiny read-only operations (list, lookup, search, briefing) you do NOT need to confirm. Just do them.\n' +
+'2. CONFIRM BEFORE WRITING (blind-user safety) - for EVERY operation that changes something, describe what you are about to do and wait for explicit yes. Tools that need confirmation: create_ticket, create_problem, create_change, confirm_and_create, resolve_ticket, update_ticket, add_work_note, change_priority, escalate_ticket, assign_ticket_to_group, assign_ticket_to_user, update_field, decide_approval, send_sidebar_message, assign_vulnerable_item, set_vulnerable_item_state, defer_vulnerable_item, click_button (write actions), open_url, navigate_to_record (only if it leaves /sp), go_to_servicenow.\n' +
+'   - For read-only operations (list, lookup, search, summarize, briefing) you do NOT confirm. Just do them - speed is the feature.\n' +
 '\n' +
-'4. WHEN UNSURE, SAY NO. Better to ask "I am not sure I followed - did you mean X or Y?" than to do the wrong write. Refuse politely if intent is unclear: "I am not sure exactly what to update there - could you say it again?".\n' +
+'3. WHEN UNSURE, SAY NO. Better to ask "I am not sure I followed - did you mean X or Y?" than to do the wrong write. Refuse politely if intent is unclear.\n' +
 '\n' +
 'CAPABILITIES & MEMORY:\n' +
 '- When user asks "what can you do?" / "help me" / "show me your features" - call list_capabilities and read the categories.\n' +
@@ -1010,53 +1060,81 @@
 '- When user has just captured a screenshot (system tells you an image was attached) - look at it carefully and answer their question naturally.\n' +
 '- Memory is YOURS - past exchanges are stored. Use them. Reference them. "Like the VPN issue we discussed earlier..."\n' +
 '\n' +
-'CREATING TICKETS - MANDATORY MULTI-TURN DRAFT FLOW (this is the most important rule):\n' +
-'- NEVER call create_ticket, create_problem, or create_change directly. Those tools still exist but you MUST NOT use them.\n' +
-'- Instead, when the user says "open / create / log / raise / file a ticket / problem / change":\n' +
-'  1. Call start_record_draft(record_type, initial_short_description) - this stages a draft in context.\n' +
-'  2. Look at the returned "missing" array. Ask the user for the FIRST missing required field, ONE QUESTION AT A TIME.\n' +
-'  3. When the user answers, call set_record_field(field, value). The returned "next_prompt" tells you what to ask next.\n' +
-'  4. The user can CHANGE any earlier field at any time. e.g. "wait, set urgency to high" -> set_record_field(urgency, 2). Acknowledge the change ("Got it, urgency is now high.").\n' +
-'  5. Once "ready_to_create" is true (no missing fields), call review_draft. Read its "summary" back to the user verbatim, then ask: "Shall I create it now, Mihir?"\n' +
-'  6. Wait for explicit yes ("yes", "go ahead", "create it", "confirmed", "do it"). ONLY THEN call confirm_and_create.\n' +
-'  7. If user says "no" / "wait" / "change ..." - DO NOT call confirm_and_create. Instead update the field and re-review.\n' +
-'  8. If user says "cancel" / "forget it" / "never mind" - call cancel_draft.\n' +
+'WHEN THE USER WANTS A TICKET RAISED (create it - this is your job):\n' +
+'- "Open / create / log / raise / file a ticket" -> get the one-line description (ask if they have not given it), OPTIONALLY run search_incidents first to flag an existing duplicate, then confirm: "Shall I raise an incident for <description>?" On yes, call create_ticket and read the new number back letter-by-digit.\n' +
+'- For "raise a problem" / "open a change" use create_problem / create_change the same way; for anything needing more fields, drive the draft flow (start_record_draft).\n' +
+'- If a duplicate exists, mention it and ask whether to update that one instead of opening a new one - then do whichever they choose.\n' +
+'- Always land on something you DID for them: a created number, an updated record, or a clear answer.\n' +
 '\n' +
 'SENDING MESSAGES TO COLLEAGUES - USE SIDEBAR DISCUSSIONS:\n' +
-'- When the user says "send a message to / tell / ping / message X" - ALWAYS use send_sidebar_message, NEVER send_message_to_user.\n' +
+'- When the user says "send a message to / tell / ping / message X" - ALWAYS use send_sidebar_message.\n' +
 '- send_sidebar_message creates a real ServiceNow Sidebar Discussion that pops up in the recipients Now sidebar as a chat.\n' +
 '- After sending, confirm verbally: "Done, Mihir. I have started a sidebar chat with John Adams and sent your message."\n' +
 '\n' +
 'DESTRUCTIVE ACTIONS - ALWAYS CONFIRM:\n' +
-'- resolve_ticket, escalate_ticket, change_priority, assign_ticket_to_*, decide_approval are DESTRUCTIVE. Read back what you are about to do and ask "shall I?" before acting. Only proceed on yes.\n' +
+'- decide_approval and every vulnerable-item mutation are DESTRUCTIVE. Read back what you are about to do and ask "shall I?" before acting. Only proceed on yes.\n' +
 '\n' +
 'TICKET REFERENCES:\n' +
 '- IF the user mentions a ticket number, call set_focus_ticket FIRST.\n' +
 '- IF the user says "it" / "that ticket" / "this one" - call recall_focus first.\n' +
 '\n' +
-'HUMANE TONE:\n' +
-'- Use phrases like "no worries", "happy to help", "let me take a look", "consider it done", "shall I?", "right away".\n' +
-'- CELEBRATE small wins: "Done. INC zero zero one two is resolved - one down from your plate."\n' +
-'- ON ERRORS, be human: "Hmm, that did not go through. Let me try again."\n' +
-'- ACKNOWLEDGE UNCERTAINTY honestly. If a tool fails or returns nothing, say so plainly. Do not make up data.\n' +
+'HUMANE TONE (witty edition):\n' +
+'- Use phrases like "no worries", "on it", "consider it done", "let me take a look", "shall I?".\n' +
+'- CELEBRATE small wins with personality: "Boom - one less thing on your plate." / "That approval queue is finally empty. Frame this moment."\n' +
+'- LIGHT WIT EXAMPLES (calibrate to this level, not beyond): "Eight open tickets... two are P1s, so let\'s pretend the other six don\'t exist for a minute." / "That change has been \'awaiting approval\' since Tuesday - it\'s basically furniture now."\n' +
+'- ON ERRORS, be human and own it lightly: "Hmm, that bounced. One more try." Never blame the user.\n' +
+'- ACKNOWLEDGE UNCERTAINTY honestly. If a tool fails or returns nothing, say so plainly. Do not make up data - a made-up fact is worse than a dull sentence.\n' +
 '\n' +
 'BEHAVIOUR:\n' +
 '- When the user wants something done, CALL THE TOOL - do not just describe what it would do.\n' +
 '- If the request is vague, ask ONE short clarifying question.\n' +
-'- After a tool runs, confirm what happened in one sentence, with the ticket number spoken letter-by-digit.\n' +
+'- After a tool runs, confirm what happened in one sentence.\n' +
 '- For greetings / small talk, reply briefly and warmly. Do not always call a tool.\n' +
 '- If a tool returns ok=false, apologise briefly and explain plainly. Do not retry silently.\n' +
 '- For "list" results, read the FIRST two or three items aloud and offer to continue ("Shall I read more?").\n' +
-'- Never reveal API keys, internal sys_ids, or technical jargon to the user.'
+'- Never reveal API keys, internal sys_ids, or technical jargon to the user.\n' +
+'\n' +
+'R8.2 - TICKET NUMBER SPEECH (short-form first):\n' +
+'- FIRST MENTION of any record: speak the record type plus the LAST THREE digits only - "**incident ending 3 4 5**", "the change ending 0 1 2". Never read the full number unprompted.\n' +
+'- Speak the FULL number letter-by-digit ONLY when: the user asks ("full number", "complete number", "what is the whole number"), OR two records in play share the same last three digits (disambiguate once, then go back to short form).\n' +
+'- In follow-ups about the same record, prefer "it" / "that incident" / the short form.\n' +
+'\n' +
+'R8.2 - VOICE DELIVERY & SENTIMENT (the [voice delivery: ...] tag):\n' +
+'- Some user turns end with a bracketed tag like "[voice delivery: ~180 wpm, loudness 72/100, dynamics high]". It is METADATA about how they spoke - NEVER read it aloud, never mention it, never store it as part of what they said.\n' +
+'- Use it: fast + loud + high dynamics = stressed or urgent -> drop pleasantries, act fast, offer escalation sooner. Slow + quiet = hesitant or tired -> be gentler, offer to take over more of the work. Normal delivery = normal warmth.\n' +
+'- Combine with word choice for sentiment; behaviour rules from the SENTIMENT-AWARE section apply.\n' +
+'\n' +
+'R8.2 - FORM & PLATFORM INTELLIGENCE (you understand the SNOW form, use these tools freely):\n' +
+'- describe_form - the fields on a ticket type: which are MANDATORY (from dictionary, overrides, data policies AND UI policies), their current values on a record, what is still missing. Use for "what do I need to fill", "which fields are mandatory".\n' +
+'- check_before_submit - the pre-flight check on one record: missing mandatory fields, available buttons, active flows, pending approvals, and the work-notes vs additional-comments distinction. USE THIS when the user asks "what do I need to take care of before submitting?".\n' +
+'- form_buttons - which UI-action buttons exist on the record\'s form (Save, Resolve, etc.) and when they show. explain_button - what actually happens when a SPECIFIC button is clicked (reads its server code and explains in plain words).\n' +
+'- field_change_effects - what happens when a field changes: which OTHER fields become visible / mandatory / read-only (UI policies) and which client scripts react. Use for "if I change category what happens", "why did a new field appear". PROACTIVELY mention new fields that will pop up when guiding a user through a field change.\n' +
+'- active_flows - running Flow Designer flows / workflows on a record. pending approvals come back from check_before_submit or approvals_for_record.\n' +
+'- related_records - the complete picture around one ticket: attachments, SLAs (with % consumed), child tasks, affected CIs, linked problem/change, comment counts. Drill into any of them when probed.\n' +
+'- my_recent_records - anything YOUR actions just created (new tickets born from a button click, a flow, a catalog order) in the last N minutes. Use when the user asks "did that create something?", "what just happened?", or after click-like actions to notify: "heads up - that action opened a new task ending 0 4 2".\n' +
+'- WORK NOTES vs ADDITIONAL COMMENTS: work notes are INTERNAL (fulfillers only), additional comments are CUSTOMER-VISIBLE and may email the caller. Always say which one you are writing to, and use add_work_note vs update_ticket accordingly.\n' +
+'- ERROR MESSAGES: if a write tool returns ok=false with a platform error, read the error meaning in plain words and suggest the likely fix (missing mandatory field, invalid choice value, ACL).\n' +
+'\n' +
+'R8.2 - REMINDERS:\n' +
+'- set_reminder - "remind me in 2 hours to check the P1" -> set_reminder(text, minutes). Confirm back with the due time. list_reminders and cancel_reminder manage them.\n' +
+'- Reminders are announced by voice when due (to the minute while the page is open; within ~5 minutes otherwise).'
++ writeAddendum
++ liveAddendum
             }]
         };
     }
 
     /* ===================================================================
      *  Tool declarations passed to Gemini
+     *
+     *  Release X: declarations are filtered through the ticket safety
+     *  policy before they reach the model - creation tools never appear,
+     *  mutation tools appear only when <scope>.ticket_writes is 'true'.
+     *  A smaller tool surface also trims the prompt payload, which
+     *  measurably cuts first-token latency on flash-lite.
      * =================================================================== */
-    function _toolDeclarations() {
-        return [{
+    function _toolDeclarations(liveMode) {
+        var all = [{
             functionDeclarations: [
                 {
                     name: 'create_ticket',
@@ -1324,9 +1402,9 @@
                 // ------- R1.3 - draft + confirmation flow (Claude-style) -------
                 {
                     name: 'start_record_draft',
-                    description: 'Begin a CONVERSATIONAL DRAFT for a new ticket. Use this INSTEAD OF create_ticket/create_problem/create_change when the user says "open a ticket / log a problem / raise a change". This starts a multi-turn conversation: Netra asks for required fields one at a time, the user can change earlier answers, and only after explicit confirmation is the record actually inserted. Pass record_type = incident|problem|change_request. NEVER call create_ticket directly any more.',
+                    description: 'Begin a CONVERSATIONAL DRAFT for a new ticket when the user wants field-by-field control, or for record types beyond a simple incident. This starts a multi-turn conversation: Netra asks for required fields one at a time, the user can change earlier answers, and only after explicit confirmation is the record actually inserted. Pass record_type = incident|problem|change_request|sc_task|sc_req_item. For a simple one-line incident, create_ticket is faster.',
                     parameters: { type: 'object', properties: {
-                        record_type: { type: 'string', enum: ['incident','problem','change_request'], description: 'The table to draft' },
+                        record_type: { type: 'string', enum: ['incident','problem','change_request','sc_task','sc_req_item'], description: 'The table to draft' },
                         initial_short_description: { type: 'string', description: 'Optional first sentence captured from the user' }
                     }, required: ['record_type'] }
                 },
@@ -1571,9 +1649,164 @@
                         number: { type: 'string', description: 'VIT number' },
                         note:   { type: 'string', description: 'The note text.' }
                     }, required: ['number', 'note'] }
+                },
+                // ------- R8.2 - SNOW form & platform intelligence -------
+                {
+                    name: 'describe_form',
+                    description: 'Describe the form for a ticket: every MANDATORY field (from dictionary, overrides, data policies and UI policies), plus current values and what is still missing when a record number is given. Use for "which fields are mandatory", "what do I need to fill in".',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'Optional record number (INC/PRB/CHG/RITM/SCTASK) to check actual values' },
+                        table: { type: 'string', description: 'Optional table name when no number, e.g. incident' }
+                    } }
+                },
+                {
+                    name: 'check_before_submit',
+                    description: 'Pre-flight check before submitting/saving a ticket: missing mandatory fields, form buttons available, active flows, pending approvals, data policies that will enforce, and the work-notes vs additional-comments guidance. Use when the user asks "what do I need to take care of before submitting?"',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'Record number' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'form_buttons',
+                    description: 'List the UI-action buttons on a ticket\'s form (Save, Resolve, Close, etc.), with hints about when each shows. Use for "what buttons are there for me to click".',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'Record number (or pass table)' },
+                        table: { type: 'string', description: 'Optional table name' }
+                    } }
+                },
+                {
+                    name: 'explain_button',
+                    description: 'Explain what actually happens when a SPECIFIC form button is clicked - reads the button\'s server logic and summarizes it in plain words. Use for "what happens after I click resolve".',
+                    parameters: { type: 'object', properties: {
+                        label: { type: 'string', description: 'Button label, e.g. Resolve, Save, Close Incident' },
+                        ticket_number: { type: 'string', description: 'Record number for table context' },
+                        table: { type: 'string', description: 'Optional table name' }
+                    }, required: ['label'] }
+                },
+                {
+                    name: 'field_change_effects',
+                    description: 'What happens when a given field changes on a form: which other fields become visible / mandatory / read-only (UI policies) and which client scripts react. Use for "if I change X what happens", "why did a new field appear".',
+                    parameters: { type: 'object', properties: {
+                        field: { type: 'string', description: 'Field name or label, e.g. category, state' },
+                        ticket_number: { type: 'string', description: 'Record number for table context' },
+                        table: { type: 'string', description: 'Optional table name' }
+                    }, required: ['field'] }
+                },
+                {
+                    name: 'active_flows',
+                    description: 'Running Flow Designer flows and classic workflows attached to a record. Use for "is there an active flow on this".',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'Record number' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'approvals_for_record',
+                    description: 'Pending (and recent) approvals attached to a specific record, with approver names. Use for "any approvals pending on this change".',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'Record number' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'related_records',
+                    description: 'The complete related picture around one ticket: attachments, SLAs with % consumed, child tasks, affected CIs, linked problem/change, comment and work-note counts. Pass kind to drill into one list (attachments|slas|tasks|cis|approvals).',
+                    parameters: { type: 'object', properties: {
+                        ticket_number: { type: 'string', description: 'Record number' },
+                        kind: { type: 'string', description: 'Optional drill-in: attachments | slas | tasks | cis | approvals' }
+                    }, required: ['ticket_number'] }
+                },
+                {
+                    name: 'my_recent_records',
+                    description: 'Records created in the last N minutes by the current user or their actions (new tickets born from button clicks, flows, catalog orders). Use for "did that create something?", "what just happened?".',
+                    parameters: { type: 'object', properties: {
+                        minutes: { type: 'string', description: 'Look-back window in minutes, default 15' }
+                    } }
+                },
+                // ------- R8.2 - reminders -------
+                {
+                    name: 'set_reminder',
+                    description: 'Set a voice reminder: "remind me in 2 hours to check the P1" -> set_reminder("check the P1", 120). Confirm the due time back to the user.',
+                    parameters: { type: 'object', properties: {
+                        text: { type: 'string', description: 'What to remind about' },
+                        minutes: { type: 'string', description: 'Minutes from now' }
+                    }, required: ['text', 'minutes'] }
+                },
+                {
+                    name: 'list_reminders',
+                    description: 'List the user\'s pending reminders.',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'cancel_reminder',
+                    description: 'Cancel a pending reminder matching the given text.',
+                    parameters: { type: 'object', properties: {
+                        text: { type: 'string', description: 'Words from the reminder to cancel' }
+                    }, required: ['text'] }
                 }
             ]
         }];
+        // R8 - ticket writes are first-class. The kill-switch property
+        // (<scope>.ticket_writes = 'false') still strips write tools for
+        // emergencies, but the default is FULL create/edit/modify.
+        // R8.2 - on the Live stage, navigation/click tools are stripped so
+        // the model can never plan a page exit.
+        var allowWrites = _ticketWritesEnabled();
+        var LIVE_BLOCKED = { navigate_to_record: 1, open_url: 1, go_to_servicenow: 1, click_button: 1 };
+        if (allowWrites && !liveMode) return all;
+        var createMap = _ticketCreateTools();
+        var mutateMap = _ticketMutateTools();
+        var kept = [];
+        var decls = all[0].functionDeclarations;
+        for (var d = 0; d < decls.length; d++) {
+            var nm = decls[d] && decls[d].name;
+            if (!allowWrites && (createMap[nm] || mutateMap[nm])) continue;
+            if (liveMode && LIVE_BLOCKED[nm]) continue;
+            kept.push(decls[d]);
+        }
+        return [{ functionDeclarations: kept }];
+    }
+
+    /* ===================================================================
+     *  R8 - TICKET WRITE POLICY (full control, kill-switch retained)
+     *
+     *  Netra has FULL create / edit / modify capability on every ticket
+     *  type: incidents, problems, change requests, catalog requests and
+     *  catalog tasks. Writes are enabled by default.
+     *
+     *  Emergency kill-switch: setting the instance property
+     *  <scope>.ticket_writes to exactly 'false' strips every create and
+     *  mutate tool from the Gemini declarations (see _toolDeclarations)
+     *  and hard-refuses them in the dispatcher below - defence-in-depth
+     *  in case a stale conversation history still references one.
+     * =================================================================== */
+    // Hoisted function declarations (NOT vars): the widget server body is
+    // one IIFE whose action router executes above this point, so a plain
+    // `var MAP = {...}` would still be undefined when a chat dispatches.
+    function _ticketCreateTools() {
+        return {
+            create_ticket: 1, create_problem: 1, create_change: 1,
+            start_record_draft: 1, set_record_field: 1, review_draft: 1,
+            confirm_and_create: 1,
+            send_message_to_user: 1   // legacy path opened a tracking incident
+        };
+    }
+    function _ticketMutateTools() {
+        return {
+            resolve_ticket: 1, update_ticket: 1, change_priority: 1,
+            escalate_ticket: 1, assign_ticket_to_group: 1,
+            assign_ticket_to_user: 1, add_work_note: 1, update_field: 1
+        };
+    }
+    function _ticketWritesEnabled() {
+        // R8 default: ON. Only an explicit 'false' disables ticket writes.
+        return gs.getProperty(SCOPE + '.ticket_writes', 'true') !== 'false';
+    }
+    function _ticketPolicyRefusal(name) {
+        return {
+            ok: false,
+            read_only: true,
+            refused_tool: name,
+            message: 'Ticket writes are temporarily disabled by the administrator (kill-switch engaged). Offer the read-only alternative instead - status, summary, or adding it to the watchlist.'
+        };
     }
 
     /* ===================================================================
@@ -1581,6 +1814,12 @@
      * =================================================================== */
     function _runTool(name, args) {
         try {
+            // R8 - writes are on by default; the gate only fires when the
+            // admin kill-switch (<scope>.ticket_writes = 'false') is set.
+            if (!_ticketWritesEnabled() &&
+                (_ticketCreateTools()[name] || _ticketMutateTools()[name])) {
+                return _ticketPolicyRefusal(name);
+            }
             var tools = new NetraTools();
             switch (name) {
                 case 'create_ticket':
@@ -1705,6 +1944,32 @@
                     return _narrateScript(String(args.query || ''));
                 case 'build_query':
                     return _buildQuery(String(args.natural_language || ''), String(args.table || 'incident'));
+                // R8.2 - SNOW form & platform intelligence
+                case 'describe_form':
+                    return _describeForm(_normNum(args.ticket_number), String(args.table || ''));
+                case 'check_before_submit':
+                    return _checkBeforeSubmit(_normNum(args.ticket_number));
+                case 'form_buttons':
+                    return _formButtons(_normNum(args.ticket_number), String(args.table || ''));
+                case 'explain_button':
+                    return _explainButton(String(args.label || ''), _normNum(args.ticket_number), String(args.table || ''));
+                case 'field_change_effects':
+                    return _fieldChangeEffects(String(args.field || ''), _normNum(args.ticket_number), String(args.table || ''));
+                case 'active_flows':
+                    return _activeFlows(_normNum(args.ticket_number));
+                case 'approvals_for_record':
+                    return _approvalsForRecord(_normNum(args.ticket_number));
+                case 'related_records':
+                    return _relatedRecords(_normNum(args.ticket_number), String(args.kind || ''));
+                case 'my_recent_records':
+                    return _myRecentRecords(parseInt(args.minutes, 10) || 15);
+                // R8.2 - reminders
+                case 'set_reminder':
+                    return _setReminder(String(args.text || ''), parseInt(args.minutes, 10) || 60);
+                case 'list_reminders':
+                    return _listReminders();
+                case 'cancel_reminder':
+                    return _cancelReminder(String(args.text || ''));
                 // R2.13 - auto-read + slot-filling
                 case 'read_knowledge_article':
                     return _readKnowledgeArticle(String(args.query || ''));
@@ -1755,9 +2020,17 @@
      *  v11 extended tool implementations
      * =================================================================== */
     function _getIncident(num) {
-        var gr = new GlideRecord('incident');
-        if (!gr.get('number', num)) return null;
-        return gr;
+        // R8 - type-aware: resolves the table from the number prefix
+        // (INC/PRB/CHG/REQ/RITM/SCTASK) so every mutation helper built on
+        // this works across all ticket types, with incident as fallback.
+        var table = _tableForNumber(num) || 'incident';
+        var gr = new GlideRecord(table);
+        if (gr.get('number', num)) return gr;
+        if (table !== 'incident') {
+            gr = new GlideRecord('incident');
+            if (gr.get('number', num)) return gr;
+        }
+        return null;
     }
 
     function _changePriority(num, p) {
@@ -2354,7 +2627,9 @@
     var REQUIRED_FIELDS = {
         incident:        ['short_description'],
         problem:         ['short_description'],
-        change_request:  ['short_description','type']
+        change_request:  ['short_description','type'],
+        sc_task:         ['short_description'],
+        sc_req_item:     ['short_description']
     };
     // Friendly prompt text for each field
     var FIELD_PROMPTS = {
@@ -2703,6 +2978,520 @@
     }
 
     /* ===================================================================
+     *  R8.2 - SNOW FORM & PLATFORM INTELLIGENCE
+     *
+     *  Netra understands the form the analyst is working on: mandatory
+     *  fields across all four declaration layers, UI-action buttons and
+     *  what they do, UI-policy reactions to field changes, active flows,
+     *  approvals, related records, and records freshly created by the
+     *  user's own actions. All read-only platform metadata queries.
+     * =================================================================== */
+    function _tableChainOf(table) {
+        var chain = [table];
+        try {
+            var t = new GlideRecord('sys_db_object');
+            var cur = table;
+            var guard = 0;
+            while (cur && guard++ < 6) {
+                t.initialize();
+                if (!t.get('name', cur)) break;
+                var sup = t.super_class ? String(t.super_class.name || '') : '';
+                if (!sup || chain.indexOf(sup) >= 0) break;
+                chain.push(sup);
+                cur = sup;
+            }
+        } catch (eC) {}
+        return chain;
+    }
+    function _recFor(num) {
+        if (!num) return null;
+        var table = _tableForNumber(num);
+        if (!table) return null;
+        var gr = new GlideRecord(table);
+        if (!gr.get('number', num)) return null;
+        return { table: table, gr: gr };
+    }
+    function _tableFromArgs(num, table) {
+        if (num) {
+            var r = _recFor(num);
+            if (r) return r;
+        }
+        if (table) {
+            var t = String(table).toLowerCase().replace(/\s+/g, '_');
+            var MAPT = { ticket: 'incident', incidents: 'incident', changes: 'change_request', change: 'change_request', problems: 'problem' };
+            t = MAPT[t] || t;
+            var probe = new GlideRecord(t);
+            if (probe.isValid()) return { table: t, gr: null };
+        }
+        return num || table ? null : { table: 'incident', gr: null };
+    }
+
+    function _describeForm(num, table) {
+        var ctxRec = _tableFromArgs(num, table);
+        if (!ctxRec) return { ok: false, error: 'I could not resolve that record or table.' };
+        var mand = _mandatoryFields(ctxRec.table);
+        var out = [], missing = [];
+        for (var f in mand) {
+            if (!mand.hasOwnProperty(f)) continue;
+            var entry = { field: f, label: mand[f].label, declared_by: mand[f].source };
+            if (ctxRec.gr) {
+                var val = '';
+                try { val = String(ctxRec.gr.getDisplayValue(f) || ''); } catch (eV) {}
+                entry.current_value = val.substring(0, 120);
+                if (!val) missing.push(mand[f].label);
+            }
+            out.push(entry);
+        }
+        // choice options for the classic dropdowns the analyst asks about
+        var choiceFields = ['state', 'priority', 'urgency', 'impact', 'category', 'contact_type'];
+        var choices = {};
+        try {
+            var chain = _tableChainOf(ctxRec.table);
+            for (var ci = 0; ci < choiceFields.length; ci++) {
+                var cf = choiceFields[ci];
+                var cg = new GlideRecord('sys_choice');
+                cg.addQuery('name', 'IN', chain.join(','));
+                cg.addQuery('element', cf);
+                cg.addQuery('inactive', false);
+                cg.addQuery('language', 'en');
+                cg.orderBy('sequence');
+                cg.setLimit(12);
+                cg.query();
+                var opts = [];
+                var seenOpt = {};
+                while (cg.next()) {
+                    var lbl = String(cg.label);
+                    if (seenOpt[lbl]) continue;
+                    seenOpt[lbl] = 1;
+                    opts.push(lbl);
+                }
+                if (opts.length) choices[cf] = opts;
+            }
+        } catch (eCh) {}
+        return {
+            ok: true,
+            table: ctxRec.table,
+            number: num || null,
+            mandatory_fields: out,
+            missing_mandatory: missing,
+            dropdown_options: choices,
+            message: num
+                ? (missing.length
+                    ? 'Mandatory fields still empty on ' + num + ': ' + missing.join(', ') + '.'
+                    : 'All mandatory fields on ' + num + ' are filled.')
+                : ('The ' + ctxRec.table + ' form declares ' + out.length + ' mandatory fields.')
+        };
+    }
+
+    // Hoisted function (NOT a var): the widget server body is one IIFE whose
+    // action router executes above this point - a `var MAP = {...}` would
+    // still be undefined when a chat dispatches (same trap as the ticket
+    // policy maps).
+    function _uiActionMeanings() {
+        return {
+            sysverb_update: 'saves the record and returns to the previous list',
+            sysverb_update_and_stay: 'saves the record and stays on the form',
+            sysverb_insert: 'creates the record',
+            sysverb_delete: 'permanently deletes the record',
+            resolve_incident: 'marks the incident resolved (you will need resolution code and notes)',
+            close_incident: 'closes the incident permanently'
+        };
+    }
+    function _formButtonRows(tableName) {
+        var chain = _tableChainOf(tableName);
+        chain.push('global');
+        var ua = new GlideRecord('sys_ui_action');
+        ua.addQuery('table', 'IN', chain.join(','));
+        ua.addQuery('active', true);
+        ua.addQuery('form_button', true);
+        ua.orderBy('order');
+        ua.setLimit(20);
+        ua.query();
+        var rows = [];
+        while (ua.next()) {
+            rows.push({
+                label: String(ua.name),
+                action_name: String(ua.action_name || ''),
+                hint: String(ua.hint || ''),
+                comments: String(ua.comments || '').substring(0, 160),
+                shown_when: String(ua.condition || '').substring(0, 160) || 'always',
+                meaning: _uiActionMeanings()[String(ua.action_name || '')] || null,
+                sys_id: String(ua.sys_id)
+            });
+        }
+        return rows;
+    }
+    function _formButtons(num, table) {
+        var ctxRec = _tableFromArgs(num, table);
+        if (!ctxRec) return { ok: false, error: 'I could not resolve that record or table.' };
+        var rows = _formButtonRows(ctxRec.table);
+        return {
+            ok: true,
+            table: ctxRec.table,
+            buttons: rows,
+            message: rows.length + ' form buttons on ' + ctxRec.table +
+                     '. Conditions decide which show on a given record; ask "what happens when I click <name>" for any of them.'
+        };
+    }
+    function _explainButton(label, num, table) {
+        if (!label) return { ok: false, error: 'Which button?' };
+        var ctxRec = _tableFromArgs(num, table);
+        if (!ctxRec) return { ok: false, error: 'I could not resolve that record or table.' };
+        var chain = _tableChainOf(ctxRec.table);
+        chain.push('global');
+        var ua = new GlideRecord('sys_ui_action');
+        ua.addQuery('table', 'IN', chain.join(','));
+        ua.addQuery('active', true);
+        ua.addEncodedQuery('nameLIKE' + label + '^ORaction_nameLIKE' + label.toLowerCase().replace(/\s+/g, '_'));
+        ua.setLimit(1);
+        ua.query();
+        if (!ua.next()) return { ok: false, error: 'No button matching "' + label + '" on ' + ctxRec.table + '.' };
+        var script = String(ua.script || '');
+        var meaning = _uiActionMeanings()[String(ua.action_name || '')] || '';
+        var explanation = '';
+        if (script && script.length > 40) {
+            try {
+                var rr = _reasonText(
+                    'You explain ServiceNow UI Action buttons to a blind IT analyst in 2-3 plain spoken sentences: what clicking it changes on the record, any prompts or redirects, any side effects (emails, child records). No code talk.',
+                    'Button "' + String(ua.name) + '" on table ' + ctxRec.table + '. Condition: ' + String(ua.condition || 'none') + '. Script:\n' + script.substring(0, 5000));
+                explanation = String(rr || '').substring(0, 700);
+            } catch (eRs) {}
+        }
+        return {
+            ok: true,
+            button: String(ua.name),
+            table: ctxRec.table,
+            shown_when: String(ua.condition || '') || 'always',
+            hint: String(ua.hint || ''),
+            what_happens: explanation || meaning || String(ua.comments || '') ||
+                          'It runs a server action on the record; I could not summarize the code this time.',
+            message: 'Clicking "' + String(ua.name) + '": ' + (explanation || meaning || 'see what_happens.')
+        };
+    }
+
+    function _fieldChangeEffects(field, num, table) {
+        if (!field) return { ok: false, error: 'Which field?' };
+        var ctxRec = _tableFromArgs(num, table);
+        if (!ctxRec) return { ok: false, error: 'I could not resolve that record or table.' };
+        var fieldNorm = String(field).toLowerCase().trim().replace(/\s+/g, '_');
+        var chain = _tableChainOf(ctxRec.table);
+        var effects = [];
+        try {
+            var up = new GlideRecord('sys_ui_policy');
+            up.addQuery('table', 'IN', chain.join(','));
+            up.addQuery('active', true);
+            up.addEncodedQuery('conditionsLIKE' + fieldNorm);
+            up.setLimit(12);
+            up.query();
+            while (up.next()) {
+                var acts = [];
+                var pa = new GlideRecord('sys_ui_policy_action');
+                pa.addQuery('ui_policy', String(up.sys_id));
+                pa.setLimit(15);
+                pa.query();
+                while (pa.next()) {
+                    var eff = [];
+                    if (String(pa.visible) === 'true')   eff.push('becomes visible');
+                    if (String(pa.visible) === 'false')  eff.push('gets hidden');
+                    if (String(pa.mandatory) === 'true') eff.push('becomes mandatory');
+                    if (String(pa.disabled) === 'true')  eff.push('becomes read-only');
+                    if (eff.length) acts.push(String(pa.field) + ' ' + eff.join(' and '));
+                }
+                if (acts.length) {
+                    effects.push({
+                        policy: String(up.short_description || 'UI policy'),
+                        when: String(up.conditions || '').substring(0, 140),
+                        then: acts
+                    });
+                }
+            }
+        } catch (eUP) {}
+        var scripts = [];
+        try {
+            var cs = new GlideRecord('sys_script_client');
+            cs.addQuery('table', 'IN', chain.join(','));
+            cs.addQuery('active', true);
+            cs.addQuery('type', 'onChange');
+            cs.addQuery('field', fieldNorm);
+            cs.setLimit(8);
+            cs.query();
+            while (cs.next()) {
+                scripts.push({ name: String(cs.name), description: String(cs.description || '').substring(0, 140) });
+            }
+        } catch (eCS) {}
+        return {
+            ok: true,
+            table: ctxRec.table,
+            field: fieldNorm,
+            ui_policy_effects: effects,
+            onchange_scripts: scripts,
+            message: effects.length || scripts.length
+                ? 'Changing ' + fieldNorm + ' triggers ' + effects.length + ' form rule(s) and ' + scripts.length + ' script(s). Tell the user which NEW fields will pop up or become mandatory.'
+                : 'No form rules or scripts react to ' + fieldNorm + ' on ' + ctxRec.table + ' - it changes quietly.'
+        };
+    }
+
+    function _activeFlows(num) {
+        var rec = _recFor(num);
+        if (!rec) return { ok: false, error: 'Record not found: ' + num };
+        var sid = rec.gr.getUniqueValue();
+        var flows = [];
+        try {
+            var wf = new GlideRecord('wf_context');
+            wf.addQuery('id', sid);
+            wf.orderByDesc('sys_created_on');
+            wf.setLimit(6);
+            wf.query();
+            while (wf.next()) {
+                flows.push({ engine: 'workflow', name: String(wf.workflow_version.getDisplayValue() || wf.name || 'workflow'),
+                             state: String(wf.state), started: String(wf.started || wf.sys_created_on) });
+            }
+        } catch (eW) {}
+        try {
+            var fc = new GlideRecord('sys_flow_context');
+            fc.addQuery('source_record', sid);
+            fc.orderByDesc('sys_created_on');
+            fc.setLimit(6);
+            fc.query();
+            while (fc.next()) {
+                flows.push({ engine: 'flow', name: String(fc.name || fc.getDisplayValue() || 'flow'),
+                             state: String(fc.state), started: String(fc.sys_created_on) });
+            }
+        } catch (eF) {}
+        var running = flows.filter(function (f) { return /executing|running|in_progress|waiting/i.test(f.state); });
+        return { ok: true, number: num, flows: flows, running_count: running.length,
+                 message: flows.length ? (running.length + ' running of ' + flows.length + ' total flows/workflows on ' + num + '.')
+                                       : 'No flows or workflows have run on ' + num + '.' };
+    }
+
+    function _approvalsForRecord(num) {
+        var rec = _recFor(num);
+        if (!rec) return { ok: false, error: 'Record not found: ' + num };
+        var sid = rec.gr.getUniqueValue();
+        var out = [];
+        var ap = new GlideRecord('sysapproval_approver');
+        ap.addQuery('sysapproval', sid).addOrCondition('document_id', sid);
+        ap.orderByDesc('sys_created_on');
+        ap.setLimit(15);
+        ap.query();
+        var pending = 0;
+        while (ap.next()) {
+            var st = String(ap.state);
+            if (st === 'requested') pending++;
+            out.push({ approver: String(ap.approver.getDisplayValue() || ''), state: st, since: String(ap.sys_created_on) });
+        }
+        return { ok: true, number: num, pending: pending, approvals: out,
+                 message: pending ? (pending + ' approval(s) still pending on ' + num + '.')
+                                  : (out.length ? 'No pending approvals on ' + num + ' - ' + out.length + ' already decided.' : 'No approvals exist on ' + num + '.') };
+    }
+
+    function _relatedRecords(num, kind) {
+        var rec = _recFor(num);
+        if (!rec) return { ok: false, error: 'Record not found: ' + num };
+        var gr = rec.gr, sid = gr.getUniqueValue();
+        function attachments(limit) {
+            var a = new GlideRecord('sys_attachment');
+            a.addQuery('table_sys_id', sid);
+            a.setLimit(limit); a.query();
+            var l = [];
+            while (a.next()) l.push({ name: String(a.file_name), size_kb: Math.round(parseInt(a.size_bytes, 10) / 1024) || 0 });
+            return l;
+        }
+        function slas(limit) {
+            var s = new GlideRecord('task_sla');
+            s.addQuery('task', sid);
+            s.setLimit(limit); s.query();
+            var l = [];
+            while (s.next()) l.push({ sla: String(s.sla.getDisplayValue() || ''), stage: String(s.stage),
+                                      pct: Math.round(parseFloat(s.percentage) || 0), breached: String(s.has_breached) === 'true' });
+            return l;
+        }
+        function childTasks(limit) {
+            var t = new GlideRecord('task');
+            t.addQuery('parent', sid);
+            t.setLimit(limit); t.query();
+            var l = [];
+            while (t.next()) l.push({ number: String(t.number), table: String(t.sys_class_name), short_description: String(t.short_description).substring(0, 90), state: String(t.state.getDisplayValue() || t.state) });
+            return l;
+        }
+        function cis(limit) {
+            var c2 = new GlideRecord('task_ci');
+            c2.addQuery('task', sid);
+            c2.setLimit(limit); c2.query();
+            var l = [];
+            while (c2.next()) l.push(String(c2.ci_item.getDisplayValue() || ''));
+            return l;
+        }
+        function approvalsList(limit) {
+            var r = _approvalsForRecord(num);
+            return (r.approvals || []).slice(0, limit);
+        }
+        var k = String(kind || '').toLowerCase();
+        if (k === 'attachments') return { ok: true, number: num, attachments: attachments(20) };
+        if (k === 'slas')        return { ok: true, number: num, slas: slas(20) };
+        if (k === 'tasks')       return { ok: true, number: num, child_tasks: childTasks(20) };
+        if (k === 'cis')         return { ok: true, number: num, affected_cis: cis(20) };
+        if (k === 'approvals')   return { ok: true, number: num, approvals: approvalsList(20) };
+        // full picture
+        var links = {};
+        try { if (gr.problem_id && String(gr.problem_id))      links.problem = String(gr.problem_id.getDisplayValue() || ''); } catch (e1) {}
+        try { if (gr.rfc && String(gr.rfc))                    links.change  = String(gr.rfc.getDisplayValue() || ''); } catch (e2) {}
+        try { if (gr.parent_incident && String(gr.parent_incident)) links.parent_incident = String(gr.parent_incident.getDisplayValue() || ''); } catch (e3) {}
+        try { if (gr.parent && String(gr.parent))              links.parent = String(gr.parent.getDisplayValue() || ''); } catch (e4) {}
+        var journal = { comments: 0, work_notes: 0 };
+        try {
+            var j = new GlideAggregate('sys_journal_field');
+            j.addQuery('element_id', sid);
+            j.addQuery('element', 'IN', 'comments,work_notes');
+            j.groupBy('element');
+            j.addAggregate('COUNT');
+            j.query();
+            while (j.next()) journal[String(j.element)] = parseInt(j.getAggregate('COUNT'), 10) || 0;
+        } catch (eJ) {}
+        var att = attachments(5), sl = slas(5), ct = childTasks(5), ciList = cis(5);
+        var apr = _approvalsForRecord(num);
+        return {
+            ok: true,
+            number: num,
+            table: rec.table,
+            linked: links,
+            attachments_count: att.length, attachments: att,
+            slas: sl,
+            child_tasks: ct,
+            affected_cis: ciList,
+            pending_approvals: apr.pending || 0,
+            journal_counts: journal,
+            message: 'Related picture for ' + num + ': ' + att.length + ' attachments, ' + sl.length + ' SLAs, ' +
+                     ct.length + ' child tasks, ' + ciList.length + ' affected CIs, ' + (apr.pending || 0) + ' pending approvals, ' +
+                     journal.comments + ' comments and ' + journal.work_notes + ' work notes. Drill in with kind=attachments|slas|tasks|cis|approvals.'
+        };
+    }
+
+    function _checkBeforeSubmit(num) {
+        var rec = _recFor(num);
+        if (!rec) return { ok: false, error: 'Record not found: ' + num };
+        var mandInfo = _describeForm(num, '');
+        var buttons = _formButtonRows(rec.table).slice(0, 8).map(function (b) { return b.label; });
+        var flows = _activeFlows(num);
+        var apr = _approvalsForRecord(num);
+        var dataPolicies = 0;
+        try {
+            var dp = new GlideRecord('sys_data_policy2');
+            dp.addQuery('model_table', 'IN', _tableChainOf(rec.table).join(','));
+            dp.addQuery('active', true);
+            dp.query();
+            dataPolicies = dp.getRowCount();
+        } catch (eDP) {}
+        return {
+            ok: true,
+            number: num,
+            missing_mandatory: mandInfo.missing_mandatory || [],
+            buttons_available: buttons,
+            running_flows: flows.running_count || 0,
+            pending_approvals: apr.pending || 0,
+            data_policies_enforcing: dataPolicies,
+            journal_guidance: 'Work notes are INTERNAL (fulfillers only); Additional comments are CUSTOMER-VISIBLE and can email the caller. Choose deliberately.',
+            message: (mandInfo.missing_mandatory && mandInfo.missing_mandatory.length
+                        ? 'Before submitting ' + num + ', fill these mandatory fields: ' + mandInfo.missing_mandatory.join(', ') + '. '
+                        : 'All mandatory fields on ' + num + ' are filled. ') +
+                     'Buttons available: ' + buttons.join(', ') + '. ' +
+                     (flows.running_count ? flows.running_count + ' flow(s) currently running. ' : '') +
+                     (apr.pending ? apr.pending + ' approval(s) pending. ' : '') +
+                     'Remember: work notes are internal, additional comments reach the caller.'
+        };
+    }
+
+    function _myRecentRecords(minutes) {
+        var mins = Math.max(1, Math.min(1440, minutes || 15));
+        var tables = ['incident', 'problem', 'change_request', 'sc_request', 'sc_req_item', 'sc_task'];
+        var found = [];
+        var uname = gs.getUserName();
+        for (var i = 0; i < tables.length; i++) {
+            try {
+                var gr = new GlideRecord(tables[i]);
+                gr.addEncodedQuery('sys_created_on>=javascript:gs.minutesAgoStart(' + mins + ')');
+                gr.addQuery('sys_created_by', uname).addOrCondition('opened_by', gs.getUserID());
+                gr.orderByDesc('sys_created_on');
+                gr.setLimit(5);
+                gr.query();
+                while (gr.next()) {
+                    found.push({ number: String(gr.number), table: tables[i],
+                                 short_description: String(gr.short_description).substring(0, 90),
+                                 created: String(gr.sys_created_on) });
+                }
+            } catch (eT) {}
+        }
+        return { ok: true, minutes: mins, records: found,
+                 message: found.length ? ('Your actions created ' + found.length + ' record(s) in the last ' + mins + ' minutes.')
+                                       : ('Nothing new was created by your account in the last ' + mins + ' minutes.') };
+    }
+
+    /* ===================================================================
+     *  R8.2 - REMINDERS
+     *  Stored as rows in the notification table with kind
+     *  'reminder_scheduled' and delivered=true (so the poll skips them);
+     *  the due epoch-ms rides in ticket_sys_id. NetraScanner promotes
+     *  due rows to kind='reminder', delivered=false, which the widget's
+     *  normal notification poll then announces. The tool result also
+     *  carries reminder_at_ms so the client can speak it to the minute
+     *  while the tab stays open.
+     * =================================================================== */
+    function _setReminder(text, minutes) {
+        if (!text) return { ok: false, error: 'What should I remind you about?' };
+        var mins = Math.max(1, Math.min(7 * 24 * 60, minutes || 60));
+        var due = new GlideDateTime();
+        due.add(mins * 60 * 1000);
+        var n = new GlideRecord(SCOPE + '_notification');
+        n.initialize();
+        n.user = gs.getUserID();
+        n.kind = 'reminder_scheduled';
+        n.delivered = true;                       // hidden from the poll until promoted
+        n.ticket_number = 'REMINDER';
+        n.ticket_sys_id = String(new GlideDateTime().getNumericValue() + mins * 60 * 1000);
+        n.message = 'Reminder: ' + text;
+        var sid = n.insert();
+        if (!sid) return { ok: false, error: 'Could not save the reminder.' };
+        return {
+            ok: true,
+            reminder_at_ms: mins * 60 * 1000,     // client directive: schedule locally too
+            reminder_text: 'Reminder: ' + text,
+            due: String(due.getDisplayValue()),
+            message: 'Reminder set for ' + mins + ' minutes from now: ' + text
+        };
+    }
+    function _listReminders() {
+        var nowMs = new GlideDateTime().getNumericValue();
+        var n = new GlideRecord(SCOPE + '_notification');
+        n.addQuery('user', gs.getUserID());
+        n.addQuery('kind', 'reminder_scheduled');
+        n.orderBy('ticket_sys_id');
+        n.setLimit(20);
+        n.query();
+        var out = [];
+        while (n.next()) {
+            var dueMs = parseInt(String(n.ticket_sys_id), 10) || 0;
+            if (dueMs < nowMs) continue;   // due/promoting
+            out.push({ text: String(n.message).replace(/^Reminder: /, ''),
+                       in_minutes: Math.round((dueMs - nowMs) / 60000) });
+        }
+        return { ok: true, reminders: out,
+                 message: out.length ? ('You have ' + out.length + ' pending reminder(s).') : 'No pending reminders.' };
+    }
+    function _cancelReminder(text) {
+        if (!text) return { ok: false, error: 'Which reminder should I cancel?' };
+        var n = new GlideRecord(SCOPE + '_notification');
+        n.addQuery('user', gs.getUserID());
+        n.addQuery('kind', 'reminder_scheduled');
+        n.addEncodedQuery('messageLIKE' + text);
+        n.query();
+        var killed = 0;
+        while (n.next()) { n.deleteRecord(); killed++; }
+        return { ok: killed > 0, cancelled: killed,
+                 message: killed ? ('Cancelled ' + killed + ' reminder(s) matching "' + text + '".')
+                                 : ('No pending reminder matches "' + text + '".') };
+    }
+
+    /* ===================================================================
      *  R2.13 - READ KNOWLEDGE ARTICLE (by KB number)
      *
      *  Wraps NetraKnowledge.read(numberOrSysId). Exposed as a tool so
@@ -2937,7 +3726,7 @@
         b.mem = arr;
         _ctxWriteBlob(b);
     }
-    var MEM_CAP = 100;   // R2.9 - bumped from 40; safety truncate in _ctxWriteBlob protects against oversize blobs
+    var MEM_CAP = 200;   // Release X - bumped from 100; safety truncate in _ctxWriteBlob protects against oversize blobs
     function _memAppend(userMsg, netraReply) {
         if (!userMsg && !netraReply) return;
         var arr = _memRead();
@@ -3885,7 +4674,7 @@
     // R2.9.1 - common SN/IT vocabulary that should always seed the recognizer.
     // These don't appear in the instance's groups/apps/KB but are spoken often
     // in voice commands ("escalate", "VPN", "MFA", "approve", etc.).
-    var COMMON_VOCAB = [
+    function _commonVocab() { return [
         // Record actions
         'create', 'open', 'close', 'resolve', 'cancel', 'escalate', 'reopen',
         'approve', 'reject', 'submit', 'assign', 'reassign', 'watch', 'unwatch',
@@ -3910,7 +4699,62 @@
         // Netra-specific
         'Netra', 'sentinel', 'sleep', 'wake', 'pause', 'resume', 'dictate',
         'briefing', 'workload', 'focus', 'watchlist', 'remember', 'recall'
-    ];
+    ]; }
+
+    // R8.2 - ANALYST + DEVELOPER LEXICON. A locally-built word vector of the
+    // language ITSM analysts and ServiceNow developers actually speak,
+    // curated from analyst-workflow research, the platform's own artifact
+    // names, and this instance's demo-data domains. Seeds the recognizer
+    // grammar + re-ranker so dev-speak ("business rule", "ACL", "update
+    // set") and analyst-speak ("breach", "major incident", "backout plan")
+    // transcribe reliably.
+    function _analystLexicon() { return [
+        // analyst workflow verbs
+        'triage', 'deduplicate', 'duplicate', 'correlate', 'investigate', 'diagnose',
+        'remediate', 'mitigate', 'expedite', 'prioritise', 'prioritize', 'reprioritize',
+        'follow up', 'hand off', 'take ownership', 'acknowledge', 'communicate',
+        'root cause', 'workaround', 'known error', 'post mortem', 'retrospective',
+        // ticket lifecycle language
+        'major incident', 'outage', 'degradation', 'service restored', 'breach',
+        'breached', 'SLA breach', 'due date', 'on hold', 'in progress', 'pending',
+        'awaiting user info', 'awaiting caller', 'resolved', 'closed complete',
+        'closed incomplete', 'closed skipped', 'reopened', 'first call resolution',
+        'mean time to resolve', 'backlog', 'queue', 'aging', 'stale',
+        // change management
+        'CAB', 'change advisory board', 'emergency change', 'standard change',
+        'normal change', 'backout plan', 'implementation plan', 'test plan',
+        'risk assessment', 'change window', 'blackout window', 'freeze',
+        'planned start', 'planned end', 'conflict',
+        // form anatomy
+        'mandatory field', 'reference field', 'choice list', 'dropdown',
+        'work notes', 'additional comments', 'activity stream', 'short description',
+        'caller', 'requested for', 'assignment group', 'assigned to',
+        'configuration item', 'related records', 'related list', 'attachment',
+        'form layout', 'save button', 'submit button', 'resolve button',
+        'error message', 'info message', 'field popped up', 'new field',
+        // platform / developer language
+        'business rule', 'client script', 'script include', 'UI policy',
+        'data policy', 'UI action', 'ACL', 'access control', 'glide record',
+        'glide aggregate', 'scheduled job', 'flow designer', 'workflow',
+        'flow context', 'subflow', 'action step', 'update set', 'scoped app',
+        'application scope', 'service portal', 'widget', 'REST API',
+        'scripted REST', 'integration hub', 'transform map', 'import set',
+        'MID server', 'discovery', 'event management', 'virtual agent',
+        'now assist', 'agent workspace', 'CMDB', 'CSDM', 'dictionary',
+        'sys id', 'table', 'column', 'encoded query', 'filter condition',
+        'before insert', 'after update', 'async', 'display rule',
+        // approvals + governance
+        'approval', 'approver', 'requested', 'approved', 'rejected',
+        'delegation', 'group approval', 'pending approvals',
+        // metrics
+        'dashboard', 'report', 'KPI', 'metric', 'performance analytics',
+        'indicator', 'scorecard', 'trend',
+        // vulnerability response
+        'vulnerable item', 'CVE', 'risk score', 'remediation target',
+        'defer', 'risk acceptance', 'patch tuesday',
+        // reminders / time
+        'remind me', 'reminder', 'in two hours', 'in an hour', 'tomorrow morning'
+    ]; }
 
     function _getVocab() {
         // R4.6 - dropped sys_properties cache entirely. Yokohama+ instances
@@ -3929,13 +4773,14 @@
             if (cached && ageMs < 6 * 60 * 60 * 1000) {
                 var p = JSON.parse(cached);
                 if (p && typeof p === 'object') {
-                    p.common = COMMON_VOCAB;
+                    p.common = _commonVocab();
+                    p.analyst_terms = _analystLexicon();
                     return p;
                 }
             }
         } catch (e) { /* fall through to refresh */ }
 
-        var v = { groups: [], apps: [], categories: [], kb_titles: [], catalog_items: [], common: COMMON_VOCAB, built_at: '' };
+        var v = { groups: [], apps: [], categories: [], kb_titles: [], catalog_items: [], common: _commonVocab(), analyst_terms: _analystLexicon(), built_at: '' };
 
         // Assignment groups
         try {

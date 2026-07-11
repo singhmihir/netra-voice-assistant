@@ -2,17 +2,17 @@
  * NetraContext — per-user session context.
  *
  * Lets the conversation refer to "that ticket", "resolve it", "read it again"
- * by remembering the last entity mentioned. Stored on __NETRA_SCOPE___context.
+ * by remembering the last entity mentioned. Stored on x_196061_netra_v1_context.
  *
  * Context is short-lived (12 hours by default) and cleared on "forget context".
  *
- * NOTE: The string __NETRA_SCOPE__ is replaced with the user's actual scope
+ * NOTE: The string x_196061_netra_v1 is replaced with the user's actual scope
  * (e.g. x_NNNNN_netra) by the Fix Script at install time, so this code
  * works regardless of company id.
  */
 var NetraContext = Class.create();
 NetraContext.prototype = {
-    TABLE: '__NETRA_SCOPE___context',
+    TABLE: 'x_196061_netra_v1_context',
     TTL_MS: 12 * 3600 * 1000,
 
     initialize: function () {

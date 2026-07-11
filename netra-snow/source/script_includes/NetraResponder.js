@@ -96,22 +96,28 @@ NetraResponder.prototype = {
 
     // ===== handlers =====
     _create: function (description) {
-        var r = this.tools.createTicket(description);
-        if (!r.ok) return this._fail("Sorry, I couldn't open the ticket. " + r.error);
-        // Focus the new ticket so "resolve that" works
-        this.ctx.setFocus('incident', r.ticket.sys_id, r.ticket.number);
-        return this._ok(this._pickOne([
-            'Done. Ticket ' + this._sayNumber(r.ticket.number) + ' opened. Issue recorded: ' + r.ticket.short_description + '.',
-            'Got it — ' + this._sayNumber(r.ticket.number) + ' is now open for ' + r.ticket.short_description + '.',
-            "I've opened " + this._sayNumber(r.ticket.number) + ' for you.'
-        ]), { refresh_tickets: true, data: r.ticket });
+        // R8 — Netra opens tickets again. If the user already described the
+        // issue, create the incident right away and read the number back;
+        // otherwise ask for the description first.
+        if (description && String(description).trim().length >= 3) {
+            var r = this.tools.createTicket(description, '3');
+            if (!r.ok && r.read_only) return this._ok(r.message);
+            if (!r.ok) return this._fail(r.error);
+            this.ctx.setFocus('incident', r.sys_id, r.number);
+            return this._ok(this._pickOne([
+                'Done — I opened ' + this._sayNumber(r.number) + ' for that. I\'ll keep it in focus.',
+                'Ticket ' + this._sayNumber(r.number) + ' is raised. Say update or resolve any time.',
+                'Raised ' + this._sayNumber(r.number) + ' for you.'
+            ]), { refresh_tickets: true });
+        }
+        return this._askForDescription();
     },
 
     _askForDescription: function () {
+        // The follow-up "what's the issue?" flow feeds ticket creation.
         return { ok: true, message: this._pickOne([
-            "Sure. What's the issue?",
-            "Of course. Tell me what's going on.",
-            "Right. What should I report?"
+            "Sure, what's the issue? One sentence and I'll raise the ticket.",
+            'Happy to. Describe the problem in a sentence and I\'ll open the incident.'
         ]), pending: 'ticket_description' };
     },
 
@@ -136,6 +142,7 @@ NetraResponder.prototype = {
     _resolve: function (number) {
         if (!number) return this._askWhichTicketToResolve(false);
         var r = this.tools.resolveTicket(number);
+        if (!r.ok && r.read_only) return this._ok(r.message);
         if (!r.ok) return this._fail(r.error);
         this.ctx.setFocus('incident', '', number);
         return this._ok(this._pickOne([
@@ -155,6 +162,7 @@ NetraResponder.prototype = {
         if (!number) return this._fail('Which ticket should I update?');
         if (!comment) return this._fail('What should I add as the comment?');
         var r = this.tools.updateTicket(number, comment);
+        if (!r.ok && r.read_only) return this._ok(r.message);
         if (!r.ok) return this._fail(r.error);
         return this._ok(this._pickOne([
             'Added your note to ticket ' + this._sayNumber(number) + '.',

@@ -1,14 +1,74 @@
 <!--
-  Netra Mic widget template - R1.3 (Claude-of-ServiceNow)
+  Netra Mic widget template - R8.1 "Prism" (Claude-of-ServiceNow)
 
-  Minimal industry-standard icon. Simple circular eye with
-  pulsing halo glow. Default position top-left. Multi-turn
-  conversational record drafting with confirmation flow.
+  R8.1: the prism hue engine drives every colour in this template via
+  CSS custom properties written at 60fps from client.js - the orb, the
+  Live stage blob, the aurora ribbons and the dev console all shift
+  hue with Netra's state and, while she speaks, with the spectral
+  shape of her own voice. Tickets are FULL CONTROL: create / edit /
+  modify across every ticket type (admin kill-switch retained).
+
+  Minimal industry-standard icon. Default position top-left.
+  Multi-turn conversational record drafting with confirmation flow.
   Real Sidebar Discussions for "send message to X".
   Dev console is draggable from its header.
 -->
+<!-- R8.2 - COMPILER-PROOF STYLES. ServiceNow's SCSS fork silently eats
+     certain modern blocks (glass panels with backdrop-filter+saturate,
+     calc()*var() inside drop-shadow, grayscale(number)). These rules are
+     delivered verbatim from the template so the browser - which parses
+     them all fine - is the only parser that ever sees them. -->
+<style>
+  .netra-lab {
+    position: fixed;
+    top: 72px;
+    right: 26px;
+    width: 400px;
+    max-width: 92vw;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    z-index: 2147483200;
+    border-radius: 14px;
+    background: rgba(16, 12, 26, 0.86);
+    -webkit-backdrop-filter: blur(18px) saturate(1.25);
+    backdrop-filter: blur(18px) saturate(1.25);
+    border: 1px solid var(--netra-glow-soft, rgba(139, 61, 240, 0.28));
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6), 0 0 40px var(--netra-glow-soft, rgba(139, 61, 240, 0.18));
+    color: #d9d0f0;
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11px;
+    padding: 0 14px 14px;
+    animation: netra-lab-in 0.28s cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+  @keyframes netra-lab-in {
+    from { opacity: 0; transform: translateX(24px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  .netra-dev {
+    background: rgba(24, 22, 32, 0.9);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    backdrop-filter: blur(14px) saturate(1.2);
+    border: 1px solid var(--netra-glow-soft, rgba(139, 61, 240, 0.25));
+    border-radius: 10px;
+  }
+  .netra-state-speaking .netra-stage-blob-outer {
+    filter: drop-shadow(0 0 calc(28px + var(--netra-amp, 0) * 30px) var(--eye-glow, rgba(198, 96, 255, 0.6)));
+  }
+  .netra-stage-dormant .netra-stage-blob-wrap {
+    filter: grayscale(0.5) brightness(0.7);
+    opacity: 0.6;
+  }
+  .netra-orb .netra-eye-svg {
+    filter: drop-shadow(0 7.4px 12px var(--eye-glow, rgba(127, 255, 176, 0.4)))
+            drop-shadow(0 0 calc(6px + var(--netra-amp, 0) * 22px) var(--netra-glow-soft, rgba(127, 255, 176, 0.18)));
+  }
+  .netra-stage-blob-wrap {
+    filter: drop-shadow(0 18px 60px var(--eye-glow, rgba(139, 61, 240, 0.45)))
+            drop-shadow(0 0 calc(20px + var(--netra-amp, 0) * 60px) var(--netra-glow-soft, rgba(139, 61, 240, 0.2)));
+  }
+</style>
 <div class="netra-root"
-     ng-class="['netra-state-' + c.state]"
+     ng-class="['netra-state-' + c.state, {'netra-barged': c.bargeFlash}]"
      role="region"
      aria-label="Netra voice assistant">
 
@@ -24,19 +84,46 @@
         DEV PANEL  (visible when c.devOn === true)
         ==================================================== -->
   <div class="netra-dev" ng-show="c.devOn" aria-hidden="true">
-    <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the dev console">
-      <span class="netra-dev-live" ng-class="{'on': c.recRunning}" aria-hidden="true"></span>
-      <span class="netra-dev-ver">R3.7</span>
+    <header class="netra-dev-head" ng-mousedown="c.devDragStart($event)" title="Drag this bar to move the developer console">
+      <span class="netra-dev-brand" aria-hidden="true">
+        <svg class="netra-dev-glyph" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <!-- R8.1 - the mini-eye follows the live prism hue via CSS classes -->
+            <radialGradient id="ndg-iris" cx="38%" cy="34%" r="66%">
+              <stop offset="0%" stop-color="#eafff2"/><stop offset="20%" class="ndgi-1" stop-color="#7fffb0"/>
+              <stop offset="58%" class="ndgi-2" stop-color="#2eb858"/><stop offset="100%" class="ndgi-3" stop-color="#021a0d"/>
+            </radialGradient>
+            <linearGradient id="ndg-ring" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#37e6a8"/><stop offset="30%" stop-color="#41c6ff"/>
+              <stop offset="55%" stop-color="#c660ff"/><stop offset="78%" stop-color="#ffb84d"/>
+              <stop offset="100%" stop-color="#ff5f9e"/>
+            </linearGradient>
+          </defs>
+          <g fill="none" stroke="url(#ndg-ring)" stroke-width="2" stroke-linecap="round" ng-class="{'netra-dev-glyph-live': c.recRunning}">
+            <path d="M4 16 A12 12 0 0 1 16 4"/><path d="M28 16 A12 12 0 0 1 16 28"/>
+          </g>
+          <path d="M6 16 Q16 7 26 16 Q16 25 6 16 Z" fill="#0a0614" stroke="#d8c8ff" stroke-width="1.4" stroke-linejoin="round"/>
+          <circle cx="16" cy="16" r="6" fill="url(#ndg-iris)"/>
+          <circle cx="16" cy="16" r="2.4" fill="#001a0a"/>
+          <circle cx="14.2" cy="14.2" r="1" fill="#fff" opacity="0.9"/>
+        </svg>
+        <span class="netra-dev-word">NETRA</span>
+        <span class="netra-dev-badge-vr">R8.1 · PRISM</span>
+        <span class="netra-dev-badge-fc" title="Netra has full create / edit / modify capability on every ticket type. Admin kill-switch: set ticket_writes to false.">TICKETS: FULL CONTROL</span>
+      </span>
+      <span class="netra-dev-live" ng-class="{'on': c.recRunning}" title="Recognition {{c.recRunning ? 'running' : 'stopped'}}" aria-hidden="true"></span>
       <span class="netra-dev-pill netra-dev-pill-{{c.state}}">{{c.state}}</span>
       <span class="netra-dev-pill netra-dev-pill-mode"
             ng-class="{'on': c.alert, 'off': !c.alert}">{{c.alert ? 'AWAKE' : 'ASLEEP'}}</span>
       <button class="netra-dev-x" ng-click="c.toggleDev()" title="Hide (Alt+D)">hide</button>
     </header>
 
-    <!-- R2.12 - VS Code-style tab bar -->
+    <!-- R2.12 - VS Code-style tab bar (R7 adds Chat) -->
     <nav class="netra-dev-tabs" role="tablist">
       <span class="netra-dev-tab" ng-class="{'active': c.devTab === 'voice'}"
             ng-click="c.devSetTab('voice')" role="tab">Voice</span>
+      <span class="netra-dev-tab" ng-class="{'active': c.devTab === 'chat'}"
+            ng-click="c.devSetTab('chat')" role="tab">Chat</span>
       <span class="netra-dev-tab" ng-class="{'active': c.devTab === 'monitor'}"
             ng-click="c.devSetTab('monitor')" role="tab">Monitor</span>
       <span class="netra-dev-tab" ng-class="{'active': c.devTab === 'logs'}"
@@ -75,7 +162,12 @@
       <div><span>tools called</span><b>{{c.stats.toolsCalled || 0}}</b></div>
       <div><span>errors</span><b ng-class="{'l-err': c.stats.errors > 0}">{{c.stats.errors || 0}}</b></div>
       <div><span>last model</span><b>{{c.stats.lastModel || '-'}}</b></div>
+      <div><span>routing</span><b ng-class="{'on': c.stats.lastRoute === 'complex'}">{{c.stats.lastRoute || '-'}}</b></div>
       <div><span>last latency</span><b>{{c.stats.lastLatencyMs ? (c.stats.lastLatencyMs + ' ms') : '-'}}</b></div>
+      <!-- R6 - human turn-taking telemetry -->
+      <div><span>barge-ins</span><b ng-class="{'on': c.stats.barges > 0}">{{c.stats.barges || 0}}</b></div>
+      <div><span>backchannels</span><b>{{c.stats.backchannels || 0}}</b></div>
+      <div><span>ticket mode</span><b class="fc">full control</b></div>
     </section>
 
     <!-- R1 - REAL-TIME GRAPHS -->
@@ -133,6 +225,37 @@
       <div class="netra-dev-tx-row"><span>hearing</span><em ng-class="{'on': c.interim}">{{c.interim || '(silent)'}}</em></div>
       <div class="netra-dev-tx-row"><span>last heard</span><em>{{c.lastHeard || '(nothing yet)'}}</em></div>
       <div class="netra-dev-tx-row"><span>last spoken</span><em>{{c.spoken || '(nothing yet)'}}</em></div>
+    </section>
+
+    <!-- R7 - CHAT TAB: live conversation transcript -->
+    <section class="netra-dev-chat" ng-show="c.devTab === 'chat'" aria-label="Conversation transcript">
+      <div class="netra-chat-row" ng-repeat="m in c.convo track by $index" ng-class="'chat-' + m.who">
+        <span class="netra-chat-who">{{m.who === 'you' ? 'You' : (m.who === 'netra' ? 'Netra' : '')}}</span>
+        <span class="netra-chat-text">{{m.text}}</span>
+        <span class="netra-chat-time">{{m.t}}</span>
+      </div>
+      <div class="netra-chat-empty" ng-show="!c.convo.length">no conversation yet - just start talking</div>
+      <button class="netra-chat-clear" ng-click="c.devClearConvo()" ng-show="c.convo.length">clear transcript</button>
+    </section>
+
+    <!-- R7 - VOICE LAB: pick the neural voice + tune the pace, live -->
+    <section class="netra-dev-voicelab" ng-show="c.devTab === 'voice'">
+      <div class="netra-voicelab-title">VOICE LAB
+        <span class="netra-voicelab-sub">{{c.edgeVoice}} · {{((c.speechRate - 1) * 100).toFixed(0)}}% pace</span>
+      </div>
+      <div class="netra-voicelab-row">
+        <label>voice</label>
+        <select ng-model="c.edgeVoice" ng-change="c.devSetEdgeVoice()"
+                ng-options="v as v for v in ['en-US-AvaMultilingualNeural','en-US-EmmaMultilingualNeural','en-US-AndrewMultilingualNeural','en-US-BrianMultilingualNeural','en-US-JennyNeural','en-US-AriaNeural','en-IN-NeerjaNeural','en-IN-AashiNeural','en-IN-AnanyaNeural','hi-IN-SwaraNeural','en-GB-SoniaNeural']"></select>
+      </div>
+      <div class="netra-voicelab-row">
+        <label>pace</label>
+        <input type="range" min="0.9" max="1.25" step="0.01" ng-model="c.speechRate" ng-change="c.devSetRate()"/>
+        <em>{{c.speechRate}}</em>
+      </div>
+      <div class="netra-voicelab-row">
+        <button ng-click="c.devPreviewVoice()">Preview voice</button>
+      </div>
     </section>
 
     <section class="netra-dev-input" ng-show="c.devTab === 'voice'">
@@ -223,6 +346,7 @@
       <span class="seg"><span class="seg-key">LV</span><span class="seg-val">{{c.micLevel || 0}}</span></span>
       <span class="seg" ng-show="c.stats.lastLatencyMs"><span class="seg-key">LAT</span><span class="seg-val">{{c.stats.lastLatencyMs}}ms</span></span>
       <span class="seg" ng-show="c.stats.lastModel && c.stats.lastModel !== '-'"><span class="seg-key">MODEL</span><span class="seg-val">{{c.stats.lastModel}}</span></span>
+      <span class="seg" ng-show="c.stats.barges > 0"><span class="seg-key">BRG</span><span class="seg-val">{{c.stats.barges}}</span></span>
       <span class="seg" ng-show="c.stats.errors > 0" ng-class="{'warn': c.stats.errors > 0}"><span class="seg-key">ERR</span><span class="seg-val">{{c.stats.errors}}</span></span>
     </footer>
   </div>
@@ -231,6 +355,169 @@
   <button class="netra-dev-badge" ng-show="!c.devOn" ng-click="c.toggleDev()"
           aria-label="Show Netra developer panel"
           title="Alt+D to toggle">DEV</button>
+
+  <!-- ====================================================
+        R8 - NETRA LIVE STAGE (dedicated portal page /sp?id=netra_live)
+        Full-screen Claude-Live-style voice surface: warm cream canvas,
+        one organic clay blob breathing in the centre, quiet status
+        line, caption of the last exchange, and two round controls
+        (mute / end). The blob paths are driven by the same rAF ticker
+        as the floating orb.
+        ==================================================== -->
+  <div class="netra-stage" ng-if="c.liveMode" ng-class="'netra-stage-' + c.state">
+    <!-- R8.1 - PRISM ROOM: layered aurora ribbons + starfield behind the
+         blob, all hue-locked to the voice via the prism engine vars. -->
+    <div class="netra-stage-stars" aria-hidden="true"></div>
+    <div class="netra-stage-aurora netra-stage-aurora-1" aria-hidden="true"></div>
+    <div class="netra-stage-aurora netra-stage-aurora-2" aria-hidden="true"></div>
+    <div class="netra-stage-floor" aria-hidden="true"></div>
+
+    <header class="netra-stage-head">
+      <span class="netra-stage-brand">Netra</span>
+      <span class="netra-stage-pill">LIVE</span>
+      <span class="netra-stage-pill netra-stage-pill-state">{{c.state}}</span>
+    </header>
+
+    <div class="netra-stage-center">
+      <div class="netra-stage-orbit" aria-hidden="true">
+        <!-- slow-spinning prism ring behind the blob -->
+        <div class="netra-stage-ring"></div>
+        <div class="netra-stage-ring netra-stage-ring-2"></div>
+        <!-- word-onset ripple rings are appended here from client.js -->
+        <div class="netra-stage-ripples"></div>
+      </div>
+      <button class="netra-stage-blob-wrap" ng-click="c.tap()"
+              aria-label="Netra is {{c.stateLabel}}. Tap to mute or wake.">
+        <svg class="netra-stage-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <!-- state-tinted 3D shading, driven by CSS stop-color classes -->
+            <radialGradient id="netra-stage-grad" cx="38%" cy="32%" r="70%" fx="34%" fy="28%">
+              <stop offset="0%"   class="nsg-0"/>
+              <stop offset="24%"  class="nsg-1"/>
+              <stop offset="62%"  class="nsg-2"/>
+              <stop offset="100%" class="nsg-3"/>
+            </radialGradient>
+          </defs>
+          <path class="netra-stage-blob-outer"/>
+          <path class="netra-stage-blob-inner"/>
+        </svg>
+      </button>
+      <div class="netra-stage-status" role="status" aria-live="polite">{{c.liveStatus}}</div>
+      <!-- R8.1 - live captions: her own words while speaking, yours while listening -->
+      <div class="netra-stage-caption netra-stage-caption-netra"
+           ng-show="c.state === 'speaking' && c.spoken">{{c.spoken}}</div>
+      <div class="netra-stage-caption" ng-show="c.state !== 'speaking' && (c.interim || c.lastHeard)">
+        {{c.interim || c.lastHeard}}
+      </div>
+    </div>
+
+    <footer class="netra-stage-controls">
+      <button class="netra-ctl" ng-click="c.tap()"
+              ng-class="{'netra-ctl-muted': !c.alert}"
+              aria-label="{{c.alert ? 'Mute Netra' : 'Unmute Netra'}}"
+              title="{{c.alert ? 'Mute' : 'Unmute'}}">
+        <svg ng-show="c.alert" viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-4.08A7 7 0 0 0 19 11z"/></svg>
+        <svg ng-show="!c.alert" viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M19 11h-1.7c0 .58-.1 1.13-.27 1.64l1.27 1.27c.44-.88.7-1.87.7-2.91zM4.41 2.86 3 4.27l6 6V11a3 3 0 0 0 4.24 2.74l1.46 1.46A4.98 4.98 0 0 1 12 16a5 5 0 0 1-5-5H5a7 7 0 0 0 6 6.92V22h2v-4.08c.91-.13 1.77-.45 2.54-.9l4.19 4.18 1.41-1.41L4.41 2.86zM15 11V5a3 3 0 0 0-6 0v.18l6 6V11z"/></svg>
+      </button>
+      <button class="netra-ctl netra-ctl-lab" ng-click="c.labToggle()"
+              ng-class="{'netra-ctl-lab-on': c.labOn}"
+              aria-label="Toggle the Netra Lab diagnostics panel" title="Netra Lab">
+        <svg viewBox="0 0 24 24" width="21" height="21"><path fill="currentColor" d="M9 2v2h1v4.35L4.5 18.4A2 2 0 0 0 6.24 21h11.52a2 2 0 0 0 1.74-2.6L14 8.35V4h1V2H9zm3 8.5 3.5 6H8.5l3.5-6z"/></svg>
+      </button>
+      <button class="netra-ctl netra-ctl-end" ng-click="c.liveExit()"
+              aria-label="Leave Netra Live" title="End">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </footer>
+
+    <!-- ====================================================
+          R8.1 - NETRA LAB: super-advanced diagnostics console
+          (mic spectrum scope, recognition health, STT accuracy
+          calibration, brain + hue telemetry)
+          ==================================================== -->
+    <aside class="netra-lab" ng-show="c.labOn" role="dialog" aria-label="Netra Lab diagnostics (draggable window)">
+      <header class="netra-lab-head" ng-mousedown="c.labDragStart($event)"
+              title="Drag this bar to move the Netra Lab window">
+        <span class="netra-lab-grip" aria-hidden="true">⋮⋮</span>
+        <span class="netra-lab-title">NETRA LAB</span>
+        <span class="netra-lab-sub">audio · recognition · brain</span>
+        <button class="netra-lab-x" ng-click="c.labToggle()" aria-label="Close Netra Lab">×</button>
+      </header>
+
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">MIC SPECTRUM
+          <span class="netra-lab-chip" ng-class="{'ok': c.micStreamActive, 'bad': !c.micStreamActive}">
+            {{c.micStreamActive ? 'STREAM LIVE' : 'NO STREAM'}}</span>
+          <span class="netra-lab-chip">lvl {{c.micLevel || 0}}</span>
+          <span class="netra-lab-chip">peak {{c.micLevelPeak || 0}}</span>
+        </div>
+        <canvas class="netra-lab-scope" width="360" height="72" aria-hidden="true"></canvas>
+        <div class="netra-lab-row netra-lab-btns">
+          <button ng-click="c.devTestMic()" ng-disabled="c.micRecording || !c.micStreamActive">Record 3s + playback</button>
+          <button ng-click="c.labRestartMic()">Rebuild mic stack</button>
+          <em ng-show="c.micTestResult">{{c.micTestResult}}</em>
+        </div>
+      </section>
+
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">STT ACCURACY / CALIBRATION
+          <span class="netra-lab-chip ok" ng-show="c.labCalib.score !== null">score {{c.labCalib.score}}%</span>
+        </div>
+        <div class="netra-lab-calib-sentence">“{{c.labCalibSentence}}”</div>
+        <div class="netra-lab-row netra-lab-btns">
+          <button ng-click="c.labStartCalibration()" ng-disabled="c.labCalib.stage === 'prompt' || c.labCalib.stage === 'listening'">
+            {{c.labCalib.stage === 'listening' ? 'Listening…' : c.labCalib.stage === 'prompt' ? 'Speaking…' : 'Run calibration test'}}
+          </button>
+        </div>
+        <div class="netra-lab-kv" ng-show="c.labCalib.heard"><span>heard</span><em>{{c.labCalib.heard}}</em></div>
+        <div class="netra-lab-kv" ng-show="c.labCalib.verdict"><span>verdict</span><em>{{c.labCalib.verdict}}</em></div>
+      </section>
+
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">RECOGNITION HEALTH (SENTINEL)</div>
+        <div class="netra-lab-grid">
+          <div><span>recognition</span><b ng-class="{'bad': !c.recRunning}">{{c.recRunning ? 'RUNNING' : 'STOPPED'}}</b></div>
+          <div><span>permission</span><b ng-class="{'bad': c.permission === 'denied'}">{{c.permission}}</b></div>
+          <div><span>session age</span><b>{{c.labSessionAgeS()}}s</b></div>
+          <div><span>last final</span><b>{{c.labLastFinalAgo()}}</b></div>
+          <div><span>last interim</span><b>{{c.labLastInterimAgo()}}</b></div>
+          <div><span>sr restarts</span><b>{{c.micHealth.srRestarts}}</b></div>
+          <div><span>full recycles</span><b>{{c.micHealth.fullRecycles}}</b></div>
+          <div><span>preventive</span><b>{{c.micHealth.preventiveRecycles}}</b></div>
+          <div><span>zombie heals</span><b ng-class="{'warn': c.micHealth.syntheticFinals > 0}">{{c.micHealth.syntheticFinals}}</b></div>
+          <div><span>floor clears</span><b ng-class="{'warn': c.micHealth.floorClears > 0}">{{c.micHealth.floorClears}}</b></div>
+          <div><span>perm recoveries</span><b>{{c.micHealth.notAllowedRecoveries + c.micHealth.deniedRecoveries}}</b></div>
+          <div><span>calib score</span><b>{{c.micHealth.lastCalibScore !== undefined ? c.micHealth.lastCalibScore + '%' : '-'}}</b></div>
+        </div>
+      </section>
+
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">BRAIN + VOICE</div>
+        <div class="netra-lab-grid">
+          <div><span>state</span><b>{{c.state}}</b></div>
+          <div><span>model</span><b>{{c.stats.lastModel || '-'}}</b></div>
+          <div><span>latency</span><b>{{c.stats.lastLatencyMs ? c.stats.lastLatencyMs + 'ms' : '-'}}</b></div>
+          <div><span>tools called</span><b>{{c.stats.toolsCalled || 0}}</b></div>
+          <div><span>errors</span><b ng-class="{'warn': c.stats.errors > 0}">{{c.stats.errors || 0}}</b></div>
+          <div><span>TTS engine</span><b>{{c.ttsEngine}}</b></div>
+        </div>
+        <div class="netra-lab-row netra-lab-btns">
+          <button ng-click="c.devTestTTS()">Test TTS</button>
+          <button ng-click="c.devToggleTTS()">Cycle engine</button>
+        </div>
+      </section>
+
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">PRISM HUE ENGINE</div>
+        <div class="netra-lab-hue-row">
+          <span class="netra-lab-swatch" aria-hidden="true"></span>
+          <span class="netra-lab-chip">hue {{c.labHue()}}°</span>
+          <span class="netra-lab-chip">amp {{c.labAmp()}}%</span>
+          <span class="netra-lab-chip">60fps · voice-modulated</span>
+        </div>
+      </section>
+    </aside>
+  </div>
 
   <!-- ====================================================
         ORB - inline SVG (R2.5 - 3D golden-ratio orb)
@@ -297,10 +584,10 @@
         <radialGradient id="netra-voice-gradient" cx="50%" cy="50%" r="50%">
           <stop offset="0%"   stop-color="rgba(0,0,0,0)"/>
           <stop offset="48%"  stop-color="rgba(0,0,0,0)"/>
-          <stop offset="50%"  stop-color="rgba(139, 61, 240, 0.95)"/>
-          <stop offset="60%"  stop-color="rgba(190, 90, 235, 0.80)"/>
-          <stop offset="72%"  stop-color="rgba(255, 170,  80, 0.55)"/>
-          <stop offset="86%"  stop-color="rgba(160,  64, 232, 0.35)"/>
+          <stop offset="50%"  class="nvg-core" stop-color="rgba(139, 61, 240, 0.95)"/>
+          <stop offset="60%"  class="nvg-mid"  stop-color="rgba(190, 90, 235, 0.80)"/>
+          <stop offset="72%"  class="nvg-hot"  stop-color="rgba(255, 170,  80, 0.55)"/>
+          <stop offset="86%"  class="nvg-edge" stop-color="rgba(160,  64, 232, 0.35)"/>
           <stop offset="100%" stop-color="rgba(90,  26, 160, 0)"/>
         </radialGradient>
         <!-- Voice ring stroke: linear gradient across the bounding box gives the
@@ -308,13 +595,23 @@
              magenta -> golden amber heat-treatment patch -> back to deep violet). -->
         <linearGradient id="netra-voice-stroke-gradient" gradientUnits="userSpaceOnUse"
                         x1="0" y1="0" x2="120" y2="120">
-          <stop offset="0%"   stop-color="#6920b8"/>
-          <stop offset="25%"  stop-color="#8b3df0"/>
-          <stop offset="48%"  stop-color="#c660ff"/>
-          <stop offset="62%"  stop-color="#ffb84d"/>
-          <stop offset="80%"  stop-color="#a040e8"/>
-          <stop offset="100%" stop-color="#5a1aa0"/>
+          <stop offset="0%"   class="nvs-a" stop-color="#6920b8"/>
+          <stop offset="25%"  class="nvs-b" stop-color="#8b3df0"/>
+          <stop offset="48%"  class="nvs-b2" stop-color="#c660ff"/>
+          <stop offset="62%"  class="nvs-c" stop-color="#ffb84d"/>
+          <stop offset="80%"  class="nvs-b" stop-color="#a040e8"/>
+          <stop offset="100%" class="nvs-d" stop-color="#5a1aa0"/>
         </linearGradient>
+
+        <!-- R7/R8 - inner blob sheen: a soft off-centre highlight (light
+             hitting clay from upper-left), NOT a centred pupil. Warm violet
+             glow that swells when Netra speaks. -->
+        <radialGradient id="netra-blob-inner-gradient" cx="40%" cy="36%" r="58%">
+          <stop offset="0%"   stop-color="rgba(245,238,255,0.55)"/>
+          <stop offset="26%"  stop-color="rgba(216,180,255,0.30)"/>
+          <stop offset="58%"  stop-color="rgba(150,90,235,0.14)"/>
+          <stop offset="100%" stop-color="rgba(139,61,240,0)"/>
+        </radialGradient>
 
         <!-- Rim light gradient (highlight on lower-right edge) -->
         <radialGradient id="netra-rim" cx="74%" cy="76%" r="48%">
@@ -346,13 +643,13 @@
              radii give a soft inner violet, mid magenta, outer amber halo. -->
         <filter id="netra-violet-glow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur1"/>
-          <feFlood flood-color="#a050f0" flood-opacity="0.75" result="violet"/>
+          <feFlood class="nfl-1" flood-color="#a050f0" flood-opacity="0.75" result="violet"/>
           <feComposite in="violet" in2="blur1" operator="in" result="violetGlow"/>
           <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur2"/>
-          <feFlood flood-color="#be5aeb" flood-opacity="0.45" result="magenta"/>
+          <feFlood class="nfl-2" flood-color="#be5aeb" flood-opacity="0.45" result="magenta"/>
           <feComposite in="magenta" in2="blur2" operator="in" result="magentaGlow"/>
           <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur3"/>
-          <feFlood flood-color="#ffaa50" flood-opacity="0.30" result="amber"/>
+          <feFlood class="nfl-3" flood-color="#ffaa50" flood-opacity="0.30" result="amber"/>
           <feComposite in="amber" in2="blur3" operator="in" result="amberGlow"/>
           <feMerge>
             <feMergeNode in="amberGlow"/>
@@ -364,16 +661,16 @@
         <!-- Speaking-state aura: wider, more vibrant, with a fourth deep-violet outer halo. -->
         <filter id="netra-violet-glow-speaking" x="-80%" y="-80%" width="260%" height="260%">
           <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="b1"/>
-          <feFlood flood-color="#a050f0" flood-opacity="0.90" result="c1"/>
+          <feFlood class="nfl-1" flood-color="#a050f0" flood-opacity="0.90" result="c1"/>
           <feComposite in="c1" in2="b1" operator="in" result="g1"/>
           <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="b2"/>
-          <feFlood flood-color="#be5aeb" flood-opacity="0.60" result="c2"/>
+          <feFlood class="nfl-2" flood-color="#be5aeb" flood-opacity="0.60" result="c2"/>
           <feComposite in="c2" in2="b2" operator="in" result="g2"/>
           <feGaussianBlur in="SourceGraphic" stdDeviation="11" result="b3"/>
-          <feFlood flood-color="#ffaa50" flood-opacity="0.40" result="c3"/>
+          <feFlood class="nfl-3" flood-color="#ffaa50" flood-opacity="0.40" result="c3"/>
           <feComposite in="c3" in2="b3" operator="in" result="g3"/>
           <feGaussianBlur in="SourceGraphic" stdDeviation="18" result="b4"/>
-          <feFlood flood-color="#8b3df0" flood-opacity="0.18" result="c4"/>
+          <feFlood class="nfl-4" flood-color="#8b3df0" flood-opacity="0.18" result="c4"/>
           <feComposite in="c4" in2="b4" operator="in" result="g4"/>
           <feMerge>
             <feMergeNode in="g4"/>
@@ -395,27 +692,35 @@
            Filled with a translucent gradient so it reads as a halo
            of energy outside the sphere. Spike multiplier 2x the
            previous (0.40-0.50 vs 0.18-0.25). -->
+      <!-- R7 - LIQUID AURA (GPT-Live style). The spiky 24-vertex polygon
+           is replaced by two smooth spline blobs whose `d` attributes are
+           written straight from the client's rAF ticker (no Angular
+           binding - 60fps without digests). Outer aura + counter-phased
+           inner core; both breathe on idle and surge with speech. -->
       <g class="netra-voice-ring-group" ng-show="c.alert">
-        <!-- Filled waveform polygon: case-hardened violet patina inside the
-             ring outline. Same SVG glow filter as the stroke so the fill
-             reads as a soft inner aura rather than a flat color. -->
-        <polygon class="netra-voice-ring-fill"
-                 ng-attr-points="{{c.voiceRingPoints}}"
-                 fill="url(#netra-voice-gradient)"
-                 stroke="none"
-                 ng-attr-filter="{{c.state === 'speaking' ? 'url(#netra-violet-glow-speaking)' : 'url(#netra-violet-glow)'}}"/>
-        <!-- Outer connected outline: case-hardened violet stroke gradient.
-             SVG `filter` attribute is the OOB-correct way to layer glows on
-             SVG geometry — the SCSS compiler can't strip this. Two filters:
-             one for the idle/listening state, swap to the speaking variant
-             via ng-attr-filter when state=speaking. -->
-        <polygon class="netra-voice-ring-stroke"
-                 ng-attr-points="{{c.voiceRingPoints}}"
-                 fill="none"
-                 stroke="url(#netra-voice-stroke-gradient)"
-                 stroke-width="1.4"
-                 stroke-linejoin="round"
-                 ng-attr-filter="{{c.state === 'speaking' ? 'url(#netra-violet-glow-speaking)' : 'url(#netra-violet-glow)'}}"/>
+        <path class="netra-voice-blob-outer"
+              fill="url(#netra-voice-gradient)"
+              stroke="none"
+              ng-attr-filter="{{c.state === 'speaking' ? 'url(#netra-violet-glow-speaking)' : 'url(#netra-violet-glow)'}}"/>
+        <path class="netra-voice-blob-inner"
+              fill="url(#netra-blob-inner-gradient)"
+              stroke="none"
+              opacity="0.75"/>
+        <path class="netra-voice-blob-stroke"
+              fill="none"
+              stroke="url(#netra-voice-stroke-gradient)"
+              stroke-width="1.1"
+              stroke-linejoin="round"
+              ng-attr-filter="{{c.state === 'speaking' ? 'url(#netra-violet-glow-speaking)' : 'url(#netra-violet-glow)'}}"/>
+      </g>
+
+      <!-- R8.1 - speaking echo rings: three staggered expanding circles,
+           visible only in the speaking state (CSS), hue-locked via
+           --eye-glow so they always match the current voice colour. -->
+      <g class="netra-orb-echoes" aria-hidden="true">
+        <circle class="netra-orb-echo netra-orb-echo-1" cx="60" cy="60" r="50" fill="none"/>
+        <circle class="netra-orb-echo netra-orb-echo-2" cx="60" cy="60" r="50" fill="none"/>
+        <circle class="netra-orb-echo netra-orb-echo-3" cx="60" cy="60" r="50" fill="none"/>
       </g>
 
       <!-- Outermost soft halo, pulses via CSS -->
@@ -483,6 +788,11 @@
 
       <!-- Eyelid (only used in dormant state - covers iris when closed) -->
       <circle class="netra-eye-lid-top" cx="60" cy="60" r="50" fill="#0a1a14" opacity="0"/>
+      <!-- R6 - involuntary blink: a second lid that flicks closed for
+           ~140ms on a long randomized-feeling cycle (CSS keyframes), so
+           the eye reads as alive rather than painted. Hidden in dormant
+           (the main lid is already down). -->
+      <circle class="netra-eye-blink" cx="60" cy="60" r="50" fill="#0a1a14" opacity="0"/>
     </svg>
   </button>
 
@@ -505,7 +815,7 @@
     </span>
     <span class="netra-gate-text">
       <strong>Press here to start Netra</strong>
-      <span>Always listening. Just speak naturally. Say "stop listening" to pause.</span>
+      <span>Talk naturally - you can interrupt her any time, just start speaking. Say "stop listening" to pause.</span>
     </span>
   </button>
 
