@@ -180,6 +180,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (c.liveMode) document.body.classList.add('netra-live-body');
     } catch (eLM) { c.liveMode = false; }
     c.liveExit = function () {
+        _stage3dOn = false;
         try { if (window.NetraStage3D) window.NetraStage3D.unmount(); } catch (e3d) {}
         try {
             if ($window.history && $window.history.length > 1) $window.history.back();
@@ -207,11 +208,13 @@ api.controller = function ($scope, $timeout, $window) {
         try { ok = window.NetraStage3D.mount(hostEl); } catch (e3) { ok = false; }
         if (ok) {
             stageEl.classList.add('netra-3d-on');
-            logEvent('lab', '3D stage online: WebGL glass orb + starfield + bloom');
+            _stage3dOn = true;
+            logEvent('lab', '3D stage online: WebGL glass orb + sunrise + bloom');
         } else {
             logEvent('warn', 'WebGL not available - keeping the 2D blob');
         }
     }
+    var _stage3dOn = false;
     if (c.liveMode) $timeout(function () { _init3D(0); }, 400);
 
     /* ============================================================
@@ -564,8 +567,15 @@ api.controller = function ($scope, $timeout, $window) {
     for (var _bi = 0; _bi < 24; _bi++) _blobLevels[_bi] = 0;
     var _blobPhase = 0;
     function _smoothClosedPath(px, py) {
-        // Catmull-Rom -> cubic Bezier, closed loop
-        var n = px.length, d = 'M' + px[0].toFixed(1) + ',' + py[0].toFixed(1);
+        // Catmull-Rom -> cubic Bezier, closed loop. Any non-finite point
+        // snaps to center first - one bad frame must never poison the whole
+        // path string (the browser logs a console error for every NaN).
+        var n = px.length, k;
+        for (k = 0; k < n; k++) {
+            if (!isFinite(px[k])) px[k] = 60;
+            if (!isFinite(py[k])) py[k] = 60;
+        }
+        var d = 'M' + px[0].toFixed(1) + ',' + py[0].toFixed(1);
         for (var i = 0; i < n; i++) {
             var i0 = (i - 1 + n) % n, i1 = i, i2 = (i + 1) % n, i3 = (i + 2) % n;
             var c1x = px[i1] + (px[i2] - px[i0]) / 6, c1y = py[i1] + (py[i2] - py[i0]) / 6;
@@ -615,9 +625,11 @@ api.controller = function ($scope, $timeout, $window) {
      *  (full colour strings, so the SCSS layer stays dumb) and
      *  cascades to the orb, the Live stage, and the dev console.
      * ============================================================ */
+    // R10.1 - Gemini palette: azure #4285F4 (~217deg) -> lavender #9B72CB
+    // (~262deg) -> rose #D96570 (~355deg); speaking sweeps the gradient.
     var PRISM_STATE_HUE = {
-        boot: 265, idle: 152, awaiting: 192, listening: 192,
-        thinking: 288, speaking: 262, dormant: 268, error: 8, paused: 220
+        boot: 230, idle: 217, awaiting: 202, listening: 202,
+        thinking: 262, speaking: 258, dormant: 250, error: 8, paused: 220
     };
     var PRISM_STATE_SAT = { dormant: 55, paused: 14, boot: 70 };
     var _prismHue  = 152;    // smoothed hue (deg)
@@ -743,6 +755,19 @@ api.controller = function ($scope, $timeout, $window) {
     function _recomputeVoiceRing() {
         var lvlAvg = c.audioLevel || 0;
         var st     = c.state || '';
+        // R10.1b - when the WebGL orb owns the stage the SVG blob is
+        // invisible, so skip the whole path build (it was pure wasted CPU
+        // and the only thing still able to throw NaN path errors). The
+        // prism engine, ripples and the 3D globals keep running.
+        if (_stage3dOn) {
+            _lastVoiceRingLevel = lvlAvg;
+            _lastVoiceRingState = st;
+            _prismTick();
+            _maybeRipple();
+            window.__netraBands = c.audioLevels || null;
+            window.__netraLevel = c.audioLevel || 0;
+            return;
+        }
         // R2.12 - per-band frequency levels (24-element array). When present,
         // each vertex reads its own band. R7: no more static-frame skip -
         // the wobble phase advances every tick so the blob breathes even

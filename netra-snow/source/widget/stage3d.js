@@ -1,10 +1,12 @@
 /**
- * Netra Live - 3D stage (R10)
+ * Netra Live - 3D stage (R10.1b 'Gemini sunrise')
  *
  * the real-3D version of the blob: an iridescent glass orb (WebGL,
- * three.js r147) breathing with the same voice data as everything else,
- * sitting in a proper scene - parallax starfield, dust motes, a soft
- * reflective floor, slow camera drift + mouse parallax, bloom on top.
+ * three.js r147) breathing with the same voice data as everything else.
+ * The room is deliberatly cheap now - one painted sunrise billboard
+ * behind the orb, a soft warm pool below it, slow camera drift + mouse
+ * parallax and bloom on top. The pastel edge hues are CSS (the mesh
+ * layer screens over this canvas) so they cost the GPU nothing here.
  *
  * it talks to the widget through four tiny globals the client already
  * writes every frame (no angular digests involved):
@@ -20,7 +22,7 @@ window.NetraStage3D = (function () {
     'use strict';
 
     var renderer, scene, camera, composer, bloomPass;
-    var blob, blobMat, core, coreLight, stars, dust, dustGroup, reflector, fadeDisk;
+    var blob, blobMat, core, coreLight, sunrise, groundGlow;
     var rafId = null, clockT = 0, lastTs = 0, host = null;
     var mouse = { x: 0, y: 0 };
     var reduceMotion = false;
@@ -70,12 +72,22 @@ window.NetraStage3D = (function () {
         var cv = document.createElement('canvas');
         cv.width = 1024; cv.height = 512;
         var g = cv.getContext('2d');
+        // R10.1b - the room got a big lift: it used to fade to near-black
+        // and the orb's rim mirrored that at grazing angles = ugly dark
+        // crescents around the silhouette. A brighter violet room + a warm
+        // horizon band keep the fresnel edge luminous all the way round.
         var grad = g.createLinearGradient(0, 0, 0, 512);
-        grad.addColorStop(0, '#241238');
-        grad.addColorStop(0.55, '#120826');
-        grad.addColorStop(1, '#060312');
+        grad.addColorStop(0, '#4a3573');
+        grad.addColorStop(0.55, '#3a2760');
+        grad.addColorStop(1, '#2a1c4e');
         g.fillStyle = grad;
         g.fillRect(0, 0, 1024, 512);
+        var horizon = g.createLinearGradient(0, 250, 0, 420);
+        horizon.addColorStop(0, 'rgba(255, 190, 140, 0)');
+        horizon.addColorStop(0.6, 'rgba(255, 175, 130, 0.35)');
+        horizon.addColorStop(1, 'rgba(210, 120, 120, 0.15)');
+        g.fillStyle = horizon;
+        g.fillRect(0, 250, 1024, 170);
         function light(x, y, r, color, a) {
             var rg = g.createRadialGradient(x, y, 0, x, y, r);
             rg.addColorStop(0, color);
@@ -85,34 +97,41 @@ window.NetraStage3D = (function () {
             g.fillRect(x - r, y - r, r * 2, r * 2);
             g.globalAlpha = 1;
         }
-        light(240, 110, 190, '#ffffff', 0.95);   // key light
-        light(790, 150, 230, '#b28cff', 0.75);   // violet fill
-        light(520, 400, 260, '#3fd4c0', 0.45);   // teal bounce
-        light(60,  330, 170, '#ffb46b', 0.5);    // amber kicker
+        light(240, 110, 190, '#ffffff', 0.72);   // key light (dimmed - it was washing the glass white)
+        light(790, 150, 230, '#4285F4', 0.8);    // gemini azure fill
+        light(520, 400, 260, '#AD89EB', 0.6);    // gemini lavender bounce
+        light(60,  330, 170, '#D96570', 0.45);   // gemini rose kicker
+        light(512, 470, 300, '#ffd9a0', 0.5);    // sunrise from below
         var tex = new THREE.CanvasTexture(cv);
         tex.mapping = THREE.EquirectangularReflectionMapping;
         return tex;
     }
 
     function makeBlob() {
-        var geo = new THREE.IcosahedronGeometry(1.05, 48);
+        var BASE_SCALE = 0.75;   // R10.1 - 25% smaller per user
+        var geo = new THREE.IcosahedronGeometry(1.05, 32);
+        // R10.1b - the glass reads GEMINI now, not white: a faint blue base
+        // tint, much shorter attenuation (long light paths through the rim
+        // soak up the hue instead of showing the dark sky refracted = no
+        // more black notches on the silhouette) and a gentler ior/thickness
+        // so the edges dont bend rays clean off the sunrise plane.
         blobMat = new THREE.MeshPhysicalMaterial({
-            color: 0xffffff,
+            color: 0xdfe8ff,
             metalness: 0.0,
             roughness: 0.12,
             transmission: 0.88,
-            thickness: 0.9,
-            ior: 1.38,
+            thickness: 0.65,
+            ior: 1.29,
             iridescence: 1.0,
             iridescenceIOR: 1.32,
             iridescenceThicknessRange: [120, 480],
             clearcoat: 0.85,
             clearcoatRoughness: 0.18,
-            envMapIntensity: 2.3,
-            attenuationDistance: 3.2,
-            attenuationColor: new THREE.Color().setHSL(0.7, 0.7, 0.72),
-            emissive: new THREE.Color().setHSL(0.7, 0.9, 0.35),
-            emissiveIntensity: 0.55
+            envMapIntensity: 1.7,
+            attenuationDistance: 1.4,
+            attenuationColor: new THREE.Color().setHSL(0.62, 0.8, 0.55),
+            emissive: new THREE.Color().setHSL(0.62, 0.9, 0.35),
+            emissiveIntensity: 0.28
         });
         uniforms = {
             uTime:  { value: 0 },
@@ -137,7 +156,8 @@ window.NetraStage3D = (function () {
                 ].join('\n'));
         };
         blob = new THREE.Mesh(geo, blobMat);
-        blob.position.y = 0.55;
+        blob.position.y = 0.68;
+        blob.scale.setScalar(BASE_SCALE);
         scene.add(blob);
 
         // glowing heart inside the glass
@@ -150,6 +170,7 @@ window.NetraStage3D = (function () {
             })
         );
         core.position.copy(blob.position);
+        core.scale.setScalar(0.75);
         scene.add(core);
 
         coreLight = new THREE.PointLight(0x9a5cff, 1.4, 10, 2);
@@ -157,62 +178,66 @@ window.NetraStage3D = (function () {
         scene.add(coreLight);
     }
 
-    function makeStars() {
-        function shell(count, rMin, rMax, size, color, opacity) {
-            var pos = new Float32Array(count * 3);
-            for (var i = 0; i < count; i++) {
-                var r = rMin + Math.random() * (rMax - rMin);
-                var th = Math.random() * Math.PI * 2;
-                var ph = Math.acos(2 * Math.random() - 1);
-                pos[i * 3]     = r * Math.sin(ph) * Math.cos(th);
-                pos[i * 3 + 1] = r * Math.cos(ph) * 0.7;
-                pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
-            }
-            var g2 = new THREE.BufferGeometry();
-            g2.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-            var m2 = new THREE.PointsMaterial({
-                size: size, sizeAttenuation: true, color: color,
-                transparent: true, opacity: opacity,
-                blending: THREE.AdditiveBlending, depthWrite: false
-            });
-            return new THREE.Points(g2, m2);
-        }
-        stars = shell(1600, 16, 42, 0.07, 0xbfd0ff, 0.75);
-        scene.add(stars);
-        dustGroup = new THREE.Group();
-        dust = shell(140, 1.9, 3.4, 0.05, 0xd8c2ff, 0.5);
-        dustGroup.add(dust);
-        dustGroup.position.y = 0.55;
-        scene.add(dustGroup);
-    }
-
-    function makeFloor() {
-        try {
-            reflector = new THREE.Reflector(new THREE.CircleGeometry(7, 48), {
-                textureWidth: 512, textureHeight: 512, color: 0x556, clipBias: 0.003
-            });
-            reflector.rotation.x = -Math.PI / 2;
-            reflector.position.y = -1.4;
-            scene.add(reflector);
-        } catch (e) { /* floor is decoration - never fatal */ }
-        // radial fade so the mirror melts into the room instead of ending
-        // in a hard circle
+    // R10.1 - SUNRISE. A golden-hour glow rising behind the blob: one big
+    // painted billboard (sky + sun) and a soft warm pool of light under
+    // the orb. Two draw calls total - this REPLACED the mirror floor and
+    // the 3D starfield, which together were most of the frame cost.
+    function makeSunrise() {
         var cv = document.createElement('canvas');
-        cv.width = 512; cv.height = 512;
+        cv.width = 1024; cv.height = 640;
         var g = cv.getContext('2d');
-        var rg = g.createRadialGradient(256, 256, 40, 256, 256, 256);
-        rg.addColorStop(0, 'rgba(8,3,18,0.55)');
-        rg.addColorStop(0.55, 'rgba(8,3,18,0.85)');
-        rg.addColorStop(1, 'rgba(8,3,18,1)');
-        g.fillStyle = rg;
-        g.fillRect(0, 0, 512, 512);
-        fadeDisk = new THREE.Mesh(
-            new THREE.CircleGeometry(7.05, 48),
-            new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false })
+        // R10.1b - the whole sky pulled ~35% darker (the first pass washed
+        // the entire page out); the sun keeps its shine but sits in a
+        // properly moody violet dawn now.
+        var sky = g.createLinearGradient(0, 0, 0, 640);
+        sky.addColorStop(0.0, '#110c24');
+        sky.addColorStop(0.5, '#1b1435');
+        sky.addColorStop(0.75, '#372246');
+        sky.addColorStop(0.9, '#5d3749');
+        sky.addColorStop(1.0, '#835538');
+        g.fillStyle = sky;
+        g.fillRect(0, 0, 1024, 640);
+        var sun = g.createRadialGradient(512, 520, 10, 512, 520, 470);
+        sun.addColorStop(0.0, 'rgba(255, 240, 205, 0.7)');
+        sun.addColorStop(0.16, 'rgba(255, 205, 140, 0.42)');
+        sun.addColorStop(0.4, 'rgba(240, 140, 105, 0.24)');
+        sun.addColorStop(0.7, 'rgba(200, 95, 115, 0.12)');
+        sun.addColorStop(1.0, 'rgba(155, 114, 203, 0)');
+        g.fillStyle = sun;
+        g.fillRect(0, 0, 1024, 640);
+        var tex = new THREE.CanvasTexture(cv);
+        var mat = new THREE.MeshBasicMaterial({ map: tex });
+        // bigger than the view on purpose: refracted rays through the orb's
+        // rim must still land ON the plane, never on the void behind it
+        sunrise = new THREE.Mesh(new THREE.PlaneGeometry(38, 23.75), mat);
+        sunrise.position.set(0, 1.6, -8);
+        scene.add(sunrise);
+
+        // warm pool of light under the orb instead of the mirror
+        var cv2 = document.createElement('canvas');
+        cv2.width = 512; cv2.height = 512;
+        var g2 = cv2.getContext('2d');
+        var rg = g2.createRadialGradient(256, 256, 10, 256, 256, 250);
+        rg.addColorStop(0, 'rgba(255, 214, 160, 0.2)');
+        rg.addColorStop(0.5, 'rgba(217, 120, 130, 0.08)');
+        rg.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        g2.fillStyle = rg;
+        g2.fillRect(0, 0, 512, 512);
+        // tone-mapped now - the unmapped version turned into a blown-white
+        // streak behind the mic buttons once bloom got hold of it
+        groundGlow = new THREE.Mesh(
+            new THREE.PlaneGeometry(9, 9),
+            new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv2), transparent: true, depthWrite: false })
         );
-        fadeDisk.rotation.x = -Math.PI / 2;
-        fadeDisk.position.y = -1.395;
-        scene.add(fadeDisk);
+        groundGlow.rotation.x = -Math.PI / 2;
+        groundGlow.position.y = -1.2;
+        scene.add(groundGlow);
+
+        // warm backlight so the glass rim catches the sun
+        var sunLight = new THREE.DirectionalLight(0xffc98a, 0.42);
+        sunLight.position.set(0, -0.5, -6);
+        sunLight.target = blob;
+        scene.add(sunLight);
     }
 
     function onMouse(ev) {
@@ -240,23 +265,22 @@ window.NetraStage3D = (function () {
         uniforms.uTre.value  += (bandAvg(16, 23) - uniforms.uTre.value) * 0.25;
         uniforms.uSpeech.value = speechMix;
 
-        // hue-linked glass + heart
-        blobMat.attenuationColor.setHSL(hue, 0.75, 0.5);
+        // hue-linked glass + heart (emissive rides the hue too so the body
+        // of the glass actually LOOKS gemini-blue instead of washed white)
+        blobMat.attenuationColor.setHSL(hue, 0.8, 0.5);
+        blobMat.emissive.setHSL(hue, 0.85, 0.4);
+        blobMat.emissiveIntensity = 0.24 + amp * 0.35;
         core.material.color.setHSL(hue, 0.9, 0.65);
         core.material.opacity = 0.55 + amp * 0.45;
-        var cs = 1 + amp * 0.5 + Math.sin(clockT * 2.2) * 0.03;
+        var cs = 0.75 * (1 + amp * 0.5 + Math.sin(clockT * 2.2) * 0.03);
         core.scale.setScalar(cs);
         coreLight.color.copy(core.material.color);
         coreLight.intensity = 1.0 + amp * 2.6;
 
         blob.rotation.y += dt * 0.12;
         blob.rotation.z = Math.sin(clockT * 0.15) * 0.08;
-        var bs = 1 + amp * 0.10;
+        var bs = 0.75 * (1 + amp * 0.10);
         blob.scale.setScalar(bs);
-
-        stars.rotation.y += dt * 0.006;
-        dustGroup.rotation.y -= dt * 0.03;
-        dustGroup.rotation.x = Math.sin(clockT * 0.11) * 0.1;
 
         if (!reduceMotion) {
             var cx = Math.sin(clockT * 0.1) * 0.18 + mouse.x * 0.45;
@@ -266,7 +290,7 @@ window.NetraStage3D = (function () {
             camera.lookAt(0, 0.45, 0);
         }
 
-        if (bloomPass) bloomPass.strength = (degraded ? 0 : 0.45) + amp * 1.05 * (degraded ? 0 : 1);
+        if (bloomPass) bloomPass.strength = (degraded ? 0 : 0.4) + amp * 0.7 * (degraded ? 0 : 1);
 
         if (composer && !degraded) composer.render();
         else renderer.render(scene, camera);
@@ -301,14 +325,17 @@ window.NetraStage3D = (function () {
         } catch (e) { renderer = null; return false; }
         try {
             reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));   // R10.1 perf
             renderer.outputEncoding = THREE.sRGBEncoding;
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            renderer.toneMappingExposure = 1.35;
+            renderer.toneMappingExposure = 1.02;
             host.appendChild(renderer.domElement);
 
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x080312);
+            // matched to the darkened sky mid-tones - if a refracted ray
+            // somehow still misses the sunrise plane it lands on a colour
+            // that blends in instead of a black notch
+            scene.background = new THREE.Color(0x1d1535);
             camera = new THREE.PerspectiveCamera(45, 1, 0.1, 120);
             camera.position.set(0, 0.42, 5.4);
             camera.lookAt(0, 0.45, 0);
@@ -317,24 +344,23 @@ window.NetraStage3D = (function () {
             scene.environment = pmrem.fromEquirectangular(makeEnvTexture()).texture;
 
             makeBlob();
-            makeStars();
-            makeFloor();
+            makeSunrise();
 
-            // gentle fill so the floor + dust arent pitch black off-reflection
-            scene.add(new THREE.AmbientLight(0x33224d, 0.6));
-            var rim = new THREE.DirectionalLight(0x8877ff, 0.7);
+            // gentle fill so nothing goes pitch black off-reflection
+            scene.add(new THREE.AmbientLight(0x33224d, 0.5));
+            var rim = new THREE.DirectionalLight(0xAD89EB, 0.6);
             rim.position.set(-3, 4, -4);
             scene.add(rim);
-            var key = new THREE.PointLight(0xffffff, 1.1, 30);
+            var key = new THREE.PointLight(0xeaf2ff, 0.85, 30);
             key.position.set(3.5, 3.2, 3.5);
             scene.add(key);
-            var kick = new THREE.PointLight(0x51e6c8, 0.7, 24);
+            var kick = new THREE.PointLight(0x4285F4, 0.7, 24);
             kick.position.set(-3.2, -0.5, 2.8);
             scene.add(kick);
 
             composer = new THREE.EffectComposer(renderer);
             composer.addPass(new THREE.RenderPass(scene, camera));
-            bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(1024, 1024), 0.6, 0.6, 0.62);
+            bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(512, 512), 0.5, 0.5, 0.8);
             composer.addPass(bloomPass);
 
             resize();
