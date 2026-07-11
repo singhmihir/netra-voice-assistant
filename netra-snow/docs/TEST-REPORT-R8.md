@@ -1,6 +1,6 @@
 # Netra R8.x Test Report — "Prism / Sentinel / Form Intelligence"
 
-Date: 2026-07-11 · Instance: dev390397 (Personal Developer Instance) · Tester: automated (headless Chromium via CDP + REST) + manual user verification pending
+Date: 2026-07-11 · Instance: (personal developer instance — identifier withheld) · Tester: automated (headless Chromium via CDP + REST) + manual user verification pending
 
 ## Scope under test
 
@@ -78,16 +78,31 @@ microphone session, which this environment cannot produce):
    - All Sentinel events are now visible live in Netra Lab → Recognition
      Health (restarts, recycles, zombie heals, floor clears, recoveries).
 
-### E2E voice-pipeline (real widget server + Gemini + DB)
+### E2E voice-pipeline (real widget server + Gemini + DB, 8 turns)
 
 Driven through the actual client controller in headless Chromium
-(TTS stubbed). See `e2e-browser-results.json` for transcripts; summary is
-maintained in the PR description as runs complete. Verified paths:
-- chat → Gemini function-calling → tool dispatch → GlideRecord write →
-  spoken confirmation, with `tools_called` traces.
-- Legacy scripted-REST /command path re-enabled for creation
-  (`NetraResponder._create` now really creates; pending
-  `ticket_description` flow loops back into creation).
+(TTS stubbed), against live instance data:
+
+| Turn | Ask | Tools fired | Outcome |
+|---|---|---|---|
+| T1 | "what do I need to take care of before submitting INC0000059?" | check_before_submit, describe_form, form_buttons, summarize_ticket | ✅ pre-flight readout, short-form number ("incident ending 0 5 9") |
+| T2 | "what buttons are there / what happens after I click resolve?" | explain_button | ✅ Delete/Update/Submit/Resolve/Save listed + Resolve behaviour explained from its UI-action code |
+| T3 | "if I change state, do new fields pop up?" | field_change_effects | ✅ "On Hold → **On Hold Reason** pops up and becomes mandatory; Resolved → resolution fields" |
+| T4 | "create a ticket, my email crashes…" | create_ticket | ✅ INC0010005 created (contact_type=virtual_agent, DB-verified) |
+| T5 | "yes go ahead" | – | ✅ graceful "already created" follow-up |
+| T6 | "related records on it?" | related_records | ✅ SLA "Priority 4 resolution, in progress" reported |
+| T7 | "remind me in 2 minutes to stretch" | set_reminder | ✅ row created; **scanner promotion verified** (earlier reminder already flipped to kind=reminder) |
+| T8 | "did my actions create anything new?" | my_recent_records | ✅ enumerated the fresh records incl. the new incident |
+
+Also verified: chat → Gemini function-calling → tool dispatch → GlideRecord
+write → spoken confirmation with `tools_called` traces; legacy scripted-REST
+/command creation path (`NetraResponder._create` really creates now).
+
+Notes: flash-lite occasionally invents a near-miss tool name
+(`list_mandatory_fields` in T1) — the dispatcher's unknown-tool default
+handles it gracefully and the turn still succeeds. In T4 the model created
+immediately instead of asking to confirm first; prompt tuning of
+confirm-before-write strictness is a follow-up.
 
 ## Known limitations / manual follow-ups for the user
 
