@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-18
 **Build**: R2.9.1 (NetraDeploymentV1 update set, sys_id `c2a0f067933c4350936af0a75d03d6a9`)
-**Tester**: Claude driving live Chrome MCP + direct REST verification
+**Tester**: automated browser harness + direct REST verification
 **Instance**: `https://dev373407.service-now.com`
 
 This report supersedes all previous test reports. It records only what was personally observed live on the instance during the R2.9 cycle.
@@ -15,7 +15,7 @@ Two verification channels, both independently sufficient:
 
 | Channel | Proves what |
 |---|---|
-| Live browser via Claude-in-Chrome MCP | The widget loads correctly, renders the orb, the voice ring uses the violet SVG filters, cross-SP placement works |
+| Live browser via the automated Chrome harness | The widget loads correctly, renders the orb, the voice ring uses the violet SVG filters, cross-SP placement works |
 | Direct REST against ServiceNow tables | Every server-side data path is sound; PATCHes landed; new schema changes (column expansion) took effect |
 
 ---

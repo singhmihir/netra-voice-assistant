@@ -1,21 +1,23 @@
 /**
- * Netra Mic widget - SERVER SCRIPT  (Release 2 - web + in-tab control)
+ * Netra Mic widget - SERVER SCRIPT (R9)
  *
- * R1.4 adds 4 tools: list_capabilities (introspection),
- *   recall_past_conversations (long-term memory recall),
- *   remember_fact (long-term memory write), analyze_screenshot
- *   (multimodal vision signal). Memory + draft now coexist in a
- *   single unified CTX: JSON blob in last_utterance. Daily briefing
- *   upgraded with PROACTIVE highlights (top P1, oldest approval,
- *   unread watchlist activity). Gemini contents now accept image
- *   inlineData for screenshot analysis.
+ * this is the back half of Netra: one big action router + the Gemini
+ * function-calling loop + ~85 tools. the model decides when to call a
+ * tool (create ticket, list, resolve, describe the form, whatever) and
+ * we run it thru GlideRecord / the Netra script includes, then loop the
+ * result back for a natural spoken reply.
  *
- *
- * Powered by Google's Gemini API with full function-calling (tool use).
- * The model decides when to call tools (create ticket, list, resolve,
- * search knowledge, etc.) and Netra carries out the action via
- * NetraTools / NetraKnowledge Script Includes, then loops the result
- * back to the model for a natural-language reply.
+ * headline stuff thats in here now:
+ *   - FULL ticket control on every ticket type (writes on by default,
+ *     ticket_writes=false is the emergency kill-switch)
+ *   - form intelligence: mandatory fields, buttons + what they do,
+ *     field-change effects, pre-submit checks, flows, approvals,
+ *     related records, my_recent_records
+ *   - reminders, prosody-aware sentiment, short-form ticket numbers,
+ *     the analyst/developer lexicon that seeds the recogniser
+ *   - one gotcha to remeber: this whole file is a single IIFE and the
+ *     router at the top runs first, so data tables MUST be hoisted
+ *     functions, never plain vars (learned that one the hard way)
  *
  * Setup:
  *   System Property  x_196061_netra_v1.gemini_api_key   = <your key>
@@ -768,7 +770,7 @@
      *
      *  These wrap _callGemini with:
      *  - responseMimeType: 'application/json' + responseSchema for tools
-     *    that need machine-parseable output (Claude-style structured tool use)
+     *    that need machine-parseable output (strict structured tool use)
      *  - "Think step by step" preamble for chain-of-thought
      *  - Higher maxOutputTokens (2048) for reasoning tasks vs 512 for chat
      *  - Verbose system text that forces explicit reasoning before answer
@@ -812,7 +814,7 @@
         };
         // Structured output: when responseSchema is provided, Gemini guarantees
         // the output is a valid JSON object matching that schema. This is the
-        // analog of Claude's tool-input JSON schema enforcement.
+        // same idea as strict tool-input JSON schema enforcement.
         if (responseSchema) {
             body.generationConfig.responseMimeType = 'application/json';
             body.generationConfig.responseSchema   = responseSchema;
@@ -954,7 +956,7 @@
 'TICKET POLICY - FULL CONTROL (R8): you can CREATE, EDIT and MODIFY any type of ticket:\n' +
 '- Incidents, problems, change requests, catalog requests, catalog tasks - you can open them, update them, comment on them, reassign them, reprioritise them, resolve them and close them. The tools are live. Use them.\n' +
 '- You ARE the expert on existing tickets. The moment one is mentioned, know it cold - status, summary, history, priority, assignee - without being asked twice.\n' +
-'- QUICK CREATE: for a simple incident ("my email is broken, raise a ticket"), call create_ticket directly with the description - no draft ceremony. Read the new number back letter-by-digit.\n' +
+'- QUICK CREATE: for a simple incident ("my email is broken, raise a ticket"), use create_ticket - but NEVER in the same turn the user first describes the issue. Read the description back and ask "shall I raise it?" FIRST; only call create_ticket after an explicit yes in a LATER turn. This confirmation is non-negotiable, even when the request sounds complete.\n' +
 '- GUIDED CREATE: for problems, changes, catalog tasks, or when the user wants control over fields, use start_record_draft -> set_record_field -> review_draft -> confirm_and_create. Read the draft back before confirming.\n' +
 '- EDITS: resolve_ticket, update_ticket (customer comment), add_work_note, change_priority, escalate_ticket, assign_ticket_to_group, assign_ticket_to_user, update_field (any field on any ticket type by number).\n' +
 '- CONFIRM BEFORE WRITING (blind-user safety): read back what you are about to create or change and get a clear yes FIRST. Reads never need confirmation; writes always do.\n' +
@@ -1022,9 +1024,9 @@
 '- assign_vulnerable_item, set_vulnerable_item_state (open/investigate/review/awaiting/resolve/close), defer_vulnerable_item (reason MANDATORY - it is a risk-acceptance on the audit trail), add_vulnerability_note - the mutating actions. ALWAYS read back the item and CONFIRM verbally before you assign, change state, defer, or close. Deferring or closing a critical item without confirmation is unacceptable.\n' +
 '- Speak risk as bands and numbers the analyst can act on: "**VIT0014304**, risk **100**, **critical** - Adobe Flash on **LAPTP-SD-3818**, still **open**." Summarise long queues by shape (how many critical/high, top groups) before enumerating, exactly like ticket lists.\n' +
 '\n' +
-'CLAUDE-STYLE BEHAVIOUR (R1.3 - careful, agentic, multi-turn):\n' +
+'SENTINEL BEHAVIOUR (R1.3 - careful, agentic, multi-turn):\n' +
 '\n' +
-'- You are the "Claude of ServiceNow": careful, thoughtful, never destructive without confirmation, always reads-back before acting.\n' +
+'- You are the most careful pair of hands on ServiceNow: thoughtful, never destructive without confirmation, always reads-back before acting.\n' +
 '- Use the persons first name naturally. e.g. "Right, Mihir, here is what I have so far."\n' +
 '- BE EMPATHETIC. If the user sounds frustrated, acknowledge before acting.\n' +
 '\n' +
@@ -1061,7 +1063,7 @@
 '- Memory is YOURS - past exchanges are stored. Use them. Reference them. "Like the VPN issue we discussed earlier..."\n' +
 '\n' +
 'WHEN THE USER WANTS A TICKET RAISED (create it - this is your job):\n' +
-'- "Open / create / log / raise / file a ticket" -> get the one-line description (ask if they have not given it), OPTIONALLY run search_incidents first to flag an existing duplicate, then confirm: "Shall I raise an incident for <description>?" On yes, call create_ticket and read the new number back letter-by-digit.\n' +
+'- "Open / create / log / raise / file a ticket" -> get the one-line description (ask if they have not given it), OPTIONALLY run search_incidents first to flag an existing duplicate, then STOP and confirm: "Shall I raise an incident for <description>?" Do NOT call create_ticket in this turn. Only when the user answers yes in the NEXT turn do you call create_ticket, then read the new number back in short form.\n' +
 '- For "raise a problem" / "open a change" use create_problem / create_change the same way; for anything needing more fields, drive the draft flow (start_record_draft).\n' +
 '- If a duplicate exists, mention it and ask whether to update that one instead of opening a new one - then do whichever they choose.\n' +
 '- Always land on something you DID for them: a created number, an updated record, or a clear answer.\n' +
@@ -1399,7 +1401,7 @@
                     description: 'Count open incidents per group the user belongs to. Use when user asks "what is my teams workload" or "how is the queue".',
                     parameters: { type: 'object', properties: {} }
                 },
-                // ------- R1.3 - draft + confirmation flow (Claude-style) -------
+                // ------- R1.3 - draft + confirmation flow (multi-turn) -------
                 {
                     name: 'start_record_draft',
                     description: 'Begin a CONVERSATIONAL DRAFT for a new ticket when the user wants field-by-field control, or for record types beyond a simple incident. This starts a multi-turn conversation: Netra asks for required fields one at a time, the user can change earlier answers, and only after explicit confirmation is the record actually inserted. Pass record_type = incident|problem|change_request|sc_task|sc_req_item. For a simple one-line incident, create_ticket is faster.',
@@ -1440,7 +1442,7 @@
                         message:        { type: 'string', description: 'The message body' }
                     }, required: ['recipient_name','message'] }
                 },
-                // ------- R1.4 - Claude-of-ServiceNow advanced tools -------
+                // ------- R1.4 - advanced tools -------
                 {
                     name: 'list_capabilities',
                     description: 'Self-introspection: returns a categorized tour of what Netra can do. Use when the user asks "what can you do?", "help me", "show me your features", "list your capabilities", "how do you work".',
@@ -1529,7 +1531,7 @@
                         keyword: { type: 'string', description: 'Optional: filter by name LIKE this string' }
                     }, required: ['table'] }
                 },
-                // ------- R2.11 - Claude-powered advanced tools -------
+                // ------- R2.11 - reasoning-powered advanced tools -------
                 {
                     name: 'triage_approvals',
                     description: 'Smart approval triage. Pulls all pending approvals for the user, classifies each via the Netra reasoning engine as ROUTINE / SCRUTINY / RISKY with a one-sentence rationale, sorted by risk. Use when the user says "triage my approvals", "what should I approve first", "rank my approvals by risk". After the tool returns, read out the top 2 items by risk; do not read all of them.',
@@ -1937,7 +1939,7 @@
                     return _readScript(String(args.query || ''));
                 case 'list_scripts':
                     return _listScripts(String(args.table || ''), String(args.keyword || ''));
-                // R2.11 - Claude-powered tools
+                // R2.11 - reasoning tools
                 case 'triage_approvals':
                     return _triageApprovals();
                 case 'narrate_script':
@@ -2614,7 +2616,7 @@
     }
 
     /* ===================================================================
-     *  R1.3 - DRAFT + CONFIRMATION FLOW (Claude-style multi-turn)
+     *  R1.3 - DRAFT + CONFIRMATION FLOW (multi-turn)
      *
      *  Drafts are persisted as JSON in the user's Netra Context row under
      *  a new field "draft_json" (we stash it in last_utterance with a
@@ -3666,7 +3668,7 @@
     }
 
     /* ===================================================================
-     *  R1.4 - CLAUDE-OF-SERVICENOW UPGRADES
+     *  R1.4 - ADVANCED ASSISTANT UPGRADES
      * =================================================================== */
 
     // 1. Capability tour - self-introspection

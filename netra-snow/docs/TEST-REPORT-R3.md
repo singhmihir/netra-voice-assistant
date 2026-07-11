@@ -3,7 +3,7 @@
 **Date**: 2026-05-18
 **Build**: **R3** (Netra_Version_1 update set)
 **Instance**: `https://dev373407.service-now.com`
-**Tester**: Claude driving live REST + paced Gemini round-trips
+**Tester**: automated REST harness + paced Gemini round-trips
 
 This report is the honest verification record for everything Netra does as of R3. It covers every layer from R1 through R3 — not just the new R3 deltas — because we promised regression, not delta-only testing.
 

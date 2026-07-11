@@ -330,7 +330,7 @@ const SCRIPT_INCLUDES = [
   ['NetraKnowledge', 'KB operations: keyword LIKE search, KB-number lookup, full article body read.'],
   ['NetraSummarizer', 'Ticket + change summarization with recent comments and structured next-steps.'],
   ['NetraNavigator', 'In-tab navigation: navigate_to_record, click_button by label, update_field.'],
-  ['NetraReasoning', 'Claude-style reasoning patterns over Gemini. Used by triage_approvals, narrate_script, build_query. Returns structured output via responseSchema.'],
+  ['NetraReasoning', 'structured reasoning patterns over Gemini. Used by triage_approvals, narrate_script, build_query. Returns structured output via responseSchema.'],
 ];
 
 const TOOLS = [
@@ -360,7 +360,7 @@ const RELEASES = [
   { v: 'R2.8', title: 'FFT ring', desc: 'Frequency-domain voice ring (24 bands logarithmic), audio-reactive output analyser.' },
   { v: 'R2.9', title: 'RAG / embeddings', desc: 'Gemini-embedding-001 (768-dim), kb_embedding cache table, cosine-similarity ranking, asymmetric task-typing.' },
   { v: 'R2.10', title: 'Multilingual + sentiment', desc: 'Mirror user language (Hindi/Tamil/Spanish/Hinglish), sentiment escalation, recall_past_conversations, search_web.' },
-  { v: 'R2.11', title: 'NetraReasoning', desc: 'Claude-style structured-output patterns over Gemini: triage_approvals, narrate_script, build_query. responseSchema.' },
+  { v: 'R2.11', title: 'NetraReasoning', desc: 'structured-output patterns over Gemini: triage_approvals, narrate_script, build_query. responseSchema.' },
   { v: 'R2.12', title: 'VS Code dev panel', desc: 'Restyled dev panel, dark mode, 4 tabs (Voice/Monitor/Logs/Training), collapsible. Speaker-cone pulse.' },
   { v: 'R2.12.5', title: 'Speed-first', desc: 'gemini-flash-lite-latest default, HTTP timeout 30s→12s, chain deadline added.' },
   { v: 'R2.13', title: 'Slot-fill + auto-read', desc: 'Dynamic mandatory enum (sys_dictionary + override + data_policy + ui_policy), KB/CHG auto-read on number mention.' },

@@ -5,7 +5,7 @@
 **Update set**: `Netra_Version_2_R4` (sys_id `fcbaf7fc930dcb50936af0a75d03d6c5`, state `in progress`, set current)
 **Instance**: dev373407.service-now.com
 **Live widget**: client mod_count 108, server mod_count 109
-**Tester**: automated via Claude in Chrome MCP, real widget API endpoints
+**Tester**: automated Chrome harness, real widget API endpoints
 
 ---
 

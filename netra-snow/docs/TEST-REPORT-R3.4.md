@@ -1,7 +1,7 @@
-# Netra R3.4 - End-to-End Test Report (Claude-in-Chrome)
+# Netra R3.4 - End-to-End Test Report (automated Chrome harness)
 
 **Date:** 2026-05-22
-**Tester:** Claude (Sonnet 4.6 / Opus 4.7) via Chrome MCP
+**Tester:** automated Chrome test harness
 **Instance:** dev373407.service-now.com
 **Build:** R3.4 / widget mod_count 99 / script 204,154 chars / client_script 145,738 chars
 **Browser:** Chrome (mihir singh admin session)

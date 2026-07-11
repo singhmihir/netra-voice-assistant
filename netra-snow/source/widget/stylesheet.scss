@@ -1,14 +1,20 @@
 /* ============================================================
- *  Netra Mic widget - R1 styles (Apple-serene backlit eye)
+ *  Netra Mic widget - styles (R9 "Prism")
  *
- *  Calm. Beautiful. Draggable. Shrinkable. The eye is the
- *  whole identity - no HUD lines, no scanners. Soft warm
- *  sclera, layered iris with striations, deep pupil, two
- *  catchlights, gentle backlit halo.
+ *  the eye/orb is the whole identity - calm, draggable,
+ *  shrinkable. colours are NOT hardcoded per state anymore:
+ *  the prism engine in client.js writes CSS variables at 60fps
+ *  and everything in here just consumes them.
+ *
+ *  heads up: ServiceNow's SCSS compiler is old and quietly eats
+ *  some modern blocks (glass backdrop-filter+saturate combos,
+ *  calc*var inside drop-shadow, grayscale(0.5)...). anything it
+ *  cant digest lives in a <style> tag inside template.html
+ *  instead - dont move those back here, you'll loose them.
  * ============================================================ */
 
 /* ============================================================
- *  Root - R1.3 small Claude-style mark, default top-left
+ *  Root - R1.3 small floating mark, default top-left
  * ============================================================ */
 .netra-root {
     position: fixed;
@@ -1583,7 +1589,7 @@
 /* ============================================================
  *  R8 - NETRA LIVE STAGE (dedicated /sp?id=netra_live page)
  *
- *  Claude-Live-style full-screen voice surface: the stage is a
+ *  Full-screen live voice surface: the stage is a
  *  fixed overlay that covers the entire viewport (including the
  *  Service Portal chrome), a warm near-black canvas, one big
  *  organic blob breathing dead-centre, a quiet status line, a
@@ -1840,10 +1846,10 @@
 .netra-stage-blob-wrap:active { transform: scale(0.97); }
 .netra-stage-svg { width: 100%; height: 100%; overflow: visible; }
 
-/* the big blob - warm plasma clay, Claude-Live feel, Netra palette.
+/* the big blob - warm plasma clay, Netra palette.
  * A state-tinted radial gradient is defined per stage state below; the
  * blob morphs colour as Netra listens (green), thinks (amber) and
- * speaks (violet), the way Claude Live shifts warm tones. */
+ * speaks (violet) - live assistants shift tone, so does she. */
 .netra-stage-blob-outer {
     fill: url(#netra-stage-grad);
     filter: drop-shadow(0 0 22px var(--netra-glow-soft, rgba(127,255,176,0.35)));
@@ -2040,6 +2046,48 @@
 .netra-lab-grid b.bad  { color: #ff9d8f; }
 .netra-lab-grid b.warn { color: #ffd34d; }
 .netra-lab-hue-row { display: flex; align-items: center; gap: 8px; }
+/* R9 - Lab preference controls */
+.netra-lab-slider { display: flex; align-items: center; gap: 8px; }
+.netra-lab-slider label { color: #8f83b5; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; flex: none; }
+.netra-lab-slider input { flex: 1; accent-color: #8b3df0; }
+.netra-lab-slider em { font-style: normal; color: #eae4f8; width: 34px; text-align: right; }
+.netra-lab-selects { display: flex; align-items: center; gap: 8px; }
+.netra-lab-selects label { color: #8f83b5; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; width: 70px; flex: none; }
+.netra-lab-selects select {
+    flex: 1;
+    background: #14101f;
+    color: #e4dbff;
+    border: 1px solid rgba(139, 61, 240, 0.35);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 10.5px;
+    padding: 4px 6px;
+}
+.netra-lab-check { display: inline-flex; align-items: center; gap: 5px; color: #cdbff0; font-size: 10px; cursor: pointer; }
+.netra-lab-check input { accent-color: #8b3df0; }
+.netra-lab-cmd { display: flex; gap: 8px; }
+.netra-lab-cmd input {
+    flex: 1;
+    background: #14101f;
+    color: #f0eafc;
+    border: 1px solid rgba(139, 61, 240, 0.35);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 6px 8px;
+}
+.netra-lab-cmd input:focus { outline: none; border-color: rgba(198, 96, 255, 0.7); }
+.netra-lab-cmd button {
+    background: rgba(139, 61, 240, 0.16);
+    border: 1px solid rgba(139, 61, 240, 0.4);
+    color: #e4dbff;
+    font-family: inherit;
+    font-size: 10px;
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+}
+.netra-lab-cmd button[disabled] { opacity: 0.45; cursor: default; }
 .netra-lab-swatch {
     width: 22px; height: 22px;
     border-radius: 50%;

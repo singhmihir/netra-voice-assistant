@@ -1,5 +1,5 @@
 <!--
-  Netra Mic widget template - R8.1 "Prism" (Claude-of-ServiceNow)
+  Netra Mic widget template - R9 "Prism"
 
   R8.1: the prism hue engine drives every colour in this template via
   CSS custom properties written at 60fps from client.js - the orb, the
@@ -66,6 +66,78 @@
     filter: drop-shadow(0 18px 60px var(--eye-glow, rgba(139, 61, 240, 0.45)))
             drop-shadow(0 0 calc(20px + var(--netra-amp, 0) * 60px) var(--netra-glow-soft, rgba(139, 61, 240, 0.2)));
   }
+  /* R9 - pastel mesh environment while she talks (soft Figma-gradient vibe:
+     huge ultra-blurred coral/lavender/sky/mint/peach blobs drifting) */
+  .netra-stage-mesh {
+    position: absolute;
+    inset: -10%;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 1.4s ease;
+    mix-blend-mode: screen;
+  }
+  .netra-stage-speaking .netra-stage-mesh { opacity: 0.9; }
+  .netra-stage-thinking .netra-stage-mesh { opacity: 0.35; }
+  .netra-mesh-blob {
+    position: absolute;
+    width: 55vmax;
+    height: 55vmax;
+    border-radius: 50%;
+    filter: blur(calc(70px + var(--netra-amp, 0) * 30px));
+    will-change: transform;
+  }
+  .netra-mesh-1 { top: -12%; left: -8%;  background: radial-gradient(circle at 40% 40%, rgba(255, 158, 128, 0.5), rgba(255, 158, 128, 0) 65%); animation: netra-mesh-drift-a 26s ease-in-out infinite; }
+  .netra-mesh-2 { top: -16%; right: -10%; background: radial-gradient(circle at 55% 45%, rgba(186, 148, 255, 0.55), rgba(186, 148, 255, 0) 65%); animation: netra-mesh-drift-b 31s ease-in-out infinite; }
+  .netra-mesh-3 { bottom: -18%; left: -6%; background: radial-gradient(circle at 50% 50%, rgba(132, 190, 255, 0.5), rgba(132, 190, 255, 0) 65%); animation: netra-mesh-drift-b 24s ease-in-out infinite reverse; }
+  .netra-mesh-4 { bottom: -14%; right: -8%; background: radial-gradient(circle at 45% 55%, rgba(255, 210, 157, 0.45), rgba(255, 210, 157, 0) 65%); animation: netra-mesh-drift-a 34s ease-in-out infinite reverse; }
+  .netra-mesh-5 { top: 28%; left: 30%;  width: 44vmax; height: 44vmax; background: radial-gradient(circle at 50% 50%, rgba(157, 240, 205, 0.35), rgba(157, 240, 205, 0) 65%); animation: netra-mesh-drift-a 29s ease-in-out infinite; }
+  @keyframes netra-mesh-drift-a {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    33%      { transform: translate3d(6vmax, -4vmax, 0) scale(1.12); }
+    66%      { transform: translate3d(-4vmax, 5vmax, 0) scale(0.94); }
+  }
+  @keyframes netra-mesh-drift-b {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); }
+    50%      { transform: translate3d(-6vmax, 6vmax, 0) scale(0.92); }
+  }
+  /* R9 - interactive calibration card */
+  .netra-calib-card {
+    max-width: 560px;
+    border-radius: 16px;
+    background: rgba(16, 12, 26, 0.78);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    backdrop-filter: blur(16px) saturate(1.2);
+    border: 1px solid var(--netra-glow-soft, rgba(139, 61, 240, 0.3));
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5), 0 0 30px var(--netra-glow-soft, rgba(139, 61, 240, 0.15));
+    padding: 14px 18px 12px;
+    text-align: center;
+    animation: netra-lab-in 0.3s ease;
+  }
+  .netra-calib-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.16em;
+    color: var(--iris-bright, #b9a8ee);
+    display: flex; justify-content: center; gap: 10px; align-items: baseline;
+  }
+  .netra-calib-stage { color: #8f83b5; letter-spacing: 0.04em; text-transform: none; font-weight: 500; }
+  .netra-calib-sentence { font-size: 16px; line-height: 1.5; color: #ffffff; margin: 10px 0 4px; }
+  .netra-calib-live { font-size: 13px; color: #cdbff0; font-style: italic; min-height: 20px; margin-top: 6px; }
+  .netra-calib-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--iris-bright, #7fffb0); margin-right: 8px;
+    animation: netra-halo-pulse 1.2s ease-in-out infinite;
+  }
+  .netra-calib-result { margin: 8px 0 2px; display: flex; gap: 12px; justify-content: center; align-items: baseline; }
+  .netra-calib-score { font-size: 26px; font-weight: 800; color: var(--iris-bright, #7fffb0); }
+  .netra-calib-verdict { font-size: 13px; color: #d9d0f0; }
+  .netra-calib-actions { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
+  .netra-calib-actions button {
+    background: rgba(139, 61, 240, 0.18);
+    border: 1px solid var(--netra-glow-soft, rgba(139, 61, 240, 0.45));
+    color: #e4dbff; border-radius: 999px; font-size: 12px;
+    padding: 5px 16px; cursor: pointer;
+  }
+  .netra-calib-actions button:hover { background: rgba(139, 61, 240, 0.34); }
 </style>
 <div class="netra-root"
      ng-class="['netra-state-' + c.state, {'netra-barged': c.bargeFlash}]"
@@ -209,7 +281,7 @@
         </div>
         <div class="netra-bar-empty" ng-show="!c.charts.toolBars.length">no tools called yet</div>
       </div>
-      <!-- R1.4 - last-turn trace (Claude-style thinking transparency) -->
+      <!-- R1.4 - last-turn trace (shows which tools actualy ran) -->
       <div class="netra-graph-card netra-trace" ng-show="c.lastTrace.length">
         <div class="netra-graph-title">LAST TURN TRACE <span class="netra-graph-sub">({{c.lastTrace.length}} tool{{c.lastTrace.length === 1 ? '' : 's'}})</span></div>
         <div class="netra-trace-row" ng-repeat="t in c.lastTrace">
@@ -358,7 +430,7 @@
 
   <!-- ====================================================
         R8 - NETRA LIVE STAGE (dedicated portal page /sp?id=netra_live)
-        Full-screen Claude-Live-style voice surface: warm cream canvas,
+        Full-screen live voice surface: deep cosmic canvas,
         one organic clay blob breathing in the centre, quiet status
         line, caption of the last exchange, and two round controls
         (mute / end). The blob paths are driven by the same rAF ticker
@@ -377,6 +449,17 @@
       <span class="netra-stage-pill">LIVE</span>
       <span class="netra-stage-pill netra-stage-pill-state">{{c.state}}</span>
     </header>
+
+    <!-- R9 - PASTEL MESH ENVIRONMENT: five huge ultra-soft gradient blobs
+         (coral / lavender / sky / mint / peach) that bloom in while Netra
+         talks - the whole room turns into a drifting mesh gradient. -->
+    <div class="netra-stage-mesh" aria-hidden="true">
+      <div class="netra-mesh-blob netra-mesh-1"></div>
+      <div class="netra-mesh-blob netra-mesh-2"></div>
+      <div class="netra-mesh-blob netra-mesh-3"></div>
+      <div class="netra-mesh-blob netra-mesh-4"></div>
+      <div class="netra-mesh-blob netra-mesh-5"></div>
+    </div>
 
     <div class="netra-stage-center">
       <div class="netra-stage-orbit" aria-hidden="true">
@@ -408,6 +491,34 @@
            ng-show="c.state === 'speaking' && c.spoken">{{c.spoken}}</div>
       <div class="netra-stage-caption" ng-show="c.state !== 'speaking' && (c.interim || c.lastHeard)">
         {{c.interim || c.lastHeard}}
+      </div>
+
+      <!-- R9 - INTERACTIVE MIC CALIBRATION CARD (every page load).
+           Shows the sentence to read, the live transcript while listening,
+           and the score when done - with Skip / Try again controls. -->
+      <div class="netra-calib-card" ng-show="c.labCalib.stage === 'prompt' || c.labCalib.stage === 'listening' || c.labCalib.stage === 'done' || c.labCalib.stage === 'timeout'">
+        <div class="netra-calib-title">
+          MIC CALIBRATION
+          <span class="netra-calib-stage">{{c.labCalib.stage === 'prompt' ? 'get ready…' : c.labCalib.stage === 'listening' ? 'read the sentence aloud' : c.labCalib.stage === 'done' ? 'result' : 'no speech heard'}}</span>
+        </div>
+        <div class="netra-calib-sentence" ng-show="c.labCalib.stage === 'prompt' || c.labCalib.stage === 'listening'">
+          “{{c.labCalibSentence}}”
+        </div>
+        <div class="netra-calib-live" ng-show="c.labCalib.stage === 'listening'">
+          <span class="netra-calib-dot"></span>{{c.interim || 'listening…'}}
+        </div>
+        <div class="netra-calib-result" ng-show="c.labCalib.stage === 'done'">
+          <span class="netra-calib-score">{{c.labCalib.score}}%</span>
+          <span class="netra-calib-verdict">{{c.labCalib.verdict}}</span>
+        </div>
+        <div class="netra-calib-result" ng-show="c.labCalib.stage === 'timeout'">
+          <span class="netra-calib-verdict">{{c.labCalib.verdict}}</span>
+        </div>
+        <div class="netra-calib-actions">
+          <button ng-show="c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt'" ng-click="c.calibSkip()">Skip</button>
+          <button ng-show="c.labCalib.stage === 'done' || c.labCalib.stage === 'timeout'" ng-click="c.calibRetry()">Try again</button>
+          <button ng-show="c.labCalib.stage === 'done' || c.labCalib.stage === 'timeout'" ng-click="c.calibDismiss()">Close</button>
+        </div>
       </div>
     </div>
 
@@ -452,10 +563,63 @@
           <span class="netra-lab-chip">peak {{c.micLevelPeak || 0}}</span>
         </div>
         <canvas class="netra-lab-scope" width="360" height="72" aria-hidden="true"></canvas>
+        <div class="netra-lab-row netra-lab-slider">
+          <label>sensitivity</label>
+          <input type="range" min="0.5" max="3" step="0.1" ng-model="c.micGain" ng-change="c.labSetGain()"
+                 aria-label="Microphone sensitivity" />
+          <em>{{c.micGain}}x</em>
+        </div>
         <div class="netra-lab-row netra-lab-btns">
           <button ng-click="c.devTestMic()" ng-disabled="c.micRecording || !c.micStreamActive">Record 3s + playback</button>
           <button ng-click="c.labRestartMic()">Rebuild mic stack</button>
           <em ng-show="c.micTestResult">{{c.micTestResult}}</em>
+        </div>
+      </section>
+
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">LANGUAGE + VOICE</div>
+        <div class="netra-lab-row netra-lab-selects">
+          <label>hear in</label>
+          <select ng-model="c.recLang" ng-change="c.labSetLang()"
+                  ng-options="l as l for l in c.recLangs"
+                  aria-label="Speech recognition language"></select>
+        </div>
+        <div class="netra-lab-row netra-lab-selects">
+          <label>speak with</label>
+          <select ng-model="c.edgeVoice" ng-change="c.devSetEdgeVoice()"
+                  ng-options="v as v for v in ['en-US-AvaMultilingualNeural','en-US-EmmaMultilingualNeural','en-US-AndrewMultilingualNeural','en-US-BrianMultilingualNeural','en-US-JennyNeural','en-US-AriaNeural','en-IN-NeerjaNeural','en-IN-AashiNeural','en-IN-AnanyaNeural','hi-IN-SwaraNeural','en-GB-SoniaNeural']"
+                  aria-label="Netra's speaking voice"></select>
+        </div>
+        <div class="netra-lab-row netra-lab-btns">
+          <button ng-click="c.devPreviewVoice()">Preview voice</button>
+          <button ng-click="c.devToggleTTS()">Engine: {{c.ttsEngine}}</button>
+          <label class="netra-lab-check"><input type="checkbox" ng-model="c.labMute" ng-change="c.labSetMute()"/> mute TTS</label>
+        </div>
+      </section>
+
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">TYPE A COMMAND (no mic needed)</div>
+        <div class="netra-lab-row netra-lab-cmd">
+          <input type="text" ng-model="c.labCmd" ng-keydown="c.labCmdKey($event)"
+                 placeholder="e.g. list my tickets / resolve INC0010005"
+                 aria-label="Type a command for Netra" />
+          <button ng-click="c.labSendCmd()" ng-disabled="!c.labCmd">Send</button>
+        </div>
+      </section>
+
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">NLP TEST (dry run, TTS muted)</div>
+        <div class="netra-lab-row netra-lab-cmd">
+          <input type="text" ng-model="c.labNlpText" ng-keydown="c.labNlpKey($event)"
+                 placeholder="e.g. what buttons are on INC0000059?"
+                 aria-label="NLP test utterance" />
+          <button ng-click="c.labRunNlp()" ng-disabled="!c.labNlpText">Run</button>
+        </div>
+        <div ng-show="c.labNlp">
+          <div class="netra-lab-kv"><span>sent</span><em>{{c.labNlp.sent}}</em></div>
+          <div class="netra-lab-kv"><span>tools</span><em>{{c.labNlp.tools.length ? c.labNlp.tools.join(' → ') : '(none)'}}</em></div>
+          <div class="netra-lab-kv"><span>reply</span><em>{{c.labNlp.reply}}</em></div>
+          <div class="netra-lab-kv" ng-show="c.labNlp.ms"><span>latency</span><em>{{c.labNlp.ms}} ms</em></div>
         </div>
       </section>
 
