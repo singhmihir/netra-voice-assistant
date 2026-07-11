@@ -111,9 +111,18 @@
   .netra-3d-on .netra-stage-stars { display: none; }
   .netra-3d-on .netra-stage-floor { display: none; }
   .netra-3d-on .netra-stage-blob-wrap { filter: none; }
-  .netra-3d-on .netra-stage-ring { opacity: calc(0.12 + var(--netra-amp, 0) * 0.35); }
-  /* the aurora + mesh stay - they blend on top of the WebGL room */
-  .netra-3d-on .netra-stage-aurora { opacity: 0.55; }
+  /* R10.1 perf: no spinning layers over the WebGL scene - rings gone,
+     aurora static and faint, mesh still blooms on speech */
+  .netra-3d-on .netra-stage-ring { display: none; }
+  .netra-3d-on .netra-stage-aurora { opacity: 0.18; animation: none; }
+  /* R10.1b - the figma-freebie hues live on TOP of the WebGL room now:
+     always faintly on around the EDGES so the frame never goes flat,
+     blooming up when she talks. The center mint blob steps aside - the
+     hues belong to the edges, the middle belongs to the glass orb. */
+  .netra-3d-on .netra-stage-mesh { mix-blend-mode: screen; opacity: 0.34; }
+  .netra-3d-on.netra-stage-speaking .netra-stage-mesh { opacity: 0.62; }
+  .netra-3d-on.netra-stage-thinking .netra-stage-mesh { opacity: 0.48; }
+  .netra-3d-on .netra-mesh-5 { display: none; }
 
   /* R9 - interactive calibration card */
   .netra-calib-card {
@@ -454,7 +463,6 @@
   <div class="netra-stage" ng-if="c.liveMode" ng-class="'netra-stage-' + c.state">
     <!-- R8.1 - PRISM ROOM: layered aurora ribbons + starfield behind the
          blob, all hue-locked to the voice via the prism engine vars. -->
-    <div class="netra-stage-stars" aria-hidden="true"></div>
     <div class="netra-stage-aurora netra-stage-aurora-1" aria-hidden="true"></div>
     <div class="netra-stage-aurora netra-stage-aurora-2" aria-hidden="true"></div>
     <div class="netra-stage-floor" aria-hidden="true"></div>
