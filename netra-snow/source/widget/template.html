@@ -100,6 +100,21 @@
     0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); }
     50%      { transform: translate3d(-6vmax, 6vmax, 0) scale(0.92); }
   }
+  /* R10 - 3D stage layer + what hides when WebGL takes over */
+  .netra-stage-3d {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .netra-stage-3d canvas { display: block; width: 100%; height: 100%; }
+  .netra-3d-on .netra-stage-svg { opacity: 0; }
+  .netra-3d-on .netra-stage-stars { display: none; }
+  .netra-3d-on .netra-stage-floor { display: none; }
+  .netra-3d-on .netra-stage-blob-wrap { filter: none; }
+  .netra-3d-on .netra-stage-ring { opacity: calc(0.12 + var(--netra-amp, 0) * 0.35); }
+  /* the aurora + mesh stay - they blend on top of the WebGL room */
+  .netra-3d-on .netra-stage-aurora { opacity: 0.55; }
+
   /* R9 - interactive calibration card */
   .netra-calib-card {
     max-width: 560px;
@@ -449,6 +464,11 @@
       <span class="netra-stage-pill">LIVE</span>
       <span class="netra-stage-pill netra-stage-pill-state">{{c.state}}</span>
     </header>
+
+    <!-- R10 - REAL 3D LAYER: three.js mounts its canvas here (first child
+         = painted behind every other stage layer). Stays empty when WebGL
+         is unavailable and the 2D blob carries on. -->
+    <div class="netra-stage-3d" aria-hidden="true"></div>
 
     <!-- R9 - PASTEL MESH ENVIRONMENT: five huge ultra-soft gradient blobs
          (coral / lavender / sky / mint / peach) that bloom in while Netra

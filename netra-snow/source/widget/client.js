@@ -180,11 +180,39 @@ api.controller = function ($scope, $timeout, $window) {
         if (c.liveMode) document.body.classList.add('netra-live-body');
     } catch (eLM) { c.liveMode = false; }
     c.liveExit = function () {
+        try { if (window.NetraStage3D) window.NetraStage3D.unmount(); } catch (e3d) {}
         try {
             if ($window.history && $window.history.length > 1) $window.history.back();
             else $window.location.assign('/sp');
         } catch (e) { $window.location.assign('/sp'); }
     };
+
+    /* ============================================================
+     *  R10 - REAL 3D STAGE (three.js, embedded as a widget dependency)
+     *  Mounts the WebGL scene behind the stage UI; on success the 2D
+     *  SVG blob + CSS starfield hide (class netra-3d-on) and the
+     *  bloom-lit glass orb takes over. Any failure -> silent fallback
+     *  to the 2D blob, nothing else changes.
+     * ============================================================ */
+    function _init3D(attempt) {
+        if (!c.liveMode) return;
+        var hostEl = document.querySelector('.netra-stage-3d');
+        var stageEl = document.querySelector('.netra-stage');
+        if (!hostEl || !stageEl || !window.NetraStage3D || !window.THREE) {
+            if (attempt < 24) $timeout(function () { _init3D(attempt + 1); }, 250);
+            else logEvent('warn', '3D stage unavailable (three.js dependency not loaded) - keeping 2D blob');
+            return;
+        }
+        var ok = false;
+        try { ok = window.NetraStage3D.mount(hostEl); } catch (e3) { ok = false; }
+        if (ok) {
+            stageEl.classList.add('netra-3d-on');
+            logEvent('lab', '3D stage online: WebGL glass orb + starfield + bloom');
+        } else {
+            logEvent('warn', 'WebGL not available - keeping the 2D blob');
+        }
+    }
+    if (c.liveMode) $timeout(function () { _init3D(0); }, 400);
 
     /* ============================================================
      *  R8.1 - NETRA LAB (advanced diagnostics console on the Live
@@ -634,6 +662,8 @@ api.controller = function ($scope, $timeout, $window) {
         _prismAmp += (levelNow - _prismAmp) * 0.18;
         if (_prismAmp < 0) _prismAmp = 0;
         if (_prismAmp > 1) _prismAmp = 1;
+        // R10 - feed the 3D stage every tick (plain globals, no digests)
+        window.__netraPrism = { h: _prismHue, amp: _prismAmp };
         // throttle DOM writes to perceptible changes
         var stateChanged = st !== _prismLastState;
         if (!stateChanged &&
@@ -740,6 +770,7 @@ api.controller = function ($scope, $timeout, $window) {
             // than snapping to it
             _blobLevels[i] += (target - _blobLevels[i]) * 0.30;
             var dist = _blobLevels[i];
+            if (!isFinite(dist)) { dist = base; _blobLevels[i] = base; }
             ox[i] = 60 + dist * VOICE_RING_SIN[i];
             oy[i] = 60 - dist * VOICE_RING_COS[i];
             // inner sheen: 78% radius, counter-phased wobble
@@ -772,6 +803,9 @@ api.controller = function ($scope, $timeout, $window) {
         // R8.1 - prism hue engine + word-onset ripples ride the same ticker
         _prismTick();
         _maybeRipple();
+        // R10 - raw audio for the 3D blob's displacement shader
+        window.__netraBands = c.audioLevels || null;
+        window.__netraLevel = c.audioLevel || 0;
     }
     var _stageOuterEl = null, _stageInnerEl = null;
     var _blobOuterEl = null, _blobInnerEl = null, _blobStrokeEl = null;
@@ -5418,6 +5452,7 @@ api.controller = function ($scope, $timeout, $window) {
     function setState(s) {
         var prev = c.state;
         c.state = s;
+        window.__netraState = s;   // R10 - 3D stage reads this per frame
         c.stateLabel = STATE_LABEL[s] || s;
         c.liveStatus = LIVE_STATUS[s] || 'Listening';
         $scope.$applyAsync();

@@ -50,6 +50,14 @@ A voice-first, fully accessible assistant that runs **natively inside ServiceNow
   blooms around the blob while Netra talks; ticket creation now ALWAYS asks
   for a spoken yes before inserting; ships as a single batch update set
   (`update-set/Netra_v3.0_Batch.xml`, parent + 6 children).
+- **R10 — real 3D** — the Live-page blob is now a true WebGL scene
+  (three.js r147, embedded on-instance as a widget dependency, zero CDN):
+  an iridescent glass orb with noise-displaced surface driven by the live
+  voice bands, a glowing hue-linked core, PMREM studio lighting, bloom
+  post-processing, a 3D parallax starfield + dust motes, a soft reflective
+  floor, camera drift + mouse parallax — with automatic fallback to the 2D
+  blob when WebGL isn't available, and an adaptive quality drop if the
+  frame rate dips. The square focus box on blob click is gone.
 - See `docs/AI-CAPABILITIES-ROADMAP.md` for the researched, ranked roadmap of
   what's next, and `docs/TEST-REPORT-R8.md` for verification details.
 
