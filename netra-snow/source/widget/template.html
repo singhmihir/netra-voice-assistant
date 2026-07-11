@@ -161,6 +161,97 @@
     border-color: rgba(255, 255, 255, 0.22);
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
   }
+  /* R13 - NETRA SETUP panel, docked to the LEFT edge of the stage */
+  .netra-setup {
+    position: fixed;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    max-height: 86vh;
+  }
+  .netra-setup-tab {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(14, 10, 26, 0.72);
+    color: #ffffff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  }
+  .netra-setup-tab:hover { border-color: rgba(255, 255, 255, 0.45); }
+  .netra-setup-body {
+    width: 250px;
+    max-height: 72vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(13, 9, 24, 0.82);
+    padding: 14px 16px 16px;
+    color: #e9e2f8;
+    animation: netra-lab-in 0.25s ease;
+  }
+  .netra-setup-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.14em;
+    color: #ffffff;
+  }
+  .netra-setup-sub { font-size: 10.5px; color: #a89cc8; margin: 3px 0 10px; }
+  .netra-setup-label {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: #b3a6d6; margin: 12px 0 5px;
+  }
+  .netra-setup-label em { font-style: normal; color: #ffffff; }
+  .netra-setup select {
+    width: 100%;
+    background: #171126;
+    color: #f0eaff;
+    border: 1px solid rgba(155, 114, 203, 0.45);
+    border-radius: 8px;
+    padding: 7px 8px;
+    font-family: inherit;
+    font-size: 12.5px;
+  }
+  .netra-setup input[type=range] { width: 100%; accent-color: #9b72cb; }
+  .netra-setup-meter {
+    height: 6px; border-radius: 3px; overflow: hidden;
+    background: rgba(255, 255, 255, 0.09); margin-top: 6px;
+  }
+  .netra-setup-meter i {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, #34e08f, #4285F4);
+    transition: width 0.12s linear;
+  }
+  .netra-setup-btn {
+    width: 100%;
+    margin-top: 12px;
+    padding: 9px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(155, 114, 203, 0.5);
+    background: rgba(139, 61, 240, 0.22);
+    color: #ffffff;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .netra-setup-btn:hover { background: rgba(139, 61, 240, 0.38); }
+  .netra-setup-ghost { background: transparent; border-color: rgba(255, 255, 255, 0.2); color: #cfc4e8; }
+  @media (max-width: 900px) {
+    .netra-setup { left: 8px; }
+    .netra-setup-body { width: 210px; }
+  }
 
   /* R9 - interactive calibration card */
   .netra-calib-card {
@@ -612,6 +703,41 @@
           (mic spectrum scope, recognition health, STT accuracy
           calibration, brain + hue telemetry)
           ==================================================== -->
+    <!-- ====================================================
+          R13 - NETRA SETUP: end-user preferences docked LEFT.
+          The out-of-box experience: language, voice, pace and
+          mic level in one place, like setting up a new phone.
+          Opens automatically on the very first visit.
+          ==================================================== -->
+    <aside class="netra-setup" role="region" aria-label="Netra settings - language, voice and microphone">
+      <button class="netra-setup-tab" ng-click="c.setupToggle()"
+              aria-expanded="{{c.setupOn}}"
+              aria-label="{{c.setupOn ? 'Close' : 'Open'}} Netra settings">
+        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.03-.31.05-.62.05-.94s-.02-.63-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96c-.5-.38-1.04-.7-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.24-1.12.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.65 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.03.31-.05.62-.05.94s.02.63.05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.61.22l2.39-.96c.5.38 1.04.7 1.62.94l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54c.58-.24 1.12-.56 1.62-.94l2.39.96c.21.1.48.01.61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
+        <span>Settings</span>
+      </button>
+      <div class="netra-setup-body" ng-show="c.setupOn">
+        <div class="netra-setup-title">MAKE NETRA YOURS</div>
+        <div class="netra-setup-sub">saved on this browser, applied instantly</div>
+        <label class="netra-setup-label" for="netra-set-lang">I speak</label>
+        <select id="netra-set-lang" ng-model="c.recLang" ng-change="c.labSetLang()"
+                ng-options="l as l for l in c.recLangs"></select>
+        <label class="netra-setup-label" for="netra-set-voice">Netra's voice</label>
+        <select id="netra-set-voice" ng-model="c.edgeVoice" ng-change="c.devSetEdgeVoice()"
+                ng-options="v as v for v in c.edgeVoices"></select>
+        <button class="netra-setup-btn" ng-click="c.devPreviewVoice()">Hear this voice</button>
+        <label class="netra-setup-label" for="netra-set-rate">Speaking pace <em>{{c.speechRate}}x</em></label>
+        <input id="netra-set-rate" type="range" min="0.85" max="1.3" step="0.01"
+               ng-model="c.speechRate" ng-change="c.devSetRate()" aria-label="Netra's speaking pace"/>
+        <label class="netra-setup-label" for="netra-set-gain">Mic meter sensitivity <em>{{c.micGain}}x</em></label>
+        <input id="netra-set-gain" type="range" min="0.5" max="3" step="0.1"
+               ng-model="c.micGain" ng-change="c.labSetGain()" aria-label="Microphone meter sensitivity"/>
+        <div class="netra-setup-meter" aria-hidden="true"><i ng-style="{width: (c.micLevel || 0) + '%'}"></i></div>
+        <button class="netra-setup-btn" ng-click="c.calibRetry()">Run mic check</button>
+        <button class="netra-setup-btn netra-setup-ghost" ng-click="c.setupToggle()">Done</button>
+      </div>
+    </aside>
+
     <aside class="netra-lab" ng-show="c.labOn" role="dialog" aria-label="Netra Lab diagnostics (draggable window)">
       <header class="netra-lab-head" ng-mousedown="c.labDragStart($event)"
               title="Drag this bar to move the Netra Lab window">
