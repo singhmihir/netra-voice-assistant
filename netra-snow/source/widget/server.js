@@ -296,16 +296,54 @@
         }
 
         // Build conversation history for Gemini.
-        // R2.7 sanitisation, Release X expansion: flash-lite carries a 1M-token
-        // context window, so the old 12-turn / 60KB guard rails were wasting
-        // most of the model's memory. New envelope:
-        //   - Keep last 40 turns
+        // R11 - DEEP MEMORY. The old cap kept the last 40 raw ENTRIES, but
+        // tool-heavy turns burn 2-4 entries each, so a dozen exchanges could
+        // shove the user's actual prompts clean out of the window - memory
+        // felt like it exhausted way too quickly. New envelope:
+        //   - Window is counted in USER PROMPTS: walk backwards and keep
+        //     everything needed to cover the last 50 things the user said
+        //     (hard safety ceiling of 400 entries)
         //   - Truncate tool-response bodies over 4000 chars to a digest
         //   - Strip any inlineData (screenshot frames) from past turns
-        //   - Hard byte cap: if still over 180KB, drop oldest turns
+        //   - Hard byte cap: if still over 300KB, drop oldest turns
+        //   - Anything dropped leaves a one-line-per-prompt digest behind
+        //     (injected as a synthetic first exchange) so she still "knows"
+        //     what was said even past the window - no more amnesia cliffs
+        var MEM_PROMPT_WINDOW = 50;
+        var MEM_ENTRY_CEILING = 400;
+        var MEM_BYTE_CAP = 300000;
+        var droppedPrompts = [];   // digest lines for turns that fall off
+        function _isUserPrompt(entry) {
+            if (!entry || entry.role !== 'user' || !entry.parts) return false;
+            for (var q = 0; q < entry.parts.length; q++) {
+                var pt = entry.parts[q];
+                if (pt && pt.text && !pt.functionResponse) return true;
+            }
+            return false;
+        }
+        function _promptLine(entry) {
+            for (var q = 0; q < entry.parts.length; q++) {
+                var pt = entry.parts[q];
+                if (pt && pt.text) return String(pt.text).replace(/\s+/g, ' ').substring(0, 140);
+            }
+            return '';
+        }
         var contents = [];
         if (Array.isArray(history)) {
-            var start = Math.max(0, history.length - 40);
+            // walk backwards until 50 user prompts are inside the window
+            var start = history.length, promptsSeen = 0;
+            while (start > 0 && (history.length - start) < MEM_ENTRY_CEILING) {
+                var cand = history[start - 1];
+                if (_isUserPrompt(cand)) {
+                    if (promptsSeen >= MEM_PROMPT_WINDOW) break;
+                    promptsSeen++;
+                }
+                start--;
+            }
+            // whatever fell off the front still leaves a memory line behind
+            for (var d = 0; d < start; d++) {
+                if (_isUserPrompt(history[d])) droppedPrompts.push(_promptLine(history[d]));
+            }
             for (var i = start; i < history.length; i++) {
                 var h = history[i];
                 if (!h || !h.role || !h.parts) continue;
@@ -345,13 +383,24 @@
             // re-serialising the entire contents array on every iteration
             // (previously O(n^2) on long sessions).
             var size = JSON.stringify(contents).length;
-            while (contents.length > 2 && size > 180000) {
+            while (contents.length > 2 && size > MEM_BYTE_CAP) {
                 var dropped = contents.shift();
+                if (_isUserPrompt(dropped)) droppedPrompts.push(_promptLine(dropped));
                 size -= JSON.stringify(dropped).length + 1;   // +1 ~ comma separator
             }
-            if (size > 180000) {
+            if (size > MEM_BYTE_CAP) {
                 gs.warn('[NetraGemini] history still ' + size + ' bytes after pruning; will rely on Gemini to handle');
             }
+        }
+        // R11 - stitch the dropped prompts back in as a compact digest, so
+        // "what was the first thing I asked you?" keeps working even after
+        // the live window has rolled past it.
+        if (droppedPrompts.length) {
+            var digestLines = droppedPrompts.slice(-MEM_PROMPT_WINDOW);
+            contents.unshift(
+                { role: 'user',  parts: [{ text: '[memory digest - things I said earlier in this conversation, oldest first]\n- ' + digestLines.join('\n- ') }] },
+                { role: 'model', parts: [{ text: 'Noted. I remember everything you said earlier and will use it as context.' }] }
+            );
         }
         // R1.4 - vision support: if the client attached an image, send it
         // as inlineData alongside the text. Gemini 2.5-flash is multimodal.
@@ -374,6 +423,7 @@
         var modelUsed = null;
         var toolsCalled = [];   // R1 - track which tools were invoked
         var clientDirectives = {};   // R2 - navigate_url, click_button_label, etc.
+        var shrunkOnce = false;   // R11 - one in-place history shrink before giving up
         for (var iter = 0; iter < 8; iter++) {
             var resp = _callGemini(apiKey, model, contents, tools, systemInstruction);
             if (resp._model_used) modelUsed = resp._model_used;
@@ -384,11 +434,32 @@
                 if (err.indexOf('429') >= 0)        friendly = 'I have hit the rate limit. Kindly wait a minute and try again.';
                 else if (err.indexOf('401') >= 0 || err.indexOf('403') >= 0) friendly = 'My API key is not authorised. Kindly check the configuration.';
                 else if (err.indexOf('400') >= 0) {
-                    // R2.7 - 400 after a long session usually means payload too large.
-                    // Tell the client to reset history rather than the misleading
-                    // "could not understand" message.
-                    friendly = 'My memory has grown a bit too large. Could you say it again? I have just trimmed it.';
-                    return { ok: false, message: friendly, error_detail: err, force_history_reset: true };
+                    // R11 - 400 after a long session usually means payload too
+                    // large. The old behaviour nuked the WHOLE memory
+                    // (force_history_reset) which felt like amnesia. Now:
+                    // drop the oldest half (their prompts join the digest)
+                    // and retry once - only a second 400 asks for a trim,
+                    // and even then the client keeps the newer half.
+                    if (!shrunkOnce && contents.length > 6) {
+                        shrunkOnce = true;
+                        var half = Math.floor(contents.length / 2);
+                        var shrunkLines = [];
+                        for (var sd = 0; sd < half; sd++) {
+                            if (_isUserPrompt(contents[sd])) shrunkLines.push(_promptLine(contents[sd]));
+                        }
+                        contents = contents.slice(half);
+                        if (shrunkLines.length) {
+                            contents.unshift(
+                                { role: 'user',  parts: [{ text: '[memory digest - things I said earlier in this conversation]\n- ' + shrunkLines.join('\n- ') }] },
+                                { role: 'model', parts: [{ text: 'Noted. I remember everything you said earlier.' }] }
+                            );
+                        }
+                        gs.warn('[NetraGemini] 400 - shrank history to ' + contents.length + ' entries and retrying');
+                        iter--;   // this attempt should not eat a tool-loop round
+                        continue;
+                    }
+                    friendly = 'My memory got a bit too heavy, so I compressed the older half. Could you say that again?';
+                    return { ok: false, message: friendly, error_detail: err, trim_history_half: true };
                 }
                 else if (err.indexOf('404') >= 0)   friendly = 'The AI model is not available right now.';
                 else if (err.indexOf('exhausted') >= 0) friendly = 'All AI models are busy at the moment. Kindly try again in a few seconds.';
@@ -479,7 +550,12 @@
                 route_reason: routeReason,    // R7 - fast | complex | pinned
                 tools_called: toolsCalled,    // R1 - for dev panel graph
                 directives: clientDirectives, // R2 - navigate_url / click_button_label
-                sentiment: sentimentSignal    // R2.12 - {label, score, consecutive_frustrated, suggest_escalation}
+                sentiment: sentimentSignal,   // R2.12 - {label, score, consecutive_frustrated, suggest_escalation}
+                memory: {                     // R11 - deep-memory telemetry for the Lab
+                    prompts: (typeof promptsSeen === 'number') ? promptsSeen : 0,
+                    digested: droppedPrompts.length,
+                    entries: contents.length
+                }
             };
         }
 
@@ -879,7 +955,16 @@
             parts: [{
                 text:
 'You are Netra, a female voice assistant for ServiceNow, designed specifically for blind and visually-impaired users.\n' +
-'You are speaking with ' + gs.getUserDisplayName() + '. Call them by their first name "' + gs.getUserDisplayName().split(' ')[0] + '" naturally in conversation - not in every sentence, but at the start of replies and at transitions. ' +
+// R11 - dont literally call the admin "System" (PDI admin display name is
+// "System Administrator") - fall back to a nameless warm address instead
+(function () {
+    var dn = gs.getUserDisplayName() || '';
+    var fn = dn.split(' ')[0] || '';
+    if (/^system$/i.test(fn) || !fn) {
+        return 'You are speaking with the instance admin. Do NOT invent a name for them and never call them "System" - just speak warmly without a name. ';
+    }
+    return 'You are speaking with ' + dn + '. Call them by their first name "' + fn + '" naturally in conversation - not in every sentence, but at the start of replies and at transitions. ';
+})() +
 'PERSONALITY (R7 - witty companion): you are quick-witted, playful and a little cheeky - a sharp friend who happens to run ServiceNow. Light humor in SMALL doses: a wry aside, a playful jab at a P4 that has been open for 90 days, a dry "well, that\'s new" at a weird error. Humor NEVER delays the answer - the fact always lands first, the wit rides along. Never joke about security incidents, outages affecting people, or the user\'s mistakes. Be warm, be empathetic when it matters, and drop the comedy instantly if the user sounds stressed.\n' +
 '\n' +
 'CRITICAL - ACCESSIBILITY CONTEXT:\n' +
