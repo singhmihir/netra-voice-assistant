@@ -26,27 +26,38 @@ NetraTools.prototype = {
     },
 
     // ============================================================
-    //  Release X - TICKET SAFETY POLICY
-    //  Netra is read-only on ticket records. Creation is refused
-    //  unconditionally; mutation (resolve / comment) is refused
-    //  unless <scope>.ticket_writes is explicitly 'true'. This is
-    //  the second enforcement layer - the widget server strips the
-    //  same tools from the model's toolset, and this guard covers
-    //  the legacy scripted-REST /command path as well.
+    //  R8 - TICKET WRITE POLICY (full control, kill-switch retained)
+    //  Netra can create, edit and modify every ticket type. Writes
+    //  are ON by default; setting <scope>.ticket_writes to exactly
+    //  'false' is an emergency kill-switch that refuses create and
+    //  mutate operations on this legacy scripted-REST /command path
+    //  (the widget server enforces the same switch for Gemini tools).
     // ============================================================
     _ticketWritesEnabled: function () {
-        return gs.getProperty('x_196061_netra_v1.ticket_writes', 'false') === 'true';
+        return gs.getProperty('x_196061_netra_v1.ticket_writes', 'true') !== 'false';
     },
 
-    READ_ONLY_MSG: 'I can\'t raise or change tickets myself - I\'m read-only there. But I can pull up everything about existing ones: status, summaries, history, or keep watch on one for you.',
+    READ_ONLY_MSG: 'Ticket writes are temporarily disabled by the administrator. I can still pull up everything about existing tickets: status, summaries, history, or keep watch on one for you.',
 
     // ============================================================
-    //  Incident operations (creation permanently disabled)
+    //  Incident operations
     // ============================================================
     createTicket: function (description, urgency) {
-        // Release X: ticket creation is permanently disabled for Netra.
-        // No property re-enables this path.
-        return { ok: false, read_only: true, error: 'Ticket creation is disabled.', message: this.READ_ONLY_MSG };
+        if (!this._ticketWritesEnabled())
+            return { ok: false, read_only: true, error: 'Ticket writes are disabled.', message: this.READ_ONLY_MSG };
+        if (!description || String(description).trim().length < 3)
+            return { ok: false, error: 'I need a short description of the issue first.' };
+        var gr = new GlideRecord('incident');
+        gr.initialize();
+        gr.short_description = String(description).trim();
+        gr.urgency = String(urgency || '3');
+        gr.caller_id = this.userSysId;
+        gr.opened_by = this.userSysId;
+        gr.contact_type = 'virtual_agent';
+        var sid = gr.insert();
+        if (!sid) return { ok: false, error: 'The platform refused the insert.' };
+        gr.get(sid);
+        return { ok: true, number: String(gr.number), sys_id: sid };
     },
 
     listMyTickets: function (limit) {

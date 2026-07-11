@@ -96,34 +96,28 @@ NetraResponder.prototype = {
 
     // ===== handlers =====
     _create: function (description) {
-        // Release X — Netra never opens tickets. One graceful line, then
-        // pivot straight to the read-only help she CAN give. If the user
-        // already described the issue, search existing incidents for it
-        // right away so the turn still ends with something useful.
+        // R8 — Netra opens tickets again. If the user already described the
+        // issue, create the incident right away and read the number back;
+        // otherwise ask for the description first.
         if (description && String(description).trim().length >= 3) {
-            var hits = this.tools.searchTickets(description, 3);
-            if (hits.ok && hits.tickets && hits.tickets.length) {
-                var top = hits.tickets[0];
-                return this._ok("I can't raise tickets myself — I'm read-only there. But there's already " +
-                    this._sayNumber(top.number) + ' about ' + top.short_description +
-                    ', currently ' + top.state + '. Want the full summary?', { data: hits.tickets });
-            }
-            return this._ok("I can't raise tickets myself — I'm read-only there, and I don't see an existing ticket matching that. " +
-                'The service desk or the self-service portal can open one; I can look up who to contact if you like.');
+            var r = this.tools.createTicket(description, '3');
+            if (!r.ok && r.read_only) return this._ok(r.message);
+            if (!r.ok) return this._fail(r.error);
+            this.ctx.setFocus('incident', r.sys_id, r.number);
+            return this._ok(this._pickOne([
+                'Done — I opened ' + this._sayNumber(r.number) + ' for that. I\'ll keep it in focus.',
+                'Ticket ' + this._sayNumber(r.number) + ' is raised. Say update or resolve any time.',
+                'Raised ' + this._sayNumber(r.number) + ' for you.'
+            ]), { refresh_tickets: true });
         }
-        return this._ok(this._pickOne([
-            "I can't open tickets — I'm read-only there. I can read you the status or full summary of any existing one, though.",
-            "Raising tickets isn't something I do — but ask me about any existing ticket and I'll know it cold.",
-            "I can't create tickets myself. What I can do is search, summarise, and keep watch on the ones you have."
-        ]));
+        return this._askForDescription();
     },
 
     _askForDescription: function () {
-        // Release X — the follow-up "what's the issue?" flow used to feed
-        // ticket creation. It now feeds the read-only pivot in _create.
+        // The follow-up "what's the issue?" flow feeds ticket creation.
         return { ok: true, message: this._pickOne([
-            "I can't open tickets myself — but tell me what's going on and I'll check if one already exists.",
-            "I'm read-only on tickets, so I can't raise one. Describe the issue and I'll search for an existing ticket."
+            "Sure, what's the issue? One sentence and I'll raise the ticket.",
+            'Happy to. Describe the problem in a sentence and I\'ll open the incident.'
         ]), pending: 'ticket_description' };
     },
 

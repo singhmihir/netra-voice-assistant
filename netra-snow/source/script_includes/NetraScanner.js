@@ -28,6 +28,12 @@ NetraScanner.prototype = {
         var processed = 0;
         var enqueued = 0;
 
+        // R8.2 - promote due voice reminders BEFORE the per-user scans so
+        // they ride the very next widget poll.
+        try { enqueued += this.promoteDueReminders(); } catch (eR) {
+            gs.warn('[NetraScanner] reminder promotion failed: ' + eR);
+        }
+
         var prefs = new GlideRecord('x_196061_netra_v1_user_pref');
         prefs.addQuery('active', true);
         prefs.query();
@@ -44,6 +50,30 @@ NetraScanner.prototype = {
 
         gs.info('[NetraScanner] scanned ' + processed + ' users, enqueued ' + enqueued + ' notifications.');
         return { users: processed, enqueued: enqueued };
+    },
+
+    /**
+     * R8.2 - Voice reminders are stored by the widget as notification rows
+     * with kind 'reminder_scheduled', delivered=true (hidden from the poll)
+     * and the due epoch-ms in ticket_sys_id. Once due, flip them to a live
+     * notification the widget announces on its next poll.
+     */
+    promoteDueReminders: function () {
+        var nowMs = new GlideDateTime().getNumericValue();
+        var n = new GlideRecord('x_196061_netra_v1_notification');
+        n.addQuery('kind', 'reminder_scheduled');
+        n.query();
+        var promoted = 0;
+        while (n.next()) {
+            var dueMs = parseInt(String(n.ticket_sys_id), 10) || 0;
+            if (dueMs > nowMs) continue;
+            n.kind = 'reminder';
+            n.delivered = false;
+            n.update();
+            promoted++;
+        }
+        if (promoted) gs.info('[NetraScanner] promoted ' + promoted + ' due reminder(s).');
+        return promoted;
     },
 
     /**

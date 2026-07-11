@@ -178,6 +178,234 @@ api.controller = function ($scope, $timeout, $window) {
         } catch (e) { $window.location.assign('/sp'); }
     };
 
+    /* ============================================================
+     *  R8.1 - NETRA LAB (advanced diagnostics console on the Live
+     *  stage) + FIRST-RUN CALIBRATION
+     *
+     *  A glass side panel with: a real-time mic spectrum scope
+     *  painted from the analyser, recognition-health telemetry from
+     *  the Sentinel layer, a record/playback mic test, an STT
+     *  accuracy calibration (Netra asks you to read a sentence and
+     *  scores the transcript word-by-word), TTS/brain stats and the
+     *  live prism-hue readout. The calibration also runs once
+     *  automatically on the very first boot in this browser.
+     * ============================================================ */
+    c.labOn = false;
+    c.labToggle = function () {
+        c.labOn = !c.labOn;
+        if (c.labOn) {
+            _labScopeEl = null;   // re-query canvas on open
+            $timeout(_labRestorePos, 30);   // put the window back where it was
+        }
+        logEvent('lab', c.labOn ? 'Netra Lab opened' : 'Netra Lab closed');
+    };
+    c.labRestartMic = function () { _fullMicRecycle('manual (Netra Lab)'); };
+
+    // R8.1 - the Lab is a floating window: drag it anywhere by its header
+    // (same interaction as the dev console). Position survives via
+    // sessionStorage so it stays where you put it across reloads.
+    var _labDrag = null;
+    c.labDragStart = function (ev) {
+        if (!ev || (ev.button !== undefined && ev.button !== 0)) return;
+        if (ev.target && ev.target.classList && ev.target.classList.contains('netra-lab-x')) return;
+        var el = document.querySelector('.netra-lab');
+        if (!el) return;
+        var rect = el.getBoundingClientRect();
+        _labDrag = { startX: ev.clientX, startY: ev.clientY, origX: rect.left, origY: rect.top, moved: false };
+        document.addEventListener('mousemove', _onLabDragMove);
+        document.addEventListener('mouseup',   _onLabDragEnd);
+        ev.preventDefault();
+    };
+    function _onLabDragMove(ev) {
+        if (!_labDrag) return;
+        var dx = ev.clientX - _labDrag.startX;
+        var dy = ev.clientY - _labDrag.startY;
+        if (!_labDrag.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+            _labDrag.moved = true;
+            document.body.style.userSelect = 'none';
+        }
+        if (_labDrag.moved) {
+            var el = document.querySelector('.netra-lab');
+            if (!el) return;
+            var vw = window.innerWidth, vh = window.innerHeight;
+            var nx = Math.max(0, Math.min(vw - 60, _labDrag.origX + dx));
+            var ny = Math.max(0, Math.min(vh - 40, _labDrag.origY + dy));
+            el.style.left = nx + 'px';
+            el.style.top = ny + 'px';
+            el.style.right = 'auto';
+            el.style.bottom = 'auto';
+        }
+    }
+    function _onLabDragEnd() {
+        document.removeEventListener('mousemove', _onLabDragMove);
+        document.removeEventListener('mouseup', _onLabDragEnd);
+        document.body.style.userSelect = '';
+        if (_labDrag && _labDrag.moved) {
+            var el = document.querySelector('.netra-lab');
+            if (el) {
+                try {
+                    sessionStorage.setItem('netra_lab_pos', JSON.stringify({ left: el.style.left, top: el.style.top }));
+                } catch (eLP) {}
+            }
+        }
+        _labDrag = null;
+    }
+    function _labRestorePos() {
+        try {
+            var pos = JSON.parse(sessionStorage.getItem('netra_lab_pos') || 'null');
+            if (!pos || !pos.left) return;
+            var el = document.querySelector('.netra-lab');
+            if (!el) return;
+            el.style.left = pos.left;
+            el.style.top = pos.top;
+            el.style.right = 'auto';
+            el.style.bottom = 'auto';
+        } catch (eLR) {}
+    }
+    c.labSessionAgeS   = function () { return recLastStartTime ? Math.round((Date.now() - recLastStartTime) / 1000) : 0; };
+    c.labLastFinalAgo  = function () { return _lastFinalAt ? Math.round((Date.now() - _lastFinalAt) / 1000) + 's' : 'never'; };
+    c.labLastInterimAgo = function () { return c.micHealth.lastInterimAt ? Math.round((Date.now() - c.micHealth.lastInterimAt) / 1000) + 's' : 'never'; };
+    c.labHue = function () { return Math.round(_prismHue); };
+    c.labAmp = function () { return Math.round(_prismAmp * 100); };
+
+    // ---- live mic spectrum scope (canvas, painted from the mic rAF loop) ----
+    var _labScopeEl = null, _labScopeCtx = null;
+    function _labDrawScope(freqData, level) {
+        if (!_labScopeEl || !_labScopeEl.isConnected) {
+            _labScopeEl = document.querySelector('.netra-lab-scope');
+            if (!_labScopeEl) return;
+            _labScopeCtx = _labScopeEl.getContext('2d');
+        }
+        var w = _labScopeEl.width, h = _labScopeEl.height;
+        var g = _labScopeCtx;
+        g.clearRect(0, 0, w, h);
+        var n = 96;                       // draw the first 96 bins (speech range)
+        var bw = w / n;
+        var hue = Math.round(_prismHue);
+        for (var i = 0; i < n; i++) {
+            var v = (freqData[i + 2] || 0) / 255;
+            var bh = Math.max(1, v * (h - 4));
+            g.fillStyle = 'hsla(' + ((hue + i * 1.2) % 360) + ',90%,' + (45 + v * 30) + '%,' + (0.35 + v * 0.65) + ')';
+            g.fillRect(i * bw, h - bh, bw - 1, bh);
+        }
+        // level needle along the bottom
+        g.fillStyle = 'rgba(255,255,255,0.85)';
+        g.fillRect(0, h - 2, (level / 100) * w, 2);
+    }
+
+    // ---- STT accuracy calibration ----
+    var CALIB_SENTENCE = 'The quick brown fox jumps over the lazy dog near the big green screen';
+    var _calibActive = false, _calibTimer = null, _calibListenStart = 0, _calibFirstRun = false;
+    c.labCalib = { stage: 'idle', heard: '', score: null, verdict: '' };
+    try {
+        var _savedCalib = JSON.parse(localStorage.getItem('netra_calib') || 'null');
+        if (_savedCalib && typeof _savedCalib.score === 'number') {
+            c.labCalib = { stage: 'saved', heard: '', score: _savedCalib.score, verdict: 'last run ' + (_savedCalib.at || '') };
+        }
+    } catch (eCS) {}
+    c.labCalibSentence = CALIB_SENTENCE;
+    c.labStartCalibration = function () { startCalibration(false, ''); };
+
+    function _wordAccuracy(expected, heard) {
+        var e = _normTokens(expected), hd = _normTokens(heard);
+        if (!e.length) return 0;
+        var m = e.length, n2 = hd.length, dp = [], i, j;
+        for (i = 0; i <= m; i++) dp[i] = [i];
+        for (j = 1; j <= n2; j++) dp[0][j] = j;
+        for (i = 1; i <= m; i++)
+            for (j = 1; j <= n2; j++)
+                dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1,
+                                    dp[i - 1][j - 1] + (e[i - 1] === hd[j - 1] ? 0 : 1));
+        return Math.max(0, Math.round((1 - dp[m][n2] / m) * 100));
+    }
+
+    function startCalibration(firstRun, preamble) {
+        if (_calibActive) return;
+        _calibActive = true;
+        _calibFirstRun = !!firstRun;
+        c.labCalib = { stage: 'prompt', heard: '', score: null, verdict: '' };
+        $scope.$applyAsync();
+        speak((preamble || '') + 'Quick mic calibration. After the tone, please read this sentence aloud: ' +
+              CALIB_SENTENCE + '.', function () {
+            cue('wake');
+            _calibListenStart = Date.now();
+            c.labCalib.stage = 'listening';
+            $scope.$applyAsync();
+            if (_calibTimer) $timeout.cancel(_calibTimer);
+            _calibTimer = $timeout(function () {
+                if (!_calibActive) return;
+                _calibActive = false;
+                c.labCalib.stage = 'timeout';
+                c.labCalib.verdict = 'Nothing captured in 25s - check the mic, then retry from the Lab.';
+                logEvent('lab', 'calibration timed out (no speech captured)');
+                speak('I did not catch anything that time. The mic test lives in the Netra Lab whenever you want to retry.');
+                $scope.$applyAsync();
+            }, 25000);
+        });
+    }
+
+    // Consumes a final transcript while calibration is listening.
+    // Returns true when the final was the calibration read-back.
+    function _calibConsume(clean) {
+        if (!_calibActive || c.labCalib.stage !== 'listening') return false;
+        // Ignore finals landing suspiciously fast after her own prompt -
+        // those are echo tails of Netra reading the sentence herself.
+        if (Date.now() - _calibListenStart < 1200) return true;
+        _calibActive = false;
+        if (_calibTimer) { $timeout.cancel(_calibTimer); _calibTimer = null; }
+        var score = _wordAccuracy(CALIB_SENTENCE, clean);
+        c.labCalib = {
+            stage: 'done', heard: clean, score: score,
+            verdict: score >= 90 ? 'Excellent - crystal clear.' :
+                     score >= 75 ? 'Good - fully usable.' :
+                     score >= 50 ? 'Fair - move closer to the mic or cut background noise.' :
+                                   'Poor - check the input device and tab permission.'
+        };
+        c.micHealth.lastCalibScore = score;
+        try { localStorage.setItem('netra_calib', JSON.stringify({ score: score, at: new Date().toISOString() })); } catch (eLS) {}
+        logEvent('lab', 'calibration ' + score + '% - heard: "' + clean + '"');
+        speak('Mic check complete. Word accuracy ' + score + ' percent. ' + c.labCalib.verdict +
+              (_calibFirstRun ? ' You are all set. I am listening - just speak.' : ''));
+        $scope.$applyAsync();
+        return true;
+    }
+
+    // ---- R8.2 - local reminders (to-the-minute while the tab is open) ----
+    var _localReminderTimers = [];
+    var _recentReminderTexts = {};   // dedupe vs the scanner-promoted copy
+    function _scheduleLocalReminder(delayMs, text) {
+        var d = Math.max(1000, Math.min(12 * 3600 * 1000, delayMs || 0));
+        logEvent('lab', 'local reminder armed in ' + Math.round(d / 60000) + ' min: ' + text);
+        _localReminderTimers.push($timeout(function () {
+            _recentReminderTexts[String(text)] = Date.now();
+            cue('wake');
+            speak(text || 'Reminder.');
+            _convoPush('sys', '· reminder fired ·');
+        }, d));
+    }
+    // called from the notification announce path: skip a scanner-promoted
+    // reminder we already spoke locally in the last 10 minutes
+    function _reminderAlreadySpoken(msg) {
+        var t = _recentReminderTexts[String(msg)];
+        return !!t && (Date.now() - t) < 10 * 60 * 1000;
+    }
+
+    // ---- first-run self check (UI + animations + mic + calibration) ----
+    function _firstRunPending() {
+        try { return !localStorage.getItem('netra_firstrun_done'); } catch (eFR) { return false; }
+    }
+    function _firstRunCheck() {
+        try { localStorage.setItem('netra_firstrun_done', '1'); } catch (eFS) {}
+        var uiOk   = !!document.querySelector('.netra-orb, .netra-stage-svg');
+        var animOk = !!_blobRafId;
+        var micOk  = !!c.micStreamActive;
+        logEvent('lab', 'first-run self check: ui=' + uiOk + ' anim=' + animOk + ' mic=' + micOk);
+        var uiLine = 'Running my first-time self check. Interface ' + (uiOk ? 'rendered' : 'failed to render') +
+                     ', animations ' + (animOk ? 'running' : 'stopped') +
+                     ', microphone stream ' + (micOk ? 'live. All good.' : 'not detected - voice may not work.') + ' ';
+        startCalibration(true, uiLine);
+    }
+
     // Per-bar multiplier; jitter so the ring feels alive rather than uniform.
     // R2.12.3 - calibrated for viewBox 120×120 with hard distance cap.
     // The previous R2.12.2 values (0.55-0.85, spike 2.4) produced polygon
@@ -241,6 +469,144 @@ api.controller = function ($scope, $timeout, $window) {
         }
         _orbRootEl.style.setProperty('--orb-pulse', pulse.toFixed(3));
     }
+
+    /* ============================================================
+     *  R8.1 - PRISM HUE ENGINE
+     *
+     *  A living colour system computed at 60fps alongside the blob
+     *  geometry. Each state owns a base hue; while Netra SPEAKS the
+     *  hue is continuously modulated by the voice itself - the
+     *  spectral centroid of the 24 analyser bands swings the tone
+     *  between deep indigo (bass-heavy moments) and warm magenta /
+     *  rose (bright sibilant moments), while overall amplitude
+     *  drives saturation, glow strength and the aurora intensity.
+     *  Everything is written as CSS custom properties on .netra-root
+     *  (full colour strings, so the SCSS layer stays dumb) and
+     *  cascades to the orb, the Live stage, and the dev console.
+     * ============================================================ */
+    var PRISM_STATE_HUE = {
+        boot: 265, idle: 152, awaiting: 192, listening: 192,
+        thinking: 288, speaking: 262, dormant: 268, error: 8, paused: 220
+    };
+    var PRISM_STATE_SAT = { dormant: 55, paused: 14, boot: 70 };
+    var _prismHue  = 152;    // smoothed hue (deg)
+    var _prismAmp  = 0;      // smoothed 0..1 loudness
+    var _prismTime = 0;      // slow drift clock
+    var _prismLastWriteHue = -999, _prismLastWriteAmp = -1, _prismLastState = '';
+    function _hueLerpAngle(a, b, t) {
+        var d = ((b - a + 540) % 360) - 180;   // shortest arc
+        return (a + d * t + 360) % 360;
+    }
+    function _prismTick() {
+        var st = c.state || 'idle';
+        _prismTime += 0.016;
+        var target = PRISM_STATE_HUE[st] !== undefined ? PRISM_STATE_HUE[st] : 152;
+        var levelNow = 0;
+        if (st === 'speaking') {
+            // spectral centroid 0..1 across the 24 log bands
+            var bands = c.audioLevels, num = 0, den = 0;
+            if (bands) {
+                for (var i = 0; i < 24; i++) { num += bands[i] * i; den += bands[i]; }
+            }
+            var centroid = den > 1 ? (num / den) / 23 : 0.42;
+            var swing = (centroid - 0.42) * 130;
+            if (swing >  55) swing =  55;
+            if (swing < -55) swing = -55;
+            // slow ambient drift keeps the colour alive between words
+            target += swing + 14 * Math.sin(_prismTime * 0.35);
+            levelNow = (c.audioLevel || 0) / 100;
+        } else if (st === 'thinking') {
+            // churning magenta<->violet - visibly "working on it"
+            target += 26 * Math.sin(_prismTime * 1.9);
+            levelNow = 0.30 + 0.12 * Math.sin(_prismTime * 3.1);
+        } else if (st === 'awaiting' || st === 'listening') {
+            // cyan capture state shimmers with the user's own mic level
+            levelNow = (c.micLevel || 0) / 100;
+            target += levelNow * 18 + 6 * Math.sin(_prismTime * 0.8);
+        } else if (st === 'idle') {
+            // gentle emerald<->teal patrol so idle never looks frozen
+            target += 10 * Math.sin(_prismTime * 0.22);
+        }
+        _prismHue = _hueLerpAngle(_prismHue, target, 0.055);
+        _prismAmp += (levelNow - _prismAmp) * 0.18;
+        if (_prismAmp < 0) _prismAmp = 0;
+        if (_prismAmp > 1) _prismAmp = 1;
+        // throttle DOM writes to perceptible changes
+        var stateChanged = st !== _prismLastState;
+        if (!stateChanged &&
+            Math.abs(_prismHue - _prismLastWriteHue) < 0.4 &&
+            Math.abs(_prismAmp - _prismLastWriteAmp) < 0.015) return;
+        _prismLastState = st; _prismLastWriteHue = _prismHue; _prismLastWriteAmp = _prismAmp;
+        if (!_orbRootEl || !_orbRootEl.isConnected) {
+            _orbRootEl = document.querySelector('.netra-root');
+            if (!_orbRootEl) return;
+        }
+        var h   = Math.round(_prismHue * 10) / 10;
+        var amp = Math.round(_prismAmp * 1000) / 1000;
+        var sat = PRISM_STATE_SAT[st] !== undefined ? PRISM_STATE_SAT[st] : 90;
+        var S = _orbRootEl.style;
+        function hsl(dh, s, l)     { return 'hsl(' + (((h + dh) % 360 + 360) % 360) + ',' + s + '%,' + l + '%)'; }
+        function hsla(dh, s, l, a) { return 'hsla(' + (((h + dh) % 360 + 360) % 360) + ',' + s + '%,' + l + '%,' + a + ')'; }
+        S.setProperty('--netra-hue', String(h));
+        S.setProperty('--netra-amp', String(amp));
+        // orb iris family (consumed by the SVG gradient stops)
+        S.setProperty('--iris-bright', hsl(4,  sat, 84));
+        S.setProperty('--iris-mid',    hsl(0,  Math.round(sat * 0.86), 46));
+        S.setProperty('--iris-dark',   hsl(-4, Math.round(sat * 0.9),  20));
+        S.setProperty('--iris-deep',   hsl(-6, sat, 7));
+        S.setProperty('--core-mid',    hsl(8,  Math.round(sat * 0.75), 75));
+        S.setProperty('--eye-glow',    hsla(0, sat, 66, (0.45 + amp * 0.45).toFixed(3)));
+        S.setProperty('--netra-glow-soft', hsla(0, sat, 66, (0.16 + amp * 0.30).toFixed(3)));
+        // Live-stage blob gradient stops
+        S.setProperty('--nsg-0', hsl(6, 100, 96));
+        S.setProperty('--nsg-1', hsl(3,  sat, 74));
+        S.setProperty('--nsg-2', hsl(0,  Math.round(sat * 0.88), 46));
+        S.setProperty('--nsg-3', hsl(-8, Math.round(sat * 0.92), 12));
+        // aurora ribbons - offset hues so the room is a duotone of the voice
+        S.setProperty('--netra-aura1', hsla(42,  sat, 60, (0.14 + amp * 0.16).toFixed(3)));
+        S.setProperty('--netra-aura2', hsla(-48, sat, 58, (0.11 + amp * 0.14).toFixed(3)));
+        // voice-blob fill / stroke family (violet-amber duotone follows hue)
+        S.setProperty('--nvg-core', hsla(14, 92, 62, 0.95));
+        S.setProperty('--nvg-mid',  hsla(2,  88, 64, 0.80));
+        S.setProperty('--nvg-hot',  hsla(66, 96, 62, (0.40 + amp * 0.25).toFixed(3)));
+        S.setProperty('--nvg-edge', hsla(-12, 85, 55, 0.35));
+        S.setProperty('--nvs-a', hsl(-16, 84, 42));
+        S.setProperty('--nvs-b', hsl(6,   92, 62));
+        S.setProperty('--nvs-c', hsl(62,  98, 64));
+        S.setProperty('--nvs-d', hsl(-24, 82, 36));
+        // SVG feFlood glow tints
+        S.setProperty('--nfl-1', hsl(6,  85, 63));
+        S.setProperty('--nfl-2', hsl(18, 78, 64));
+        S.setProperty('--nfl-3', hsl(64, 100, 66));
+        S.setProperty('--nfl-4', hsl(0,  80, 59));
+    }
+
+    /* R8.1 - word-onset ripples on the Live stage: when the speech
+     * amplitude jumps above its rolling mean, emit one expanding ring
+     * from the blob edge. Pure DOM + CSS animation; capped and
+     * self-cleaning, so cost is negligible. */
+    var _rippleHost = null, _rippleLast = 0, _rippleMean = 0, _rippleCount = 0;
+    function _maybeRipple() {
+        if (!c.liveMode || c.state !== 'speaking') return;
+        var amp = _prismAmp;
+        _rippleMean += (amp - _rippleMean) * 0.06;
+        var now = Date.now();
+        if (amp - _rippleMean < 0.12 || now - _rippleLast < 300 || _rippleCount >= 5) return;
+        if (!_rippleHost || !_rippleHost.isConnected) {
+            _rippleHost = document.querySelector('.netra-stage-ripples');
+            if (!_rippleHost) return;
+        }
+        _rippleLast = now;
+        _rippleCount++;
+        var el = document.createElement('div');
+        el.className = 'netra-ripple';
+        el.addEventListener('animationend', function () {
+            _rippleCount--;
+            if (el.parentNode) el.parentNode.removeChild(el);
+        });
+        _rippleHost.appendChild(el);
+    }
+
     function _recomputeVoiceRing() {
         var lvlAvg = c.audioLevel || 0;
         var st     = c.state || '';
@@ -302,6 +668,9 @@ api.controller = function ($scope, $timeout, $window) {
             if (_stageOuterEl) _stageOuterEl.setAttribute('d', dOuter);
             if (_stageInnerEl) _stageInnerEl.setAttribute('d', dInner);
         }
+        // R8.1 - prism hue engine + word-onset ripples ride the same ticker
+        _prismTick();
+        _maybeRipple();
     }
     var _stageOuterEl = null, _stageInnerEl = null;
     var _blobOuterEl = null, _blobInnerEl = null, _blobStrokeEl = null;
@@ -1003,22 +1372,29 @@ api.controller = function ($scope, $timeout, $window) {
     // dependency: the violet voice-ring + green Netra eye, matching the orb.
     function _installFavicon() {
         try {
+            // R8.1 - prism favicon: iridescent full-spectrum ring around the eye
             var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
                 '<defs>' +
                 '<radialGradient id="fi" cx="38%" cy="34%" r="66%">' +
-                '<stop offset="0%" stop-color="#eafff2"/><stop offset="18%" stop-color="#7fffb0"/>' +
-                '<stop offset="55%" stop-color="#2eb858"/><stop offset="100%" stop-color="#021a0d"/>' +
+                '<stop offset="0%" stop-color="#f4ecff"/><stop offset="18%" stop-color="#c7a6ff"/>' +
+                '<stop offset="55%" stop-color="#7a3df0"/><stop offset="100%" stop-color="#12041f"/>' +
                 '</radialGradient>' +
                 '<linearGradient id="fr" x1="0" y1="0" x2="1" y2="1">' +
-                '<stop offset="0%" stop-color="#8b3df0"/><stop offset="55%" stop-color="#c660ff"/>' +
-                '<stop offset="72%" stop-color="#ffb84d"/><stop offset="100%" stop-color="#6920b8"/>' +
-                '</linearGradient></defs>' +
-                '<rect width="64" height="64" rx="15" fill="#12081f"/>' +
+                '<stop offset="0%" stop-color="#37e6a8"/><stop offset="30%" stop-color="#41c6ff"/>' +
+                '<stop offset="55%" stop-color="#c660ff"/><stop offset="78%" stop-color="#ffb84d"/>' +
+                '<stop offset="100%" stop-color="#ff5f9e"/>' +
+                '</linearGradient>' +
+                '<radialGradient id="fg" cx="50%" cy="50%" r="50%">' +
+                '<stop offset="55%" stop-color="rgba(140,80,255,0)"/>' +
+                '<stop offset="100%" stop-color="rgba(140,80,255,0.35)"/>' +
+                '</radialGradient></defs>' +
+                '<rect width="64" height="64" rx="15" fill="#0b0416"/>' +
+                '<rect width="64" height="64" rx="15" fill="url(#fg)"/>' +
                 '<g fill="none" stroke="url(#fr)" stroke-width="3.4" stroke-linecap="round" opacity="0.95">' +
                 '<path d="M12 32 A20 20 0 0 1 32 12"/><path d="M52 32 A20 20 0 0 1 32 52"/></g>' +
                 '<path d="M14 32 Q32 16 50 32 Q32 48 14 32 Z" fill="#0a0614" stroke="#d8c8ff" stroke-width="2.4" stroke-linejoin="round"/>' +
                 '<circle cx="32" cy="32" r="11.5" fill="url(#fi)"/>' +
-                '<circle cx="32" cy="32" r="4.6" fill="#001a0a"/>' +
+                '<circle cx="32" cy="32" r="4.6" fill="#07001a"/>' +
                 '<circle cx="28.5" cy="28.5" r="1.9" fill="#fff" opacity="0.9"/></svg>';
             var href = 'data:image/svg+xml,' + encodeURIComponent(svg);
             var prior = document.querySelectorAll('link[rel~="icon"], link[data-netra-fav]');
@@ -1232,6 +1608,11 @@ api.controller = function ($scope, $timeout, $window) {
                     lastMicLevel = level;
                     c.micLevel = level;
                     if (level > c.micLevelPeak) c.micLevelPeak = level;
+                    // R8.2 - prosody sampling while the user holds a turn
+                    if (_prosFirstAt && c.interim) {
+                        _prosSum += level; _prosN++;
+                        if (level > _prosPeak) _prosPeak = level;
+                    }
                     if (c.state !== 'speaking') {
                         c.audioLevel = level;
                         // R2.12.4 - NOISE GATE.  Below the threshold, snap the
@@ -1264,6 +1645,11 @@ api.controller = function ($scope, $timeout, $window) {
                         // R7 - blob redraw handled by its own rAF ticker
                     }
                     $scope.$applyAsync();
+                }
+                // R8.1 - Netra Lab spectrum scope rides the same rAF loop
+                if (c.labOn) {
+                    _micAnalyser.getByteFrequencyData(freqData);
+                    _labDrawScope(freqData, level);
                 }
                 _micRafId = requestAnimationFrame(loop);
             };
@@ -1709,7 +2095,16 @@ api.controller = function ($scope, $timeout, $window) {
                 ? todGreet + ', ' + firstName + '. I am Netra, your sentinel. I am listening, just speak. Say stop listening any time to pause.'
                 : todGreet + ', ' + firstName + '. I am Netra, your sentinel. Whenever you need me, just say my name.';
             $timeout(function () {
-                speak(greet);
+                // R8.1 - first boot ever on this browser: run the UI + mic
+                // self-check with a read-back calibration sentence instead
+                // of the plain greeting. Every later boot greets as before.
+                if (_firstRunPending()) {
+                    speak(todGreet + ', ' + firstName + '. I am Netra.', function () {
+                        _firstRunCheck();
+                    });
+                } else {
+                    speak(greet);
+                }
                 // Once per session, auto-offer a daily briefing 4 seconds after greeting
                 $timeout(function () {
                     if (c.alert && c.conversationOpen && !c.briefingOffered) {
@@ -1735,6 +2130,27 @@ api.controller = function ($scope, $timeout, $window) {
     var recLastStartTime = 0;   // track session start time
     var recLastActivityAt = 0;  // R1.1 - last interim or final result timestamp
     var recRunningDebounceTimer = null;   // R1.3.1 - debounce live-indicator off
+    // R8.1 "Sentinel" - mic reliability telemetry + zombie-session tracking.
+    // Chrome's network recognizer has a failure mode where interim results
+    // keep arriving but finals never do ("hears but doesn't register"); we
+    // track the interim/final timeline to detect and heal it.
+    var _lastInterimAt = 0, _lastInterimText = '', _lastFinalAt = 0;
+    var _notAllowedStrikes = 0;
+    var _lastLowConfNudgeAt = 0;
+    var _floorStuckStrikes = 0;
+    // R8.2 - prosody capture (speech-delivery sentiment hints for the brain)
+    var _prosFirstAt = 0, _prosSum = 0, _prosN = 0, _prosPeak = 0;
+    c.micHealth = {
+        srRestarts: 0,          // onend->restart cycles
+        fullRecycles: 0,        // full mic+SR teardown/rebuilds
+        preventiveRecycles: 0,  // proactive session refreshes (age > 4 min)
+        syntheticFinals: 0,     // interims promoted to finals (zombie heal)
+        floorClears: 0,         // stuck speaking-floor releases
+        notAllowedRecoveries: 0,// transient not-allowed errors survived
+        deniedRecoveries: 0,    // permission restored without page refresh
+        lastFinalAt: 0,
+        lastInterimAt: 0
+    };
 
     function startContinuous() {
         if (!c.hasSR) return;
@@ -1762,11 +2178,19 @@ api.controller = function ($scope, $timeout, $window) {
 
         contRec.onresult = function (ev) {
             recLastActivityAt = Date.now();   // R1.1 - silent-rec heartbeat
+            _notAllowedStrikes = 0;           // R8.1 - real results = mic healthy
             for (var i = ev.resultIndex; i < ev.results.length; i++) {
                 var res = ev.results[i];
                 var t = (res[0] && res[0].transcript) || '';
                 var conf = (res[0] && res[0].confidence) || 0;
                 if (!res.isFinal) {
+                    // R8.1 - zombie-session heartbeat: remember the interim so
+                    // the watchdog can promote it if a final never arrives.
+                    _lastInterimAt = Date.now();
+                    if (t && t.trim()) _lastInterimText = t.trim();
+                    c.micHealth.lastInterimAt = _lastInterimAt;
+                    // R8.2 - prosody clock starts on the first interim of a turn
+                    if (!_prosFirstAt && !_speakingNow) _prosFirstAt = Date.now();
                     c.interim = t;
                     // R7 - INSTANT YIELD: while Netra holds the floor, the
                     // moment the LIVE transcript shows two non-echo words
@@ -1797,6 +2221,11 @@ api.controller = function ($scope, $timeout, $window) {
                 }
                 c.interim = '';
                 _interimSpeechStart = 0;
+                // R8.1 - the recognizer IS finalizing; zombie heal not needed
+                _lastFinalAt = Date.now();
+                _lastInterimAt = 0;
+                _lastInterimText = '';
+                c.micHealth.lastFinalAt = _lastFinalAt;
                 // R6 - hard guard only for the first ~450ms of TTS (audio
                 // ramp / AEC settle). Beyond that the mic stays HOT and
                 // every final is echo-scored instead of blanket-dropped.
@@ -1851,11 +2280,7 @@ api.controller = function ($scope, $timeout, $window) {
                 return;
             }
             if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-                logEvent('err', 'mic permission DENIED - aborting recognition');
-                c.recRunning = false;
-                setState('error');
-                c.permission = 'denied';
-                $scope.$applyAsync();
+                _handleNotAllowed(ev.error);
                 return;
             }
             logEvent('err', 'recognition error: ' + ev.error);
@@ -1886,6 +2311,7 @@ api.controller = function ($scope, $timeout, $window) {
             var delay = recRestartCount > 1
                 ? Math.min(500 * Math.pow(1.8, recRestartCount - 1), 8000)
                 : RESTART_DELAY;
+            c.micHealth.srRestarts++;
             $timeout(startContinuous, delay);
         };
 
@@ -1895,6 +2321,38 @@ api.controller = function ($scope, $timeout, $window) {
             // common cause: already started
             $timeout(startContinuous, 1000);
         }
+    }
+
+    /* R8.1 "Sentinel" - not-allowed triage. Chrome throws a spurious
+     * not-allowed when the OS audio device switches or the tab thaws
+     * from suspension; treating every one as a permanent denial used
+     * to brick Netra until a page refresh ("stops responding after a
+     * while"). Now the Permissions API is consulted: if the mic is in
+     * fact still granted, restart with backoff (up to 3 strikes). */
+    function _handleNotAllowed(kind) {
+        var declareDenied = function () {
+            logEvent('err', 'mic permission DENIED (' + kind + ') - recognition stopped');
+            c.recRunning = false;
+            setState('error');
+            c.permission = 'denied';
+            $scope.$applyAsync();
+        };
+        try {
+            if (navigator.permissions && navigator.permissions.query) {
+                navigator.permissions.query({ name: 'microphone' }).then(function (st) {
+                    if (st.state === 'granted' && _notAllowedStrikes < 3) {
+                        _notAllowedStrikes++;
+                        c.micHealth.notAllowedRecoveries++;
+                        logEvent('warn', kind + ' but mic still granted - transient, restart ' + _notAllowedStrikes + '/3');
+                        $timeout(startContinuous, 1500 * _notAllowedStrikes);
+                    } else {
+                        declareDenied();
+                    }
+                }, declareDenied);
+                return;
+            }
+        } catch (eP) {}
+        declareDenied();
     }
 
     /* R3.6 - SR activity watchdog with FULL recycle.
@@ -1911,6 +2369,7 @@ api.controller = function ($scope, $timeout, $window) {
     function _fullMicRecycle(reason) {
         if (_recyclingMic) return;
         _recyclingMic = true;
+        c.micHealth.fullRecycles++;
         logEvent('rec', 'full mic+SR recycle (' + reason + ')');
         recLastActivityAt = Date.now();   // reset to avoid retrigger
         try { if (contRec) contRec.stop(); } catch (e) {}
@@ -1950,23 +2409,104 @@ api.controller = function ($scope, $timeout, $window) {
      * ============================================================ */
     var watchdogStrikes = 0;
     var watchdogLastSpeakingStart = 0;
+    var _permProbeCounter = 0;
     function startListeningWatchdog() {
         var tick = function () {
             var now = Date.now();
             // Stuck-in-speaking detection: if state has been "speaking"
-            // for more than 30s without progress, force back to idle.
+            // for more than 30s without progress, force a FULL floor
+            // release (R8.1: setState alone left _speakingNow true, so
+            // every later utterance was echo-scored and short commands
+            // were eaten forever - "hears but does not register").
             if (c.state === 'speaking') {
                 if (!watchdogLastSpeakingStart) {
                     watchdogLastSpeakingStart = now;
                 } else if (now - watchdogLastSpeakingStart > 30000) {
-                    logEvent('warn', 'watchdog: stuck in speaking >30s - forcing idle');
-                    setState(c.alert ? 'idle' : 'dormant');
+                    logEvent('warn', 'watchdog: stuck in speaking >30s - full floor release');
                     watchdogLastSpeakingStart = 0;
-                    // Reset ignoreFinalsUntil so mic isn't locked
+                    stopSpeaking('watchdog stuck-speaking');
                     ignoreFinalsUntil = now;
                 }
             } else {
                 watchdogLastSpeakingStart = 0;
+            }
+
+            // R8.1 - FLOOR SANITY: _speakingNow claims Netra holds the
+            // floor, but no audio element is actually playing and no TTS
+            // engine is active. Two consecutive strikes (~20s) means a
+            // completion callback was lost (MediaSource stall, engine
+            // exception) - release the floor so the mic gate reopens.
+            var audioLive = false;
+            try { audioLive = !!(currentAudio && !currentAudio.paused && !currentAudio.ended); } catch (eAL) {}
+            var ttsLive = !!(TTS && (TTS.speaking || TTS.pending));
+            if (_speakingNow && !audioLive && !ttsLive && !_edgeLiveWs &&
+                (now - _speakingSince) > 8000) {
+                _floorStuckStrikes++;
+                if (_floorStuckStrikes >= 2) {
+                    _floorStuckStrikes = 0;
+                    c.micHealth.floorClears++;
+                    logEvent('warn', 'watchdog: speaking floor stuck with no audio - releasing');
+                    stopFillerChain();
+                    _clearSpeaking();
+                    ignoreFinalsUntil = now;
+                    if (c.state === 'speaking') setState(c.alert ? 'idle' : 'dormant');
+                }
+            } else {
+                _floorStuckStrikes = 0;
+            }
+
+            // R8.1 - ZOMBIE-SESSION HEAL: interims arrived (user spoke,
+            // Netra "heard") but the recognizer never produced a final in
+            // 8s+. Promote the last interim to a synthetic final so the
+            // command still registers, then rebuild the mic stack - this
+            // session's finalizer is gone and won't come back.
+            if (!_speakingNow && c.alert && _lastInterimAt > 0 &&
+                _lastFinalAt < _lastInterimAt &&
+                (now - _lastInterimAt) > 8000 &&
+                _lastInterimText && _lastInterimText.length >= MIN_LENGTH) {
+                var ghost = _lastInterimText;
+                _lastInterimAt = 0;
+                _lastInterimText = '';
+                c.interim = '';
+                c.micHealth.syntheticFinals++;
+                logEvent('warn', 'watchdog: interim never finalized - promoting "' + ghost.substring(0, 60) + '"');
+                _enqueueFinalTranscript(ghost, 0.5);
+                _fullMicRecycle('zombie session: interim without final');
+            }
+
+            // R8.1 - PERMISSION-RESTORE PROBE (every ~30s): if we declared
+            // the mic denied, keep checking the Permissions API; the user
+            // can re-allow from the padlock without a refresh.
+            _permProbeCounter++;
+            if (c.permission === 'denied' && _permProbeCounter % 3 === 0) {
+                try {
+                    if (navigator.permissions && navigator.permissions.query) {
+                        navigator.permissions.query({ name: 'microphone' }).then(function (st) {
+                            if (st.state === 'granted') {
+                                logEvent('rec', 'mic permission restored - restarting recognition');
+                                c.permission = 'granted';
+                                c.micHealth.deniedRecoveries++;
+                                _notAllowedStrikes = 0;
+                                if (c.state === 'error') setState(c.alert ? 'idle' : 'dormant');
+                                startContinuous();
+                            }
+                        }, function () {});
+                    }
+                } catch (ePr) {}
+            }
+
+            // R8.1 - PREVENTIVE SESSION RECYCLE: Chrome's network recognizer
+            // degrades on very long continuous sessions. Refresh it every
+            // ~4 minutes, but only in a quiet idle moment so the user never
+            // notices (onend auto-restarts in 250ms).
+            if (c.recRunning && c.alert && !_speakingNow && c.state === 'idle' &&
+                !String(c.interim || '').trim() &&
+                (now - recLastStartTime) > 240000 &&
+                (now - recLastActivityAt) > 8000) {
+                c.micHealth.preventiveRecycles++;
+                logEvent('rec', 'preventive session recycle (age ' + Math.round((now - recLastStartTime) / 60000) + ' min)');
+                recLastStartTime = now;   // don't refire before restart lands
+                try { contRec.stop(); } catch (ePS) {}
             }
 
             // Recognition health: if mic permission is granted but recognition
@@ -2125,6 +2665,11 @@ api.controller = function ($scope, $timeout, $window) {
             if (dynCommon.length) {
                 domain += '\npublic <common> = ' + dynCommon.join(' | ') + ' ;';
             }
+            // R8.2 - analyst + developer lexicon (server-curated word vector)
+            var dynLex = compactList(v.analyst_terms, 140);
+            if (dynLex.length) {
+                domain += '\npublic <analyst> = ' + dynLex.join(' | ') + ' ;';
+            }
             // R2.2 - inject the users PERSONAL VOCAB into the grammar so
             // Chrome itself biases toward those names/words during recognition.
             var personalWords = Object.keys(c.personalVocab || {}).slice(0, 120);
@@ -2171,9 +2716,19 @@ api.controller = function ($scope, $timeout, $window) {
     // fast when the buffer looks complete; keep the long window only for
     // flowing dictation. This alone shaves ~half a second off every
     // simple voice command.
+    // R8.1 - SEMANTIC END-OF-TURN. Judge whether the user is done from
+    // WHAT they said, not just how long they paused: an utterance that
+    // trails off mid-thought ("update INC one two three four with...")
+    // earns a much longer window, while a complete-looking short answer
+    // ("yes", "resolve it") flushes near-instantly. This kills both
+    // premature cutoffs mid-dictation and the dead pause after "yes".
+    var _TRAILING_INCOMPLETE_RE = /\b(and|but|or|to|the|a|an|with|for|of|in|on|at|is|was|it's|that|my|his|her|their|this|then|so|because|about|into|from|please|umm?|uhh?|err?)[.,]?$/i;
+    var _COMPLETE_ANSWER_RE = /^(yes|yeah|yep|no|nope|correct|confirmed?|do it|go ahead|cancel|stop|okay|ok|sure|thanks|thank you|resolve it|close it|approve|reject)[.!,\s]*$/i;
     function _adaptiveDebounceMs() {
         var joined = _finalBuffer.join(' ').trim();
         var words = joined ? joined.split(/\s+/).length : 0;
+        if (_COMPLETE_ANSWER_RE.test(joined)) return 280;         // done - answer now
+        if (_TRAILING_INCOMPLETE_RE.test(joined)) return 2600;    // mid-thought - wait
         if (/[.!?]$/.test(joined)) return 650;      // recognizer heard a full stop
         if (words > 0 && words <= 6) return 850;    // short command shape
         return FINAL_DEBOUNCE_MS;                    // long dictation - be patient
@@ -2219,6 +2774,8 @@ api.controller = function ($scope, $timeout, $window) {
         // (the server now accepts 16000).
         var clean = (text || '').trim().substring(0, 12000);
         if (!clean) return;
+        // R8.1 - calibration read-back has priority over command routing
+        if (_calibConsume(clean)) return;
         var lower = clean.toLowerCase();
         c.lastHeard  = clean;
         c.confidence = conf ? conf.toFixed(2) : '-';
@@ -2288,6 +2845,14 @@ api.controller = function ($scope, $timeout, $window) {
             }
             if (conf > 0 && conf < MIN_CONFIDENCE) {
                 logEvent('rec', 'ignored (low conf ' + conf.toFixed(2) + ': "' + input + '")');
+                // R8.1 - a substantial utterance heard badly used to vanish in
+                // silence, which reads as "Netra stopped responding". Nudge
+                // once (30s throttle) so the user knows to repeat.
+                if (input.length >= 10 && !_speakingNow &&
+                    Date.now() - _lastLowConfNudgeAt > 30000) {
+                    _lastLowConfNudgeAt = Date.now();
+                    speak('Sorry, I heard you but did not catch it clearly. Once more?');
+                }
                 return;
             }
             logEvent('conv', 'heard: "' + input + '"');
@@ -2411,6 +2976,23 @@ api.controller = function ($scope, $timeout, $window) {
         c.data.action  = 'chat';
         c.data.message = transcript;
         c.data.history = geminiHistory;
+        // R8.2 - live-stage flag (server strips navigation tools) + prosody
+        c.data.live_mode = !!c.liveMode;
+        var prosOut = null;
+        if (_prosFirstAt) {
+            var durMin = (Date.now() - _prosFirstAt) / 60000;
+            var pwords = transcript.split(/\s+/).length;
+            var wpm = durMin > 0.005 ? Math.round(pwords / durMin) : 0;
+            var lvlAvg = _prosN ? Math.round(_prosSum / _prosN) : 0;
+            var dyn = _prosPeak - lvlAvg;
+            prosOut = {
+                wpm: (wpm > 20 && wpm < 400) ? wpm : 0,
+                level: lvlAvg,
+                variance: dyn > 30 ? 'high' : (dyn > 14 ? 'medium' : 'low')
+            };
+        }
+        _prosFirstAt = 0; _prosSum = 0; _prosN = 0; _prosPeak = 0;
+        c.data.prosody = prosOut;
         // R1.4 - attach screenshot if one was just captured
         if (c.pendingScreenshot) {
             c.data.image_b64 = c.pendingScreenshot;
@@ -2472,6 +3054,18 @@ api.controller = function ($scope, $timeout, $window) {
                     // R2 - act on client directives from tools
                     // R6 - never act on directives from a barged (stale) turn
                     if (r.directives && !stale) {
+                        // R8.2 - reminders schedule locally for to-the-minute
+                        // announcements while the tab stays open (the scanner
+                        // covers closed-tab delivery at ~5 min granularity).
+                        if (r.directives.reminder_at_ms) {
+                            _scheduleLocalReminder(r.directives.reminder_at_ms, r.directives.reminder_text);
+                        }
+                        // R8.2 - HARD NAV LOCK on the Live stage: even if a
+                        // stale prompt or history slips a directive through,
+                        // this page never navigates away.
+                        if (c.liveMode && (r.directives.navigate_url || r.directives.open_url || r.directives.click_button_label)) {
+                            logEvent('nav', 'live stage - navigation/click directive suppressed');
+                        } else {
                         if (r.directives.navigate_url) {
                             logEvent('nav', 'navigating to ' + r.directives.navigate_url);
                             $timeout(function () {
@@ -2506,6 +3100,7 @@ api.controller = function ($scope, $timeout, $window) {
                                 _findAndClickButton(r.directives.click_button_label);
                             }, 800);
                         }
+                        }   // end live-stage nav lock
                     }
                 }
                 if (!r) {
@@ -4475,6 +5070,12 @@ api.controller = function ($scope, $timeout, $window) {
                         }
                         if (c.state === 'listening' || c.state === 'speaking' || c.state === 'awaiting' || c.state === 'thinking') return;
                         if (!c.alert) return;  // don't disturb when dormant
+                        // R8.2 - skip a scanner-promoted reminder that the local
+                        // timer already announced to the minute.
+                        if (n.kind === 'reminder' && _reminderAlreadySpoken(n.message)) {
+                            logEvent('poll', 'reminder already spoken locally - skipped');
+                            return;
+                        }
                         // R6 - interjection etiquette: if we are mid-conversation
                         // (user spoke within the last 45s), Netra excuses herself
                         // before delivering, like a colleague leaning in.

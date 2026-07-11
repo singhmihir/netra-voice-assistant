@@ -1,6 +1,49 @@
-# Netra on ServiceNow 🎙️ v2.0.0
+# Netra on ServiceNow 🎙️ v2.1 (R8.2 "Prism")
 
 A voice-first, fully accessible assistant that runs **natively inside ServiceNow** as a scoped application. Zero external services, zero recurring cost. Designed for blind and visually-impaired ServiceNow users.
+
+---
+
+## R8.x — what's new (2026-07)
+
+- **Prism UI** — a 60fps hue engine drives every colour: the orb/blob shifts
+  through state palettes (emerald idle → cyan capture → magenta thinking →
+  violet speaking) and, while Netra speaks, the hue is continuously modulated
+  by the spectral shape and loudness of her own voice. The Live stage
+  (`/sp?id=netra_live`) gained aurora ribbons, counter-rotating prism rings, a
+  starfield, word-onset ripples, glass status chips and live captions.
+  **Netra now lives ONLY on the Live page** (removed from /sp and everywhere else).
+- **Full ticket control** — Netra can CREATE, EDIT and MODIFY every ticket
+  type (incident, problem, change, catalog request/task): quick-create,
+  guided drafts with mandatory-field discovery, resolve/comment/work-note/
+  reassign/reprioritise/update-any-field. Confirm-before-write is enforced in
+  the prompt; `<scope>.ticket_writes=false` is an emergency kill-switch.
+- **Sentinel mic reliability** — self-healing recognition: stuck-floor
+  release, zombie-session heal (interims promoted to synthetic finals),
+  transient `not-allowed` recovery, permission-restore probe, preventive
+  session recycling, semantic end-of-turn (waits after "…update it with",
+  answers instantly after "yes"), and a low-confidence "once more?" nudge.
+- **Netra Lab** — a draggable floating diagnostics window on the Live page:
+  real-time mic spectrum scope, record/playback mic test, STT accuracy
+  calibration (read-back sentence, word-accuracy score), Sentinel health
+  telemetry, brain/TTS stats and the live hue readout. On the very first run
+  Netra performs a UI + mic self-check with the calibration sentence.
+- **SNOW form intelligence** — Netra understands the form: mandatory fields
+  (dictionary + overrides + data policies + UI policies), available form
+  buttons and *what happens when you click them* (reads the UI-action code),
+  field-change effects ("if I change category, what new fields pop up?"),
+  pre-submit checks, active flows, pending approvals, related records
+  (attachments/SLAs/child tasks/CIs), and "did my action create a new ticket?".
+- **Reminders** — "remind me in 2 hours" → announced by voice (to the minute
+  while the page is open; ≤5 min otherwise via the scanner).
+- **Analyst/developer lexicon** — a curated word vector of ITSM + ServiceNow
+  developer language seeds the recognizer grammar and re-ranker.
+- **Short-form numbers** — first mention is "incident ending 3-4-5"; the full
+  number is spoken only on request.
+- **Prosody sentiment** — speaking rate + loudness dynamics ride each turn as
+  metadata; Netra adapts tone (LLM sentiment refinement enabled).
+- See `docs/AI-CAPABILITIES-ROADMAP.md` for the researched, ranked roadmap of
+  what's next, and `docs/TEST-REPORT-R8.md` for verification details.
 
 ---
 
