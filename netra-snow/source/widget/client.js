@@ -1,19 +1,28 @@
 /**
- * Netra Mic widget - CLIENT CONTROLLER (R7 "Live" - GPT-Live voice)
+ * Netra Mic widget - CLIENT CONTROLLER (R9 "Prism")
  *
- * R7 makes her sound and feel live:
- *   - Ava Multilingual (newest-gen Edge neural voice) at 96kbps, SSML
- *     prosody pace instead of the phasey 1.15x playbackRate
+ * ok so this file is basically Netra's whole front-end brain. quick tour
+ * of the big stuff so future-me doesnt have to re-read 5k lines:
+ *
+ * R9 adds the stuff I kept wishing for while testing:
+ *   - mic calibration runs on every page refresh now, fully interactive
+ *     (read the sentence, get a % score, skip/retry buttons or just say
+ *     skip). sensitivity slider feeds the mic gain node directly.
+ *   - Netra Lab got language + voice selectors, a typed command box (no
+ *     mic needed) and an NLP dry-run tester that keeps the TTS quiet.
+ *   - pastel mesh gradient enviroment blooms in while she talks.
+ *
+ * R7/R8 recap (the "live" era):
+ *   - Ava Multilingual Edge neural voice at 96kbps, SSML prosody pace
  *   - MediaSource-streamed synthesis: audio starts on the first chunk,
  *     prosody unbroken across the whole reply, no segment gaps
  *   - INSTANT yield: two non-echo words on the LIVE interim transcript
  *     stop her mid-syllable (~0.3-0.5s), no waiting for finals
- *   - Liquid aura orb: smooth spline blob (60fps rAF, DOM-direct),
- *     breathing on idle, surging with speech - GPT-Live style
- *   - Dev console: Chat transcript tab, Voice Lab (voice picker + pace
- *     slider + preview), model-routing telemetry
- *   - Server auto-routes flash-lite vs 2.5-flash by turn complexity;
- *     witty-companion persona
+ *   - liquid blob orb: smooth spline (60fps rAF, DOM-direct), breathing
+ *     on idle, surging with speech; prism hue engine colours everything
+ *     from her own voice spectrum
+ *   - dev console: chat transcript tab, Voice Lab, routing telemetry
+ *   - server auto-routes flash-lite vs 2.5-flash by turn complexity
  *
  * R6 adds true two-way interruption, like talking to a person:
  *   - BARGE-IN: the mic stays hot while Netra speaks; her own voice is
@@ -145,7 +154,7 @@ api.controller = function ($scope, $timeout, $window) {
         lastModel:     '-',
         lastLatencyMs: 0
     };
-    // R1.4 - last-turn tool-call trace (Claude-style thinking transparency)
+    // R1.4 - last-turn tool-call trace (so you can actually see what she did)
     c.lastTrace = [];   // [{name, ts}, ...]
     // R7 - live conversation transcript for the dev panel Chat tab
     c.convo = [];       // [{who:'you'|'netra'|'sys', text, t}]
@@ -160,10 +169,9 @@ api.controller = function ($scope, $timeout, $window) {
     // R2.8 - unified audio level (0-100) for the voice bars around the orb.
     // Driven by mic input when listening; driven by playback amplitude when speaking.
     c.audioLevel = 0;
-    c.voiceRingPoints = '';
 
     // R8 - NETRA LIVE: the dedicated portal page (/sp?id=netra_live)
-    // renders the full-screen Claude-Live-style stage instead of just
+    // renders the full-screen live voice stage instead of just
     // the floating orb. Same controller, same features - bigger canvas.
     c.liveMode = false;
     c.liveStatus = 'Waking up…';
@@ -200,6 +208,71 @@ api.controller = function ($scope, $timeout, $window) {
         logEvent('lab', c.labOn ? 'Netra Lab opened' : 'Netra Lab closed');
     };
     c.labRestartMic = function () { _fullMicRecycle('manual (Netra Lab)'); };
+
+    /* ============================================================
+     *  R9 - LAB PREFERENCES: recognition language, TTS mute, mic
+     *  sensitivity, typed commands and NLP dry-run tests. All the
+     *  knobs persist in localStorage so devs keep their setup.
+     * ============================================================ */
+    var _micGainNode = null;
+    c.labMute = false;
+    c.recLangs = ['en-IN', 'en-US', 'en-GB', 'en-AU', 'hi-IN', 'es-ES', 'fr-FR', 'de-DE', 'ja-JP'];
+    c.recLang = 'en-IN';
+    c.micGain = 1.0;
+    try {
+        c.recLang = localStorage.getItem('netra_lang') || 'en-IN';
+        var g = parseFloat(localStorage.getItem('netra_mic_gain'));
+        if (g >= 0.5 && g <= 3) c.micGain = g;
+        c.labMute = localStorage.getItem('netra_lab_mute') === '1';
+    } catch (ePref) {}
+    c.labSetLang = function () {
+        try { localStorage.setItem('netra_lang', c.recLang); } catch (e) {}
+        logEvent('lab', 'recognition language -> ' + c.recLang);
+        _fullMicRecycle('language change');
+    };
+    c.labSetGain = function () {
+        try { localStorage.setItem('netra_mic_gain', String(c.micGain)); } catch (e) {}
+        if (_micGainNode) { try { _micGainNode.gain.value = c.micGain; } catch (e2) {} }
+    };
+    c.labSetMute = function () {
+        try { localStorage.setItem('netra_lab_mute', c.labMute ? '1' : '0'); } catch (e) {}
+        logEvent('lab', 'TTS ' + (c.labMute ? 'muted' : 'unmuted'));
+    };
+
+    // typed commands - same pipeline as voice, minus the microphone
+    c.labCmd = '';
+    c.labSendCmd = function () {
+        var t = String(c.labCmd || '').trim();
+        if (!t) return;
+        c.labCmd = '';
+        logEvent('lab', 'typed command: "' + t + '"');
+        processCommand(t, 1.0);
+    };
+    c.labCmdKey = function (ev) { if (ev && ev.keyCode === 13) c.labSendCmd(); };
+
+    // NLP dry-run: full brain round-trip, TTS muted, result panel in the Lab
+    var _labNlpArm = false, _labNlpPrevMute = false, _labNlpSent = '';
+    c.labNlpText = '';
+    c.labNlp = null;   // { sent, reply, tools, ms }
+    c.labRunNlp = function () {
+        var t = String(c.labNlpText || '').trim();
+        if (!t) return;
+        _labNlpArm = true;
+        _labNlpSent = t;
+        _labNlpPrevMute = c.labMute;
+        c.labMute = true;
+        c.labNlp = { sent: t, reply: '…', tools: [], ms: null };
+        logEvent('lab', 'NLP test: "' + t + '"');
+        processCommand(t, 1.0);
+    };
+    c.labNlpKey = function (ev) { if (ev && ev.keyCode === 13) c.labRunNlp(); };
+    function _labNlpCapture(reply, tools, ms) {
+        if (!_labNlpArm) return;
+        _labNlpArm = false;
+        c.labMute = _labNlpPrevMute;
+        c.labNlp = { sent: _labNlpSent, reply: String(reply || ''), tools: tools || [], ms: ms };
+        $scope.$applyAsync();
+    }
 
     // R8.1 - the Lab is a floating window: drag it anywhere by its header
     // (same interaction as the dev console). Position survives via
@@ -351,6 +424,11 @@ api.controller = function ($scope, $timeout, $window) {
         // Ignore finals landing suspiciously fast after her own prompt -
         // those are echo tails of Netra reading the sentence herself.
         if (Date.now() - _calibListenStart < 1200) return true;
+        // R9 - voice escape hatch: "skip" / "not now" bails out instantly
+        if (/^(skip( it)?|cancel|not now|later|no thanks?)[.!,\s]*$/i.test(clean)) {
+            c.calibSkip();
+            return true;
+        }
         _calibActive = false;
         if (_calibTimer) { $timeout.cancel(_calibTimer); _calibTimer = null; }
         var score = _wordAccuracy(CALIB_SENTENCE, clean);
@@ -390,21 +468,46 @@ api.controller = function ($scope, $timeout, $window) {
         return !!t && (Date.now() - t) < 10 * 60 * 1000;
     }
 
-    // ---- first-run self check (UI + animations + mic + calibration) ----
+    // ---- boot self check (UI + animations + mic + calibration) ----
+    // R9 - runs on every page load. First-ever boot narrates the full
+    // check; returning boots keep it quick. Interactive: Skip / Try again
+    // buttons on the stage card, or just say "skip".
     function _firstRunPending() {
         try { return !localStorage.getItem('netra_firstrun_done'); } catch (eFR) { return false; }
     }
     function _firstRunCheck() {
+        var firstEver = _firstRunPending();
         try { localStorage.setItem('netra_firstrun_done', '1'); } catch (eFS) {}
         var uiOk   = !!document.querySelector('.netra-orb, .netra-stage-svg');
         var animOk = !!_blobRafId;
         var micOk  = !!c.micStreamActive;
-        logEvent('lab', 'first-run self check: ui=' + uiOk + ' anim=' + animOk + ' mic=' + micOk);
-        var uiLine = 'Running my first-time self check. Interface ' + (uiOk ? 'rendered' : 'failed to render') +
-                     ', animations ' + (animOk ? 'running' : 'stopped') +
-                     ', microphone stream ' + (micOk ? 'live. All good.' : 'not detected - voice may not work.') + ' ';
-        startCalibration(true, uiLine);
+        logEvent('lab', 'boot self check: ui=' + uiOk + ' anim=' + animOk + ' mic=' + micOk + (firstEver ? ' (first ever)' : ''));
+        var uiLine = firstEver
+            ? ('Running my first-time self check. Interface ' + (uiOk ? 'rendered' : 'failed to render') +
+               ', animations ' + (animOk ? 'running' : 'stopped') +
+               ', microphone stream ' + (micOk ? 'live. All good.' : 'not detected - voice may not work.') + ' ')
+            : (micOk ? 'Quick mic check - say skip to jump straight in. '
+                     : 'Heads up, I am not seeing a microphone stream. ');
+        startCalibration(firstEver, uiLine);
     }
+    c.calibSkip = function () {
+        if (!_calibActive) return;
+        _calibActive = false;
+        if (_calibTimer) { $timeout.cancel(_calibTimer); _calibTimer = null; }
+        c.labCalib.stage = 'skipped';
+        logEvent('lab', 'calibration skipped');
+        stopSpeaking('calibration skipped');
+        speak('Skipped. I am listening - just speak.');
+        $scope.$applyAsync();
+    };
+    c.calibRetry = function () {
+        c.labCalib = { stage: 'idle', heard: '', score: null, verdict: '' };
+        startCalibration(false, '');
+    };
+    c.calibDismiss = function () {
+        c.labCalib.stage = 'idle';
+        $scope.$applyAsync();
+    };
 
     // Per-bar multiplier; jitter so the ring feels alive rather than uniform.
     // R2.12.3 - calibrated for viewBox 120×120 with hard distance cap.
@@ -416,7 +519,7 @@ api.controller = function ($scope, $timeout, $window) {
         0.40, 0.58, 0.44, 0.48, 0.42, 0.50, 0.40, 0.55,
         0.44, 0.46, 0.42, 0.52, 0.40, 0.58, 0.44, 0.50
     ];
-    // R8 - the blob IS the orb now (Claude-Live clay splat), not a ring
+    // R8 - the blob IS the orb now (one soft clay splat), not a ring
     // around an eye. Radii sized for a standalone organic shape in the
     // 120x120 viewBox: ~34 at rest, breathing to ~54 on loud speech.
     var VOICE_RING_BASE_IDLE      = 34;
@@ -646,8 +749,6 @@ api.controller = function ($scope, $timeout, $window) {
         }
         var dOuter = _smoothClosedPath(ox, oy);
         var dInner = _smoothClosedPath(ix, iy);
-        c.voiceBlobPath      = dOuter;   // kept for anything still bound to it
-        c.voiceBlobInnerPath = dInner;
         // R7 - write straight to the DOM. The blob animates at 60fps from
         // its own rAF ticker; routing that through Angular bindings would
         // digest the whole scope every frame for zero benefit.
@@ -1581,7 +1682,8 @@ api.controller = function ($scope, $timeout, $window) {
             // for ambient room noise. The mic stream itself stays clean
             // for SpeechRecognition; we only boost if AGC is OFF later.
             var gainNode = _micCtx.createGain();
-            gainNode.gain.value = 1.0;
+            gainNode.gain.value = c.micGain || 1.0;   // R9 - mic sensitivity slider
+            _micGainNode = gainNode;
             _micAnalyser = _micCtx.createAnalyser();
             _micAnalyser.fftSize = 1024;
             _micAnalyser.smoothingTimeConstant = 0.75;   // R3.5.1 - 0.5 -> 0.75 damp brief noise transients
@@ -2095,16 +2197,13 @@ api.controller = function ($scope, $timeout, $window) {
                 ? todGreet + ', ' + firstName + '. I am Netra, your sentinel. I am listening, just speak. Say stop listening any time to pause.'
                 : todGreet + ', ' + firstName + '. I am Netra, your sentinel. Whenever you need me, just say my name.';
             $timeout(function () {
-                // R8.1 - first boot ever on this browser: run the UI + mic
-                // self-check with a read-back calibration sentence instead
-                // of the plain greeting. Every later boot greets as before.
-                if (_firstRunPending()) {
-                    speak(todGreet + ', ' + firstName + '. I am Netra.', function () {
-                        _firstRunCheck();
-                    });
-                } else {
-                    speak(greet);
-                }
+                // R9 - the UI + mic self-check now runs on EVERY page load
+                // (user preference). First-ever boot gets the long intro;
+                // later boots get a quick "mic check" pass. Say "skip" or
+                // tap Skip on the stage card to jump straight in.
+                speak(todGreet + ', ' + firstName + '. I am Netra.', function () {
+                    _firstRunCheck();
+                });
                 // Once per session, auto-offer a daily briefing 4 seconds after greeting
                 $timeout(function () {
                     if (c.alert && c.conversationOpen && !c.briefingOffered) {
@@ -2159,7 +2258,7 @@ api.controller = function ($scope, $timeout, $window) {
         contRec = new SR();
         contRec.continuous     = true;
         contRec.interimResults = true;
-        contRec.lang           = 'en-IN';
+        contRec.lang           = c.recLang || 'en-IN';   // R9 - Lab language selector
         contRec.maxAlternatives = 5;   // R2.2 - get top 5 guesses to re-rank against personal vocab
         attachGrammar(contRec);
         recLastStartTime = Date.now();
@@ -3033,6 +3132,9 @@ api.controller = function ($scope, $timeout, $window) {
                 c.stats.lastLatencyMs = elapsed;
                 _pushLatency(elapsed);
                 var r = c.data.response;
+                // R9 - NLP dry-run result panel in the Lab
+                if (r) _labNlpCapture(r.message, r.tools_called, elapsed);
+                else   _labNlpCapture('(empty server response)', [], elapsed);
                 if (r) {
                     if (r.model_used) c.stats.lastModel = r.model_used;
                     if (r.route_reason) c.stats.lastRoute = r.route_reason;   // R7 - auto-routing telemetry
@@ -3148,6 +3250,7 @@ api.controller = function ($scope, $timeout, $window) {
             function (err) {
                 $timeout.cancel(hung);
                 _chatInFlight = false;
+                _labNlpCapture('(transport error)', [], null);
                 c.stats.errors++;
                 setState('error');
                 cue('error');
@@ -3464,6 +3567,15 @@ api.controller = function ($scope, $timeout, $window) {
             // Even with no text, fire callback + reset state to keep the
             // state machine consistent.
             _afterTTS(done);
+            return;
+        }
+        // R9 - Lab mute: captions still update, no audio (used for NLP
+        // dry-runs and quiet dev sessions).
+        if (c.labMute) {
+            c.spoken = String(text).replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*_`#>]/g, '').trim();
+            logEvent('tts', 'muted (lab): "' + c.spoken.substring(0, 60) + '"');
+            $scope.$applyAsync();
+            $timeout(function () { _afterTTS(done); }, 60);
             return;
         }
 

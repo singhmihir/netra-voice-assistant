@@ -1,4 +1,4 @@
-# Netra on ServiceNow 🎙️ v2.1 (R8.2 "Prism")
+# Netra on ServiceNow 🎙️ v3.0 (R9 "Prism")
 
 A voice-first, fully accessible assistant that runs **natively inside ServiceNow** as a scoped application. Zero external services, zero recurring cost. Designed for blind and visually-impaired ServiceNow users.
 
@@ -42,6 +42,14 @@ A voice-first, fully accessible assistant that runs **natively inside ServiceNow
   number is spoken only on request.
 - **Prosody sentiment** — speaking rate + loudness dynamics ride each turn as
   metadata; Netra adapts tone (LLM sentiment refinement enabled).
+- **R9 additions** — mic calibration now runs on EVERY page load as an
+  interactive on-stage card (live transcript, % score, Skip / Try again, or
+  just say "skip"); the Lab gained a recognition-language selector, a voice
+  selector, a mic-sensitivity slider, a typed-command box (no mic needed) and
+  an NLP dry-run tester with muted TTS; a pastel mesh-gradient environment
+  blooms around the blob while Netra talks; ticket creation now ALWAYS asks
+  for a spoken yes before inserting; ships as a single batch update set
+  (`update-set/Netra_v3.0_Batch.xml`, parent + 6 children).
 - See `docs/AI-CAPABILITIES-ROADMAP.md` for the researched, ranked roadmap of
   what's next, and `docs/TEST-REPORT-R8.md` for verification details.
 
@@ -103,7 +111,7 @@ A voice-first, fully accessible assistant that runs **natively inside ServiceNow
 | Path | Files | Manual steps |
 |---|---|---|
 | **A. Background Script (Recommended)** | `install/setup-netra.js` | Create scope (1 click), paste + Run script (1 click), drop widget on page (1 click) |
-| B. Update Set XML (batch) | `update-set/Netra_v2.0.0-R4.7_Batch.xml` | Import XML, then Preview & Commit the parent set — children commit automatically |
+| B. Update Set XML (batch) | `update-set/Netra_v3.0_Batch.xml` | Import XML, then Preview & Commit the parent "Netra - v3.0" — the six children commit automatically |
 
 See [`INSTALL.md`](INSTALL.md) for the click-by-click walkthrough.
 
@@ -116,7 +124,7 @@ netra-snow/
 ├── install/
 │   └── setup-netra.js                       ← single Background Script: creates everything
 ├── update-set/
-│   └── Netra_v2.0.0-R4.7_Batch.xml          ← batch update set: parent + 5 children, single import
+│   └── Netra_v3.0_Batch.xml                 ← batch update set: parent + 6 children, single import
 ├── scripts/
 │   ├── build-setup-script.mjs               ← regenerates setup-netra.js from source/ (Node, cross-platform)
 │   └── build-update-set.ps1                 ← regenerates the XML from source/
