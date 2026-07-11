@@ -70,12 +70,13 @@
 
     if (action === 'chat') {
         try {
-            // R4.5 - cap user message to 8000 chars. The 60 KB history-byte
-            // cap below only trims old turns; the CURRENT message is fed
-            // raw to Gemini. A long dictation or hostile multi-MB payload
-            // could blow the 12s HTTP timeout before any history trim runs.
+            // R4.5 - cap the user message. The history-byte cap below only
+            // trims old turns; the CURRENT message is fed raw to Gemini. A
+            // hostile multi-MB payload could blow the 12s HTTP timeout
+            // before any history trim runs. Release X: 8000 -> 16000 so a
+            // long spoken dictation never gets cut mid-thought.
             var _userMsg = String((input && input.message) || '').trim();
-            if (_userMsg.length > 8000) _userMsg = _userMsg.substring(0, 8000);
+            if (_userMsg.length > 16000) _userMsg = _userMsg.substring(0, 16000);
             // image_b64 cap - 4 MB base64 ~ 3 MB binary, plenty for a screen
             if (input && typeof input.image_b64 === 'string' && input.image_b64.length > 4000000) {
                 input.image_b64 = input.image_b64.substring(0, 4000000);
@@ -270,17 +271,29 @@
         // via the x_196061_netra_v1.gemini_model property if richer reasoning
         // is needed on a given instance.
         var model = gs.getProperty(SCOPE + '.gemini_model', 'gemini-flash-lite-latest');
+        // R7 - AUTO-ROUTED BRAINS. Simple commands stay on flash-lite
+        // (~1s); turns that smell like reasoning (long, multi-question,
+        // analytical verbs, multi-step) escalate to gemini-2.5-flash for
+        // a smarter answer at +1-2s. Only applies when the property is
+        // still the default - an explicit gemini_model pins every turn.
+        var routeReason = 'fast';
+        if (model === 'gemini-flash-lite-latest') {
+            if (_isComplexTurn(userMessage)) { model = 'gemini-2.5-flash'; routeReason = 'complex'; }
+        } else {
+            routeReason = 'pinned';
+        }
 
         // Build conversation history for Gemini.
-        // R2.7 - aggressive sanitisation to keep payloads under ~40KB even
-        // in 30-minute sessions:
-        //   - Keep last 12 turns
-        //   - Truncate any tool-response body over 1500 chars to a digest
+        // R2.7 sanitisation, Release X expansion: flash-lite carries a 1M-token
+        // context window, so the old 12-turn / 60KB guard rails were wasting
+        // most of the model's memory. New envelope:
+        //   - Keep last 40 turns
+        //   - Truncate tool-response bodies over 4000 chars to a digest
         //   - Strip any inlineData (screenshot frames) from past turns
-        //   - Hard byte cap: if still over 60KB, drop oldest turns
+        //   - Hard byte cap: if still over 180KB, drop oldest turns
         var contents = [];
         if (Array.isArray(history)) {
-            var start = Math.max(0, history.length - 12);
+            var start = Math.max(0, history.length - 40);
             for (var i = start; i < history.length; i++) {
                 var h = history[i];
                 if (!h || !h.role || !h.parts) continue;
@@ -295,18 +308,18 @@
                         var resp = part.functionResponse.response;
                         var s = '';
                         try { s = JSON.stringify(resp); } catch (eS) {}
-                        if (s.length > 1500) {
+                        if (s.length > 4000) {
                             sanitisedParts.push({
                                 functionResponse: {
                                     name: part.functionResponse.name,
-                                    response: { result: { ok: true, _truncated: true, summary: s.substring(0, 800) + '...[' + (s.length - 800) + ' more chars trimmed]' } }
+                                    response: { result: { ok: true, _truncated: true, summary: s.substring(0, 2000) + '...[' + (s.length - 2000) + ' more chars trimmed]' } }
                                 }
                             });
                         } else {
                             sanitisedParts.push(part);
                         }
-                    } else if (part.text && part.text.length > 2000) {
-                        sanitisedParts.push({ text: part.text.substring(0, 2000) + '...[truncated]' });
+                    } else if (part.text && part.text.length > 6000) {
+                        sanitisedParts.push({ text: part.text.substring(0, 6000) + '...[truncated]' });
                     } else {
                         sanitisedParts.push(part);
                     }
@@ -320,11 +333,11 @@
             // re-serialising the entire contents array on every iteration
             // (previously O(n^2) on long sessions).
             var size = JSON.stringify(contents).length;
-            while (contents.length > 2 && size > 60000) {
+            while (contents.length > 2 && size > 180000) {
                 var dropped = contents.shift();
                 size -= JSON.stringify(dropped).length + 1;   // +1 ~ comma separator
             }
-            if (size > 60000) {
+            if (size > 180000) {
                 gs.warn('[NetraGemini] history still ' + size + ' bytes after pruning; will rely on Gemini to handle');
             }
         }
@@ -344,11 +357,12 @@
         var systemInstruction = _systemPrompt();
         var tools = _toolDeclarations();
 
-        // Tool-use loop (max 5 iterations to prevent runaway)
+        // Tool-use loop (max 8 iterations to prevent runaway; Release X
+        // raised from 5 so multi-step research turns don't bail early)
         var modelUsed = null;
         var toolsCalled = [];   // R1 - track which tools were invoked
         var clientDirectives = {};   // R2 - navigate_url, click_button_label, etc.
-        for (var iter = 0; iter < 5; iter++) {
+        for (var iter = 0; iter < 8; iter++) {
             var resp = _callGemini(apiKey, model, contents, tools, systemInstruction);
             if (resp._model_used) modelUsed = resp._model_used;
             if (resp.error) {
@@ -445,6 +459,7 @@
                 history: contents,
                 paused: data.paused,
                 model_used: modelUsed,
+                route_reason: routeReason,    // R7 - fast | complex | pinned
                 tools_called: toolsCalled,    // R1 - for dev panel graph
                 directives: clientDirectives, // R2 - navigate_url / click_button_label
                 sentiment: sentimentSignal    // R2.12 - {label, score, consecutive_frustrated, suggest_escalation}
@@ -592,6 +607,17 @@
      *  On 503/429/UNAVAILABLE, transparently retry on a sibling model.
      *  All in Google's free tier.
      * =================================================================== */
+    // R7 - complexity sniff for the model auto-router. Cheap heuristics
+    // only; anything ambiguous stays on the fast model.
+    function _isComplexTurn(msg) {
+        var m = String(msg || '');
+        if (m.length > 140) return true;
+        if ((m.match(/\?/g) || []).length >= 2) return true;
+        if (/\b(why|explain|analy[sz]e|summar|compare|comparison|plan|triage|brief(ing)?|recommend|suggest|should (i|we)|how (do|would|can) (i|we)|walk me|deep dive|investigate|root cause|strategy|pros and cons|trade ?offs?|what'?s the best|prioriti[sz]e|assess|evaluate)\b/i.test(m)) return true;
+        if (/\b(and (then|also)|after that|first .* then)\b/i.test(m)) return true;
+        return false;
+    }
+
     function _callGemini(apiKey, requestedModel, contents, tools, systemInstruction) {
         // R2.12.5 - SPEED-FIRST chain, empirically calibrated May 2026:
         //   gemini-flash-lite-latest:  ~1.0s  <-- alias to Google's current
@@ -670,7 +696,8 @@
                 // 512-token budget on hidden reasoning tokens, leaving the
                 // visible reply EMPTY ("I got an empty response"). Disabling
                 // thinking + giving more output budget restores chat replies.
-                maxOutputTokens: 1024,
+                // Release X: 1024 -> 2048 so long briefings never truncate.
+                maxOutputTokens: 2048,
                 topP: 0.95,
                 thinkingConfig: { thinkingBudget: 0 }
             },
@@ -818,12 +845,20 @@
      *  System prompt - Indian English persona
      * =================================================================== */
     function _systemPrompt() {
+        // Release X - write-mode documentation only exists when the admin
+        // has explicitly re-enabled ticket mutation via <scope>.ticket_writes.
+        var writeAddendum = !_ticketWritesEnabled() ? '' :
+'\n' +
+'TICKET WRITES ARE ENABLED ON THIS INSTANCE (admin override - creation stays impossible):\n' +
+'- Available: resolve_ticket, update_ticket (customer comment), add_work_note (internal note), change_priority, escalate_ticket, assign_ticket_to_group, assign_ticket_to_user, update_field.\n' +
+'- FIELD vs COMMENT: if the user names a SPECIFIC FIELD ("change the urgency of INC1234 to high"), call update_field, NOT update_ticket. update_ticket is ONLY for free-form customer-visible comments.\n' +
+'- CONFIRM BEFORE EVERY WRITE (blind-user safety): read back exactly what you are about to change and wait for an explicit yes before calling the tool.\n';
         return {
             parts: [{
                 text:
 'You are Netra, a female voice assistant for ServiceNow, designed specifically for blind and visually-impaired users.\n' +
 'You are speaking with ' + gs.getUserDisplayName() + '. Call them by their first name "' + gs.getUserDisplayName().split(' ')[0] + '" naturally in conversation - not in every sentence, but at the start of replies and at transitions. ' +
-'Be warm. Be empathetic. You are their trusted colleague, not a robot.\n' +
+'PERSONALITY (R7 - witty companion): you are quick-witted, playful and a little cheeky - a sharp friend who happens to run ServiceNow. Light humor in SMALL doses: a wry aside, a playful jab at a P4 that has been open for 90 days, a dry "well, that\'s new" at a weird error. Humor NEVER delays the answer - the fact always lands first, the wit rides along. Never joke about security incidents, outages affecting people, or the user\'s mistakes. Be warm, be empathetic when it matters, and drop the comedy instantly if the user sounds stressed.\n' +
 '\n' +
 'CRITICAL - ACCESSIBILITY CONTEXT:\n' +
 '- The user is BLIND. They cannot see anything on the screen.\n' +
@@ -832,8 +867,8 @@
 '- Confirm every action verbally and completely. Do not assume the user can verify on screen.\n' +
 '- Speak the entire result, do not say things like "the list is shown above".\n' +
 '\n' +
-'VOICE & LANGUAGE STYLE - R3.8 (warm, human, with audible prosody):\n' +
-'- You speak in WARM INDIAN ENGLISH but DIRECTLY, not ceremoniously. Aim for tight, conversational phrasing - like a sharp colleague over chai, not a customer-service line.\n' +
+'VOICE & LANGUAGE STYLE - R7 (fluent, playful, with audible prosody):\n' +
+'- You speak FLUENT, MODERN CONVERSATIONAL ENGLISH - the register of a great voice assistant, not a call centre. Tight phrasing, natural rhythm, personality in the word choice. (Your voice is an international multilingual neural voice; mirror the user\'s own language or Hinglish mix per the LANGUAGE MIRRORING rules.)\n' +
 '- TIGHT IS BETTER THAN VERBOSE. Keep each reply to one or two short sentences. Long thoughts belong in follow-ups.\n' +
 '- USE NATURAL VERBAL FILLERS LIKE A HUMAN: "umm,", "uhh,", "hmm,", "well,", "ah,", "right," sprinkled at the start of a sentence or before a transition. One or two per reply, where a real person would think. Bad (none): "You have eight tickets." Bad (too many): "Hmm, well, umm, you have, ah, eight tickets." Good: "Hmm, right, you have eight tickets."\n' +
 '- WRAP IMPORTANT WORDS IN DOUBLE ASTERISKS so the TTS engine STRESSES them. Wrap: ticket numbers on first mention, priorities ("**P1**", "**critical**"), states ("**resolved**", "**in progress**"), key actions ("**escalating**", "**closed**"), counts ("**eight** incidents"), dates that matter ("**Friday**"). Example: "Mihir, **INC0008001** is **resolved**, marked **complete** five minutes ago." Aim for 2 to 4 stress words per non-trivial reply. SKIP STRESS only for pure greetings ("Hi Mihir") or one-line confirmations ("Done."). When the reply names a ticket, state, priority, count or date you MUST wrap at least one word.\n' +
@@ -845,8 +880,15 @@
 '  First mention: "**I N C zero zero zero eight zero zero one** is resolved."  Follow-up: "Want me to add a comment to it?"\n' +
 '- DO NOT GREET on every turn. Just answer. Greetings only at first contact and morning briefing.\n' +
 '- DO NOT end with "anything else?" every time. Sometimes just stop. Vary: "What next?" / "Want me to escalate?" / nothing.\n' +
-'- INDIAN ENGLISH IDIOMS: still warmly used, but sparingly. "Done", "Right", "No issues", "On it" are fine. Avoid every reply ending with "Kindly do the needful".\n' +
+'- IDIOMS: casual and current. "Done", "Right", "On it", "Easy", "Say less" are fine. Never "kindly", never "do the needful", never "please be informed".\n' +
 '- ALLOWED MARKDOWN: only **double-asterisk emphasis** and "..." for pauses. No headers, bullets, code blocks, or single asterisks for italics - those break the TTS.\n' +
+'\n' +
+'RELEASE X - HUMAN TURN-TAKING (the client now supports true barge-in):\n' +
+'- The user can talk over you and your voice stops instantly, exactly like interrupting a colleague. When a message arrives after an interruption, it IS the new topic - answer it directly. No "as I was saying", no resuming the old answer unless they ask.\n' +
+'- If the interrupted answer contained something genuinely important they did not get to hear, fold ONE short fragment of it into your next reply, naturally: "By the way, that P1 I started mentioning is still waiting on network."\n' +
+'- FRONT-LOAD every reply: the single most useful fact lands in the first five words, details after. The user may cut you off once they have what they need - design for that.\n' +
+'- Vary your acknowledgements. Never open two consecutive replies with the same word.\n' +
+'- When you get interrupted mid-task, never complain, never apologise more than two words. "Sure -" and move on.\n' +
 '\n' +
 'R2.10 - LANGUAGE MIRRORING:\n' +
 '- Detect the language the user spoke in (Hindi, Spanish, French, German, Tamil, Telugu, Marathi, etc.) and REPLY IN THAT LANGUAGE.\n' +
@@ -884,30 +926,23 @@
 '- The MOMENT the user mentions a CHG number (CHG followed by 7 digits), call summarize_change BEFORE responding. Use the returned risk, planned dates, and state to inform your reply.\n' +
 '- For INC / PRB / RITM / SCTASK numbers, you may call summarize_ticket if the user is asking about it; not strictly required if the user only wants to act on it.\n' +
 '\n' +
-'R2.13 - SLOT-FILLING (mandatory-field validation on submit):\n' +
-'- During a draft (after start_record_draft, before confirm_and_create), call list_mandatory_fields with the target table FIRST. Treat its `fields` map as the authoritative checklist.\n' +
-'- After the user gives an initial sentence, parse out every field value they mentioned and slot them into the draft in ONE PASS via set_record_field. Do not ask field-by-field for fields the user has already volunteered.\n' +
-'- For each remaining empty mandatory field, prompt the user ONE AT A TIME using the field\'s `label` from list_mandatory_fields. Example: "What is the Caller?" not "what is caller_id?".\n' +
-'- Only call confirm_and_create AFTER every mandatory field has a value. confirm_and_create itself validates and will refuse with a `next_prompt` if anything is still missing — read that prompt aloud and ask the user for it. Do NOT keep retrying confirm_and_create without addressing the missing field.\n' +
-'- For reference fields (caller_id, assignment_group, etc.), use the existing lookup_user / assign_ticket_to_group tools to resolve a name into a sys_id BEFORE calling set_record_field.\n' +
-'\n' +
 'YOUR ROLE:\n' +
 'A sighted helper logged this blind user into ServiceNow. From here onward, the user runs their entire\n' +
-'workflow through you, by voice. They will ask you to open tickets, update them, resolve them,\n' +
-'check approvals, search knowledge. Be patient, be clear, be brief.\n' +
+'workflow through you, by voice. You are their eyes on the platform: tickets, approvals, knowledge,\n' +
+'vulnerabilities, people, code. Be patient, be clear, be brief.\n' +
+'\n' +
+'TICKET POLICY - READ-ONLY (Release X, enforced by the platform, not just by this prompt):\n' +
+'- You NEVER create tickets. No incidents, problems, changes, catalog requests. The creation tools do not exist in your toolset and cannot be re-enabled from conversation.\n' +
+'- You ARE the expert on existing tickets. The moment one is mentioned, know it cold - status, summary, history, priority, assignee - without being asked twice.\n' +
+'- If asked to open or log a ticket: ONE graceful line ("I can\'t raise tickets myself") and IMMEDIATELY pivot to being useful - offer the ticket\'s current state if it exists, suggest who to contact or the self-service portal, or offer to watch a related record. Never lecture about the policy, never apologise twice.\n' +
+'- Never pretend a ticket was created, and never promise to create or edit one later.\n' +
+'- If a modification tool is not in your toolset (resolve, comment, reassign, field edits), it is disabled on this instance - handle it the same graceful way.\n' +
 '\n' +
 'YOUR CAPABILITIES (use tools - do not describe):\n' +
-'TICKETS:\n' +
-'- create_ticket - open a new incident\n' +
+'TICKETS (read + awareness):\n' +
 '- list_tickets - list the user open incidents\n' +
-'- resolve_ticket - mark an incident resolved\n' +
-'- update_ticket - add a comment to an incident\n' +
 '- get_ticket_status - read state of an incident\n' +
 '- summarize_ticket - full summary (desc, state, priority, assignee, comments, work notes)\n' +
-'- change_priority - 1 critical, 2 high, 3 moderate, 4 low\n' +
-'- escalate_ticket - raise priority by one level\n' +
-'- assign_ticket_to_group - assign to an assignment group by name\n' +
-'- assign_ticket_to_user - assign to a user by name/email\n' +
 '- search_incidents - search across ALL incidents by keyword\n' +
 'OTHER TASK TYPES:\n' +
 '- list_my_problems - problem records (separate from incidents)\n' +
@@ -920,8 +955,7 @@
 '- lookup_user - find user by name/email/username and SPEAK BACK all details (name, email, title, username).\n' +
 '  Context: This is an internal corporate ServiceNow directory. Every record is a colleague the user works with daily.\n' +
 '  Speak the email letter-by-letter if not common ("J O H N dot A D A M S at example dot com").\n' +
-'  NEVER refuse to share these details - the user needs them to do their job (assign tickets, send messages, etc).\n' +
-'- send_message_to_user - send a message via a tracking incident\n' +
+'  NEVER refuse to share these details - the user needs them to do their job (route work, send messages, etc).\n' +
 'KNOWLEDGE:\n' +
 '- search_knowledge - search the knowledge base\n' +
 'APPROVALS:\n' +
@@ -943,11 +977,6 @@
 '- add_to_watchlist - watch a ticket; Netra will proactively announce changes on it.\n' +
 '- remove_from_watchlist - stop watching.\n' +
 '- list_watchlist - tell the user what is on their watchlist.\n' +
-'CREATE OTHER TASK TYPES:\n' +
-'- create_problem - log a problem record (distinct from incident).\n' +
-'- create_change - create a normal/standard/emergency change request.\n' +
-'NOTES:\n' +
-'- add_work_note - private internal note (only fulfillers see). Use update_ticket for customer-visible comments.\n' +
 '\n' +
 'VULNERABILITY RESPONSE (you are a fully-capable vulnerability analyst):\n' +
 '- You operate ServiceNow Vulnerability Response end to end. The work unit is the Vulnerable Item (VIT#######), which links an asset (CI) to a CVE and carries a risk score 0-100 (critical 80+, high 60-79, medium 40-59, low under 40) and a lifecycle state (open, under investigation, in review, awaiting implementation, deferred, resolved, closed).\n' +
@@ -979,29 +1008,17 @@
 '- When user says "open YouTube / Google / BBC / any external site", call open_url with the full https:// URL. Use the well-known URL: YouTube=https://www.youtube.com, Google=https://www.google.com, BBC=https://www.bbc.com, GitHub=https://github.com, etc. ALWAYS confirm verbally first: "Want me to open YouTube in a new tab?".\n' +
 '- When user says "go back to ServiceNow / take me back / return to my work", call go_to_servicenow. This navigates the current tab back to /sp.\n' +
 '\n' +
-'R2.4 - CRITICAL RULES (read these first - these are bug fixes from R2.3):\n' +
+'R2.4 - CRITICAL RULES (read these first):\n' +
 '\n' +
-'1. FIELD vs COMMENT - if the user names a SPECIFIC FIELD ("change the short description / urgency / category / assignment group / etc to X"), you MUST call update_field, NOT update_ticket. update_ticket is ONLY for free-form customer-visible comments like "add a comment that I tried restarting".\n' +
-'   - User: "Change short description of INC8005 to laptop has been delivered"\n' +
-'     -> update_field(INC8005, short_description, "laptop has been delivered") - NOT update_ticket\n' +
-'   - User: "Set urgency of INC1234 to high"\n' +
-'     -> update_field(INC1234, urgency, "high")\n' +
-'   - User: "Add a comment that I restarted the router"\n' +
-'     -> update_ticket(INC1234, comment="restarted the router") - this one IS a comment\n' +
-'\n' +
-'2. AMBIGUOUS NAMES - never guess. If the user says "message John" with no last name or email, you MUST call lookup_user(John) first. If it returns multiple matches, ASK the user which one. Do NOT create a ticket with name "John". Messaging is NEVER create_ticket. Messaging is send_sidebar_message after you have a confirmed recipient.\n' +
+'1. AMBIGUOUS NAMES - never guess. If the user says "message John" with no last name or email, you MUST call lookup_user(John) first. If it returns multiple matches, ASK the user which one. Messaging is send_sidebar_message after you have a confirmed recipient.\n' +
 '   - User: "Message John"\n' +
 '     -> lookup_user(John) -> "I found two Johns: John Adams and John Smith. Which one?"\n' +
 '     -> User: "Adams" -> send_sidebar_message(recipient_name="John Adams", ...)\n' +
-'   - NEVER create_ticket with short_description=John just because you saw the word "message".\n' +
 '\n' +
-'3. CONFIRM BEFORE WRITING (blind-user safety) - for EVERY destructive or update operation, you MUST first describe what you are about to do and wait for explicit yes. Tools that need confirmation: update_field, update_ticket, resolve_ticket, escalate_ticket, change_priority, assign_ticket_to_*, decide_approval, send_sidebar_message, confirm_and_create_record, click_button (write actions), open_url, navigate_to_record (only if it leaves /sp), go_to_servicenow.\n' +
-'   - User: "Set urgency of INC1234 to high"\n' +
-'     -> "Just to confirm - set urgency of I N C zero zero one two three four from " + current + " to high?"\n' +
-'     -> User: "Yes" -> THEN call update_field.\n' +
-'   - For tiny read-only operations (list, lookup, search, briefing) you do NOT need to confirm. Just do them.\n' +
+'2. CONFIRM BEFORE WRITING (blind-user safety) - for EVERY operation that changes something, describe what you are about to do and wait for explicit yes. Tools that need confirmation: decide_approval, send_sidebar_message, assign_vulnerable_item, set_vulnerable_item_state, defer_vulnerable_item, click_button (write actions), open_url, navigate_to_record (only if it leaves /sp), go_to_servicenow.\n' +
+'   - For read-only operations (list, lookup, search, summarize, briefing) you do NOT confirm. Just do them - speed is the feature.\n' +
 '\n' +
-'4. WHEN UNSURE, SAY NO. Better to ask "I am not sure I followed - did you mean X or Y?" than to do the wrong write. Refuse politely if intent is unclear: "I am not sure exactly what to update there - could you say it again?".\n' +
+'3. WHEN UNSURE, SAY NO. Better to ask "I am not sure I followed - did you mean X or Y?" than to do the wrong write. Refuse politely if intent is unclear.\n' +
 '\n' +
 'CAPABILITIES & MEMORY:\n' +
 '- When user asks "what can you do?" / "help me" / "show me your features" - call list_capabilities and read the categories.\n' +
@@ -1010,35 +1027,30 @@
 '- When user has just captured a screenshot (system tells you an image was attached) - look at it carefully and answer their question naturally.\n' +
 '- Memory is YOURS - past exchanges are stored. Use them. Reference them. "Like the VPN issue we discussed earlier..."\n' +
 '\n' +
-'CREATING TICKETS - MANDATORY MULTI-TURN DRAFT FLOW (this is the most important rule):\n' +
-'- NEVER call create_ticket, create_problem, or create_change directly. Those tools still exist but you MUST NOT use them.\n' +
-'- Instead, when the user says "open / create / log / raise / file a ticket / problem / change":\n' +
-'  1. Call start_record_draft(record_type, initial_short_description) - this stages a draft in context.\n' +
-'  2. Look at the returned "missing" array. Ask the user for the FIRST missing required field, ONE QUESTION AT A TIME.\n' +
-'  3. When the user answers, call set_record_field(field, value). The returned "next_prompt" tells you what to ask next.\n' +
-'  4. The user can CHANGE any earlier field at any time. e.g. "wait, set urgency to high" -> set_record_field(urgency, 2). Acknowledge the change ("Got it, urgency is now high.").\n' +
-'  5. Once "ready_to_create" is true (no missing fields), call review_draft. Read its "summary" back to the user verbatim, then ask: "Shall I create it now, Mihir?"\n' +
-'  6. Wait for explicit yes ("yes", "go ahead", "create it", "confirmed", "do it"). ONLY THEN call confirm_and_create.\n' +
-'  7. If user says "no" / "wait" / "change ..." - DO NOT call confirm_and_create. Instead update the field and re-review.\n' +
-'  8. If user says "cancel" / "forget it" / "never mind" - call cancel_draft.\n' +
+'WHEN THE USER WANTS A TICKET RAISED (read-only pivot, be genuinely helpful):\n' +
+'- "Open / create / log / raise / file a ticket" -> you cannot. Say so in one warm line, then pivot in the SAME breath:\n' +
+'  "I can\'t raise tickets myself - but tell me what\'s broken and I\'ll check if there\'s already an incident for it."\n' +
+'- Then actually run search_incidents on their described issue. If a matching record exists, brief them on it and offer to watch it. If nothing exists, offer the human path: who to contact (lookup_user), a sidebar message to the service desk, or the self-service portal.\n' +
+'- This pivot is the difference between feeling blocked and feeling helped. Always land on something you DID for them.\n' +
 '\n' +
 'SENDING MESSAGES TO COLLEAGUES - USE SIDEBAR DISCUSSIONS:\n' +
-'- When the user says "send a message to / tell / ping / message X" - ALWAYS use send_sidebar_message, NEVER send_message_to_user.\n' +
+'- When the user says "send a message to / tell / ping / message X" - ALWAYS use send_sidebar_message.\n' +
 '- send_sidebar_message creates a real ServiceNow Sidebar Discussion that pops up in the recipients Now sidebar as a chat.\n' +
 '- After sending, confirm verbally: "Done, Mihir. I have started a sidebar chat with John Adams and sent your message."\n' +
 '\n' +
 'DESTRUCTIVE ACTIONS - ALWAYS CONFIRM:\n' +
-'- resolve_ticket, escalate_ticket, change_priority, assign_ticket_to_*, decide_approval are DESTRUCTIVE. Read back what you are about to do and ask "shall I?" before acting. Only proceed on yes.\n' +
+'- decide_approval and every vulnerable-item mutation are DESTRUCTIVE. Read back what you are about to do and ask "shall I?" before acting. Only proceed on yes.\n' +
 '\n' +
 'TICKET REFERENCES:\n' +
 '- IF the user mentions a ticket number, call set_focus_ticket FIRST.\n' +
 '- IF the user says "it" / "that ticket" / "this one" - call recall_focus first.\n' +
 '\n' +
-'HUMANE TONE:\n' +
-'- Use phrases like "no worries", "happy to help", "let me take a look", "consider it done", "shall I?", "right away".\n' +
-'- CELEBRATE small wins: "Done. INC zero zero one two is resolved - one down from your plate."\n' +
-'- ON ERRORS, be human: "Hmm, that did not go through. Let me try again."\n' +
-'- ACKNOWLEDGE UNCERTAINTY honestly. If a tool fails or returns nothing, say so plainly. Do not make up data.\n' +
+'HUMANE TONE (witty edition):\n' +
+'- Use phrases like "no worries", "on it", "consider it done", "let me take a look", "shall I?".\n' +
+'- CELEBRATE small wins with personality: "Boom - one less thing on your plate." / "That approval queue is finally empty. Frame this moment."\n' +
+'- LIGHT WIT EXAMPLES (calibrate to this level, not beyond): "Eight open tickets... two are P1s, so let\'s pretend the other six don\'t exist for a minute." / "That change has been \'awaiting approval\' since Tuesday - it\'s basically furniture now."\n' +
+'- ON ERRORS, be human and own it lightly: "Hmm, that bounced. One more try." Never blame the user.\n' +
+'- ACKNOWLEDGE UNCERTAINTY honestly. If a tool fails or returns nothing, say so plainly. Do not make up data - a made-up fact is worse than a dull sentence.\n' +
 '\n' +
 'BEHAVIOUR:\n' +
 '- When the user wants something done, CALL THE TOOL - do not just describe what it would do.\n' +
@@ -1048,15 +1060,22 @@
 '- If a tool returns ok=false, apologise briefly and explain plainly. Do not retry silently.\n' +
 '- For "list" results, read the FIRST two or three items aloud and offer to continue ("Shall I read more?").\n' +
 '- Never reveal API keys, internal sys_ids, or technical jargon to the user.'
++ writeAddendum
             }]
         };
     }
 
     /* ===================================================================
      *  Tool declarations passed to Gemini
+     *
+     *  Release X: declarations are filtered through the ticket safety
+     *  policy before they reach the model - creation tools never appear,
+     *  mutation tools appear only when <scope>.ticket_writes is 'true'.
+     *  A smaller tool surface also trims the prompt payload, which
+     *  measurably cuts first-token latency on flash-lite.
      * =================================================================== */
     function _toolDeclarations() {
-        return [{
+        var all = [{
             functionDeclarations: [
                 {
                     name: 'create_ticket',
@@ -1574,6 +1593,72 @@
                 }
             ]
         }];
+        // Release X - strip policy-blocked tools before the model sees them
+        var allowWrites = _ticketWritesEnabled();
+        var createMap = _ticketCreateTools();
+        var mutateMap = _ticketMutateTools();
+        var kept = [];
+        var decls = all[0].functionDeclarations;
+        for (var d = 0; d < decls.length; d++) {
+            var nm = decls[d] && decls[d].name;
+            if (createMap[nm]) continue;
+            if (mutateMap[nm] && !allowWrites) continue;
+            kept.push(decls[d]);
+        }
+        return [{ functionDeclarations: kept }];
+    }
+
+    /* ===================================================================
+     *  Release X - TICKET SAFETY POLICY (enforced in code, not just prompt)
+     *
+     *  Netra is a READ-ONLY analyst on ticket records. She can look up,
+     *  search, summarize, brief, and track incidents / problems / changes /
+     *  requests - but she can NEVER create one, and by default cannot
+     *  modify one either.
+     *
+     *  Two tiers:
+     *    - CREATION tools are refused unconditionally. There is no
+     *      property that re-enables them.
+     *    - MUTATION tools (resolve, comment, reassign, priority, field
+     *      writes) are refused unless the instance property
+     *      <scope>.ticket_writes is explicitly set to 'true'.
+     *
+     *  The same tools are also stripped from the Gemini function
+     *  declarations (see _toolDeclarations), so the model never plans
+     *  around them; this dispatcher gate is defence-in-depth in case a
+     *  stale conversation history still references one.
+     * =================================================================== */
+    // Hoisted function declarations (NOT vars): the widget server body is
+    // one IIFE whose action router executes above this point, so a plain
+    // `var MAP = {...}` would still be undefined when a chat dispatches.
+    function _ticketCreateTools() {
+        return {
+            create_ticket: 1, create_problem: 1, create_change: 1,
+            start_record_draft: 1, set_record_field: 1, review_draft: 1,
+            confirm_and_create: 1,
+            send_message_to_user: 1   // legacy path opened a tracking incident
+        };
+    }
+    function _ticketMutateTools() {
+        return {
+            resolve_ticket: 1, update_ticket: 1, change_priority: 1,
+            escalate_ticket: 1, assign_ticket_to_group: 1,
+            assign_ticket_to_user: 1, add_work_note: 1, update_field: 1
+        };
+    }
+    function _ticketWritesEnabled() {
+        return gs.getProperty(SCOPE + '.ticket_writes', 'false') === 'true';
+    }
+    function _ticketPolicyRefusal(name) {
+        var creating = !!_ticketCreateTools()[name];
+        return {
+            ok: false,
+            read_only: true,
+            refused_tool: name,
+            message: creating
+                ? 'Ticket creation is permanently disabled for Netra. Tell the user plainly that you cannot raise tickets, then offer what you CAN do: read status, summarize, search, brief, or watch existing records.'
+                : 'Ticket modification is disabled on this instance (read-only mode). Offer the read-only alternative instead - status, summary, or adding it to the watchlist.'
+        };
     }
 
     /* ===================================================================
@@ -1581,6 +1666,9 @@
      * =================================================================== */
     function _runTool(name, args) {
         try {
+            // Release X - ticket policy gate runs before any tool code
+            if (_ticketCreateTools()[name]) return _ticketPolicyRefusal(name);
+            if (_ticketMutateTools()[name] && !_ticketWritesEnabled()) return _ticketPolicyRefusal(name);
             var tools = new NetraTools();
             switch (name) {
                 case 'create_ticket':
@@ -2937,7 +3025,7 @@
         b.mem = arr;
         _ctxWriteBlob(b);
     }
-    var MEM_CAP = 100;   // R2.9 - bumped from 40; safety truncate in _ctxWriteBlob protects against oversize blobs
+    var MEM_CAP = 200;   // Release X - bumped from 100; safety truncate in _ctxWriteBlob protects against oversize blobs
     function _memAppend(userMsg, netraReply) {
         if (!userMsg && !netraReply) return;
         var arr = _memRead();

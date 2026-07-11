@@ -7,7 +7,7 @@
  *   - Search:    free-text incident search
  *   - Read:      fetch full record + comments for read-aloud
  *
- * Tables referenced via __NETRA_SCOPE__ placeholder, replaced at install.
+ * Tables referenced via x_196061_netra_v1 placeholder, replaced at install.
  */
 var NetraTools = Class.create();
 NetraTools.prototype = {
@@ -16,9 +16,9 @@ NetraTools.prototype = {
     STATE_LABEL:  { '1': 'new', '2': 'in progress', '3': 'on hold', '6': 'resolved', '7': 'closed', '8': 'cancelled' },
     PRIORITY_LABEL: { '1': 'critical', '2': 'high', '3': 'moderate', '4': 'low', '5': 'planning' },
 
-    PREF_TABLE:         '__NETRA_SCOPE___user_pref',
-    NOTIFICATION_TABLE: '__NETRA_SCOPE___notification',
-    WATCHLIST_TABLE:    '__NETRA_SCOPE___watchlist',
+    PREF_TABLE:         'x_196061_netra_v1_user_pref',
+    NOTIFICATION_TABLE: 'x_196061_netra_v1_notification',
+    WATCHLIST_TABLE:    'x_196061_netra_v1_watchlist',
 
     initialize: function () {
         this.userSysId = gs.getUserID();
@@ -26,22 +26,27 @@ NetraTools.prototype = {
     },
 
     // ============================================================
-    //  Incident CRUD
+    //  Release X - TICKET SAFETY POLICY
+    //  Netra is read-only on ticket records. Creation is refused
+    //  unconditionally; mutation (resolve / comment) is refused
+    //  unless <scope>.ticket_writes is explicitly 'true'. This is
+    //  the second enforcement layer - the widget server strips the
+    //  same tools from the model's toolset, and this guard covers
+    //  the legacy scripted-REST /command path as well.
+    // ============================================================
+    _ticketWritesEnabled: function () {
+        return gs.getProperty('x_196061_netra_v1.ticket_writes', 'false') === 'true';
+    },
+
+    READ_ONLY_MSG: 'I can\'t raise or change tickets myself - I\'m read-only there. But I can pull up everything about existing ones: status, summaries, history, or keep watch on one for you.',
+
+    // ============================================================
+    //  Incident operations (creation permanently disabled)
     // ============================================================
     createTicket: function (description, urgency) {
-        if (!description || description.trim().length < 3) return { ok: false, error: 'Description is too short.' };
-        var gr = new GlideRecord('incident');
-        gr.initialize();
-        gr.short_description = description;
-        gr.description = 'Created via Netra voice assistant.';
-        gr.caller_id = this.userSysId;
-        gr.urgency = urgency || '3';
-        gr.impact = '3';
-        gr.contact_type = 'self-service';
-        var sysId = gr.insert();
-        if (!sysId) return { ok: false, error: 'Could not create the ticket. ' + gr.getLastErrorMessage() };
-        gr.get(sysId);
-        return { ok: true, ticket: { number: String(gr.number), sys_id: sysId, short_description: String(gr.short_description) } };
+        // Release X: ticket creation is permanently disabled for Netra.
+        // No property re-enables this path.
+        return { ok: false, read_only: true, error: 'Ticket creation is disabled.', message: this.READ_ONLY_MSG };
     },
 
     listMyTickets: function (limit) {
@@ -57,6 +62,8 @@ NetraTools.prototype = {
     },
 
     resolveTicket: function (number, closeNotes) {
+        if (!this._ticketWritesEnabled())
+            return { ok: false, read_only: true, error: 'Ticket modification is disabled.', message: this.READ_ONLY_MSG };
         var gr = this._findByNumber(number);
         if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found, or you are not the caller.' };
         gr.state = this.STATE.RESOLVED;
@@ -69,6 +76,8 @@ NetraTools.prototype = {
     },
 
     updateTicket: function (number, comment) {
+        if (!this._ticketWritesEnabled())
+            return { ok: false, read_only: true, error: 'Ticket modification is disabled.', message: this.READ_ONLY_MSG };
         if (!comment || comment.trim().length < 1) return { ok: false, error: 'Comment is empty.' };
         var gr = this._findByNumber(number);
         if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found, or you are not the caller.' };

@@ -630,15 +630,17 @@
     overflow: hidden;
     color: #cccccc;
     background: #1e1e1e;
-    border: 1px solid #3c3c3c;
-    border-radius: 6px;
+    border: 1px solid #3a2a55;           /* R5 - subtle violet frame */
+    border-radius: 8px;
     padding: 0;                          /* tabs + status bar are flush */
     font-size: 12px;
     line-height: 1.45;
     font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
-    box-shadow: 0 24px 60px -10px rgba(0, 0, 0, 0.7);
+    /* R5 - deeper, violet-tinted elevation shadow */
+    box-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(139,61,240,0.12), 0 8px 30px -8px rgba(139,61,240,0.25);
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 .netra-dev > .netra-dev-body {
     flex: 1 1 auto;
@@ -676,20 +678,20 @@
 .netra-dev-tab.active {
     background: #1e1e1e;
     color: #ffffff;
-    border-top: 2px solid #0e639c;
+    border-top: 2px solid #8b3df0;   /* R5 - Netra violet accent (was VS Code blue) */
     padding-top: 6px;
 }
 
-/* Status bar (VS Code bottom) */
+/* Status bar (R5 - Netra violet gradient, was flat VS Code blue #007acc) */
 .netra-dev-statusbar {
-    background: #007acc;
+    background: linear-gradient(90deg, #5a1aa0 0%, #7a2ecc 45%, #8b3df0 100%);
     color: #ffffff;
     padding: 3px 12px;
     font-size: 10.5px;
     display: flex;
     gap: 16px;
     flex: none;
-    border-top: 1px solid #005c99;
+    border-top: 1px solid rgba(198,96,255,0.45);
     align-items: center;
 }
 .netra-dev-statusbar .seg { display: inline-flex; align-items: center; gap: 5px; }
@@ -713,11 +715,52 @@
 .netra-dev-statusbar .seg-val   { font-weight: 600; }
 
 /* R2.12.2 - tighten the dev panel header (IDLE / AWAKE / hide pills) */
+/* R5 - subtle violet-tinted header to carry the Netra brand */
 .netra-dev-head {
     padding: 6px 10px 8px;
     gap: 6px;
-    background: #252526;
+    background: linear-gradient(180deg, #2a2140 0%, #241b33 60%, #252526 100%);
     border-bottom: 1px solid #3c3c3c;
+}
+
+/* R5 - product identity in the developer console header */
+.netra-dev-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: 1;
+    min-width: 0;
+}
+.netra-dev-glyph {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    filter: drop-shadow(0 0 5px rgba(139,61,240,0.55));
+}
+.netra-dev-glyph-live { animation: netra-glyph-spin 6s linear infinite; transform-origin: 16px 16px; }
+@keyframes netra-glyph-spin { to { transform: rotate(360deg); } }
+.netra-dev-word {
+    font-family: 'Google Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    background: linear-gradient(90deg, #d8c8ff 0%, #c660ff 55%, #7fffb0 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: #d8c8ff;
+}
+.netra-dev-badge-vr {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: #ffd7a0;
+    background: rgba(255,184,77,0.14);
+    border: 1px solid rgba(255,184,77,0.4);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
 }
 .netra-dev-pill {
     padding: 2px 8px;
@@ -733,7 +776,7 @@
     font-size: 10px;
     color: #969696;
 }
-.netra-dev-x:hover { background: #094771; color: #ffffff; border-color: #007acc; }
+.netra-dev-x:hover { background: #3a1f66; color: #ffffff; border-color: #8b3df0; }
 .netra-dev section { margin: 8px 0; }
 /* R2.12 — VS Code "Command Palette" / quickpick button style.
    Solid dark with subtle border. Hover lifts background to #094771
@@ -752,21 +795,22 @@
     letter-spacing: 0;
     transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
 }
+/* R5 - hover/active lift to Netra violet (was VS Code blue #094771/#007acc) */
 .netra-dev button:hover:not(:disabled) {
-    background: #094771;
+    background: #3a1f66;
     color: #ffffff;
-    border-color: #007acc;
+    border-color: #8b3df0;
 }
-.netra-dev button:active:not(:disabled) { background: #005a9e; }
+.netra-dev button:active:not(:disabled) { background: #4a2a8a; }
 .netra-dev button:disabled { opacity: 0.4; cursor: not-allowed; }
 .netra-dev button.primary {
-    background: #0e639c;
+    background: #6920b8;
     color: #ffffff;
-    border-color: #0e639c;
+    border-color: #6920b8;
 }
 .netra-dev button.primary:hover:not(:disabled) {
-    background: #1177bb;
-    border-color: #1177bb;
+    background: #8b3df0;
+    border-color: #8b3df0;
 }
 
 /* Pane visibility — driven by c.devTab */
@@ -1322,8 +1366,8 @@
        still gives the glass effect. */
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
-    color: #aecbfa;
-    border: 1px solid rgba(255,255,255,0.08);
+    color: #d8c8ff;                                   /* R5 - Netra violet, was blue */
+    border: 1px solid rgba(139,61,240,0.35);
     border-radius: 999px;
     padding: 6px 14px;
     font-family: 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
@@ -1331,12 +1375,13 @@
     font-weight: 700;
     letter-spacing: 0.14em;
     cursor: pointer;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
-    transition: transform 0.12s ease, box-shadow 0.15s ease;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4), 0 0 14px -4px rgba(139,61,240,0.4);
+    transition: transform 0.12s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 .netra-dev-badge:hover {
     transform: translateY(-1px);
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
+    border-color: rgba(198,96,255,0.6);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5), 0 0 20px -2px rgba(139,61,240,0.55);
 }
 
 /* ============================================================
@@ -1347,4 +1392,352 @@
     .netra-orb  { width: 36px; height: 36px; }   /* R3 - halved */
     .netra-dev  { width: calc(100vw - 24px); }
     .netra-dev-actions { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ============================================================
+ *  R6 "Release X" - HUMAN TURN-TAKING SURFACES
+ * ============================================================ */
+
+/* Involuntary blink. The legacy eye-blink-top animation translated a
+ * lid whose opacity is 0, so it never rendered; this dedicated layer
+ * actually shows. Slow cycle awake, slightly quicker while thinking,
+ * suppressed in dormant/error (the main lid or state already covers). */
+.netra-eye-blink { pointer-events: none; }
+.netra-state-idle .netra-eye-blink,
+.netra-state-awaiting .netra-eye-blink,
+.netra-state-listening .netra-eye-blink {
+    animation: netra-blink 7.3s ease-in-out infinite;
+}
+.netra-state-thinking .netra-eye-blink {
+    animation: netra-blink 4.7s ease-in-out infinite;
+}
+@keyframes netra-blink {
+    0%, 95.4%, 100% { opacity: 0; }
+    96.4%, 98.0%    { opacity: 0.92; }
+}
+
+/* Barge-in yield flash: one quick violet ripple through the halo the
+ * moment Netra stops for the user - "go ahead, I am listening". */
+.netra-barged .netra-eye-halo {
+    animation: netra-yield-flash 0.7s ease-out 1;
+}
+.netra-barged .netra-eye-sphere {
+    animation: netra-yield-dip 0.7s ease-out 1;
+}
+@keyframes netra-yield-flash {
+    0%   { opacity: 1;    r: 58px; }
+    30%  { opacity: 0.35; r: 66px; }
+    100% { opacity: 1;    r: 58px; }
+}
+@keyframes netra-yield-dip {
+    0%   { filter: brightness(1); }
+    25%  { filter: brightness(1.5) saturate(0.7); }
+    100% { filter: brightness(1); }
+}
+
+/* Read-only ticket badge in the dev console header */
+.netra-dev-badge-ro {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #9fe8c0;
+    background: rgba(46, 184, 88, 0.12);
+    border: 1px solid rgba(46, 184, 88, 0.45);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+/* Monitor tab: turn-taking telemetry rows */
+.netra-dev-status b.ro { color: #9fe8c0; }
+.netra-dev-status b.on { color: #c660ff; }
+
+/* ============================================================
+ *  R7 "Live" - LIQUID AURA + VOICE LAB + CHAT TAB
+ * ============================================================ */
+
+/* While she speaks, the sphere goes luminous and the mystic details
+ * step back - the liquid aura is the star, GPT-Live style. */
+.netra-state-speaking .netra-eye-pentagram { opacity: 0 !important; }
+.netra-state-speaking .netra-eye-sphere    { filter: brightness(1.18) saturate(1.12); }
+.netra-voice-blob-inner { mix-blend-mode: screen; }
+
+/* Chat tab - conversation transcript */
+.netra-dev-chat {
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.netra-chat-row {
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 11px;
+    line-height: 1.45;
+}
+.netra-chat-who {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.chat-you   .netra-chat-who  { color: #7fffb0; }
+.chat-netra .netra-chat-who  { color: #c660ff; }
+.chat-you   .netra-chat-text { color: #d9e8dd; }
+.chat-netra .netra-chat-text { color: #e6dcf5; }
+.chat-sys {
+    grid-template-columns: 1fr;
+    text-align: center;
+}
+.chat-sys .netra-chat-who  { display: none; }
+.chat-sys .netra-chat-text { color: #8a7fa8; font-style: italic; font-size: 10px; }
+.chat-sys .netra-chat-time { display: none; }
+.netra-chat-time { color: #5f5877; font-size: 9px; font-family: 'JetBrains Mono', monospace; }
+.netra-chat-empty { color: #6f6790; font-size: 10.5px; font-style: italic; padding: 14px 0; text-align: center; }
+.netra-chat-clear {
+    align-self: flex-end;
+    background: transparent;
+    border: 1px solid #3a2a55;
+    color: #9a8fc0;
+    border-radius: 4px;
+    font-size: 9.5px;
+    padding: 2px 8px;
+    cursor: pointer;
+}
+.netra-chat-clear:hover { border-color: #8b3df0; color: #d8c8ff; }
+
+/* Voice Lab - neural voice picker + pace slider */
+.netra-dev-voicelab {
+    padding: 8px 10px;
+    border-top: 1px solid #2d2440;
+}
+.netra-voicelab-title {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: #b39ddb;
+    margin-bottom: 6px;
+}
+.netra-voicelab-sub { color: #6f6790; font-weight: 400; margin-left: 6px; letter-spacing: 0.02em; }
+.netra-voicelab-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 5px 0;
+    font-size: 10.5px;
+}
+.netra-voicelab-row label { color: #8a7fa8; width: 38px; flex: none; font-size: 10px; }
+.netra-voicelab-row select {
+    flex: 1;
+    background: #191024;
+    color: #e6dcf5;
+    border: 1px solid #3a2a55;
+    border-radius: 4px;
+    font-size: 10.5px;
+    padding: 3px 6px;
+}
+.netra-voicelab-row input[type="range"] { flex: 1; accent-color: #8b3df0; }
+.netra-voicelab-row em { color: #c660ff; font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 10px; width: 34px; }
+.netra-voicelab-row button {
+    background: linear-gradient(90deg, #5a1aa0, #8b3df0);
+    border: none;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 10.5px;
+    padding: 4px 12px;
+    cursor: pointer;
+}
+.netra-voicelab-row button:hover { filter: brightness(1.15); }
+
+/* ============================================================
+ *  R8 - NETRA LIVE STAGE (dedicated /sp?id=netra_live page)
+ *
+ *  Claude-Live-style full-screen voice surface: the stage is a
+ *  fixed overlay that covers the entire viewport (including the
+ *  Service Portal chrome), a warm near-black canvas, one big
+ *  organic blob breathing dead-centre, a quiet status line, a
+ *  caption of the last thing heard, and two round controls.
+ * ============================================================ */
+
+/* On the dedicated page, hide the Service Portal shell entirely so
+ * nothing but the stage shows. body gets .netra-live-body from JS. */
+.netra-live-body #sp-page,
+.netra-live-body .navbar,
+.netra-live-body header.sp-navbar,
+.netra-live-body .sp-navbar,
+.netra-live-body sp-service-portal > header,
+.netra-live-body #google_translate_element { display: none !important; }
+.netra-live-body { background: #0d0714 !important; overflow: hidden !important; }
+
+.netra-stage {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* warm, deep, slightly violet canvas - the Claude-Live "room" */
+    background:
+        radial-gradient(120% 90% at 50% 34%, #241436 0%, #160b26 46%, #0b0616 100%);
+    color: #efe7ff;
+    font-family: 'Google Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+}
+
+/* soft drifting light so the room feels alive, not flat */
+.netra-stage::before {
+    content: '';
+    position: absolute;
+    width: 90vmin; height: 90vmin;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -54%);
+    background: radial-gradient(circle, rgba(139,61,240,0.20) 0%, rgba(127,255,176,0.06) 42%, rgba(0,0,0,0) 70%);
+    filter: blur(10px);
+    animation: netra-stage-breathe 7s ease-in-out infinite;
+    pointer-events: none;
+}
+@keyframes netra-stage-breathe {
+    0%, 100% { transform: translate(-50%, -54%) scale(1);    opacity: 0.75; }
+    50%      { transform: translate(-50%, -54%) scale(1.12); opacity: 1;    }
+}
+
+.netra-stage-head {
+    position: absolute;
+    top: 22px; left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    z-index: 2;
+}
+.netra-stage-brand {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    background: linear-gradient(90deg, #d8c8ff, #7fffb0);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.netra-stage-pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.18em;
+    color: #ffd7a0;
+    border: 1px solid rgba(255,184,77,0.4);
+    background: rgba(255,184,77,0.10);
+    border-radius: 999px; padding: 2px 9px;
+}
+
+.netra-stage-center {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 30px;
+    z-index: 1;
+    width: 100%;
+    padding: 0 24px;
+}
+
+.netra-stage-blob-wrap {
+    appearance: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+    width: min(58vmin, 420px);
+    height: min(58vmin, 420px);
+    padding: 0;
+    display: block;
+    filter: drop-shadow(0 18px 60px rgba(139,61,240,0.45));
+    transition: transform 0.3s ease;
+}
+.netra-stage-blob-wrap:active { transform: scale(0.97); }
+.netra-stage-svg { width: 100%; height: 100%; overflow: visible; }
+
+/* the big blob - warm plasma clay, Claude-Live feel, Netra palette.
+ * A state-tinted radial gradient is defined per stage state below; the
+ * blob morphs colour as Netra listens (green), thinks (amber) and
+ * speaks (violet), the way Claude Live shifts warm tones. */
+.netra-stage-blob-outer {
+    fill: url(#netra-stage-grad);
+    filter: drop-shadow(0 0 22px rgba(127,255,176,0.35));
+    transition: filter 0.5s ease;
+}
+.netra-stage-blob-inner {
+    fill: url(#netra-blob-inner-gradient);
+    mix-blend-mode: screen;
+    opacity: 0.9;
+}
+/* per-state stops on the shared #netra-stage-grad gradient */
+.netra-stage .nsg-0 { stop-color: #eafff2; }
+.netra-stage .nsg-1 { stop-color: #7fffb0; }
+.netra-stage .nsg-2 { stop-color: #2eb858; }
+.netra-stage .nsg-3 { stop-color: #063d1f; }
+.netra-stage-thinking .nsg-1 { stop-color: #ffd98a; }
+.netra-stage-thinking .nsg-2 { stop-color: #e08a2c; }
+.netra-stage-thinking .nsg-3 { stop-color: #5a3208; }
+.netra-stage-speaking .nsg-1 { stop-color: #d8a8ff; }
+.netra-stage-speaking .nsg-2 { stop-color: #8b3df0; }
+.netra-stage-speaking .nsg-3 { stop-color: #2a0d55; }
+.netra-stage-thinking .netra-stage-blob-outer { filter: drop-shadow(0 0 26px rgba(255,184,77,0.45)); }
+.netra-stage-speaking .netra-stage-blob-outer { filter: drop-shadow(0 0 34px rgba(198,96,255,0.6)); }
+.netra-stage-dormant  .netra-stage-blob-wrap  { filter: grayscale(0.5) brightness(0.7); opacity: 0.6; }
+.nsg-0, .nsg-1, .nsg-2, .nsg-3 { transition: stop-color 0.55s ease; }
+
+.netra-stage-status {
+    font-size: 17px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: #cdbff0;
+    text-align: center;
+    min-height: 24px;
+    animation: netra-status-fade 0.4s ease;
+}
+@keyframes netra-status-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.netra-stage-caption {
+    font-size: 15px;
+    color: #8f83b5;
+    text-align: center;
+    max-width: 640px;
+    line-height: 1.5;
+    min-height: 22px;
+    font-style: italic;
+}
+
+.netra-stage-controls {
+    display: flex;
+    gap: 22px;
+    align-items: center;
+    justify-content: center;
+    padding-bottom: 46px;
+    z-index: 2;
+}
+.netra-ctl {
+    width: 62px; height: 62px;
+    border-radius: 50%;
+    border: 1px solid rgba(216,200,255,0.25);
+    background: rgba(255,255,255,0.06);
+    color: #efe7ff;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: transform 0.14s ease, background 0.18s ease, border-color 0.18s ease;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.netra-ctl:hover { transform: translateY(-2px); background: rgba(255,255,255,0.12); border-color: rgba(216,200,255,0.5); }
+.netra-ctl-muted { background: rgba(255,90,90,0.16); border-color: rgba(255,120,120,0.5); color: #ffb3b3; }
+.netra-ctl-end { background: rgba(255,90,90,0.10); border-color: rgba(255,120,120,0.35); }
+.netra-ctl-end:hover { background: rgba(255,90,90,0.22); }
+
+@media (max-width: 480px) {
+    .netra-stage-blob-wrap { width: 72vmin; height: 72vmin; }
+    .netra-stage-status { font-size: 15px; }
+    .netra-stage-controls { padding-bottom: 34px; }
 }
