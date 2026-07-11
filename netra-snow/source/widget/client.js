@@ -371,6 +371,7 @@ api.controller = function ($scope, $timeout, $window) {
     c.labLastInterimAgo = function () { return c.micHealth.lastInterimAt ? Math.round((Date.now() - c.micHealth.lastInterimAt) / 1000) + 's' : 'never'; };
     c.labHue = function () { return Math.round(_prismHue); };
     c.labAmp = function () { return Math.round(_prismAmp * 100); };
+    c.lab3dFps = function () { return window.__netra3dFps || 0; };   // R12 - live render fps
 
     // ---- live mic spectrum scope (canvas, painted from the mic rAF loop) ----
     var _labScopeEl = null, _labScopeCtx = null;
@@ -628,7 +629,10 @@ api.controller = function ($scope, $timeout, $window) {
     // R10.1 - Gemini palette: azure #4285F4 (~217deg) -> lavender #9B72CB
     // (~262deg) -> rose #D96570 (~355deg); speaking sweeps the gradient.
     var PRISM_STATE_HUE = {
-        boot: 230, idle: 217, awaiting: 202, listening: 202,
+        // R12 - listening went GREEN (the heart inside the 3D blob diffuses
+        // green gradients from the centre while she hears you); the rest
+        // stays on the gemini palette
+        boot: 230, idle: 217, awaiting: 148, listening: 152,
         thinking: 262, speaking: 258, dormant: 250, error: 8, paused: 220
     };
     var PRISM_STATE_SAT = { dormant: 55, paused: 14, boot: 70 };
@@ -1181,6 +1185,79 @@ api.controller = function ($scope, $timeout, $window) {
     var pollTimer   = null;
     var seenIds     = {};
     var geminiHistory = [];
+    /* ============================================================
+     *  R11 - DEEP MEMORY (client side)
+     *  The conversation used to live only in this closure var, so a
+     *  simple page refresh wiped everything Netra knew - and since
+     *  calibration reloads run all the time that felt like she had
+     *  the memory of a goldfish. Now the history survives the tab:
+     *  saved to sessionStorage after every turn (screenshots
+     *  stripped, size-capped) and restored on boot. c.mem feeds the
+     *  MEMORY card in Netra Lab.
+     * ============================================================ */
+    var MEM_STORE_KEY = 'netra_history_v1';
+    c.mem = { prompts: 0, entries: 0, kb: 0, restored: 0 };
+    function _memCountPrompts(arr) {
+        var n = 0;
+        for (var i = 0; i < (arr || []).length; i++) {
+            var e = arr[i];
+            if (!e || e.role !== 'user' || !e.parts) continue;
+            for (var p = 0; p < e.parts.length; p++) {
+                if (e.parts[p] && e.parts[p].text && !e.parts[p].functionResponse) { n++; break; }
+            }
+        }
+        return n;
+    }
+    function _memRefreshStats() {
+        c.mem.entries = geminiHistory.length;
+        c.mem.prompts = _memCountPrompts(geminiHistory);
+        try { c.mem.kb = Math.round(JSON.stringify(geminiHistory).length / 1024); } catch (eK) { c.mem.kb = 0; }
+    }
+    function _memPersist() {
+        try {
+            // strip binary frames before saving - a single screenshot would
+            // blow the storage quota for zero benefit
+            var lean = geminiHistory.map(function (e) {
+                if (!e || !e.parts) return e;
+                var parts = e.parts.filter(function (p) { return p && !p.inlineData; });
+                return { role: e.role, parts: parts };
+            }).filter(function (e) { return e && e.parts && e.parts.length; });
+            var raw = JSON.stringify(lean);
+            if (raw.length > 400000) {   // keep the tab snappy: persist newest ~400KB
+                lean = lean.slice(Math.floor(lean.length / 2));
+                raw = JSON.stringify(lean);
+            }
+            sessionStorage.setItem(MEM_STORE_KEY, raw);
+        } catch (eP) {
+            try { sessionStorage.removeItem(MEM_STORE_KEY); } catch (eP2) {}
+            logEvent('warn', 'memory: could not persist history (' + (eP.message || 'quota') + ')');
+        }
+        _memRefreshStats();
+    }
+    function _memRestore() {
+        try {
+            var raw = sessionStorage.getItem(MEM_STORE_KEY);
+            if (!raw) return;
+            var arr = JSON.parse(raw);
+            if (Array.isArray(arr) && arr.length) {
+                geminiHistory = arr;
+                c.mem.restored = _memCountPrompts(arr);
+                logEvent('mem', 'memory restored: ' + arr.length + ' turns (' + c.mem.restored + ' of your prompts) survive the refresh');
+            }
+        } catch (eR) {
+            logEvent('warn', 'memory: stored history unreadable, starting fresh');
+            try { sessionStorage.removeItem(MEM_STORE_KEY); } catch (eR2) {}
+        }
+        _memRefreshStats();
+    }
+    function _memForget(why) {
+        geminiHistory = [];
+        try { sessionStorage.removeItem(MEM_STORE_KEY); } catch (eF) {}
+        _memRefreshStats();
+        logEvent('mem', 'memory cleared (' + why + ')');
+    }
+    c.memForget = function () { _memForget('Netra Lab button'); };
+    _memRestore();   // pull the conversation back in before anything speaks
     var booted      = false;
     var lastReply   = '';
     var forcedVoiceName = '';
@@ -1505,7 +1582,7 @@ api.controller = function ($scope, $timeout, $window) {
                  String(d.getMinutes()).padStart(2,'0') + ':' +
                  String(d.getSeconds()).padStart(2,'0');
         c.events.unshift({ t: ts, l: level, m: String(msg) });
-        if (c.events.length > 120) c.events.length = 120;
+        if (c.events.length > 250) c.events.length = 250;   // R11 - deeper feed for the Lab
         if ($window.console && $window.console.log) {
             $window.console.log('[Netra ' + level + '] ' + msg);
         }
@@ -3074,6 +3151,7 @@ api.controller = function ($scope, $timeout, $window) {
             if (local._action === 'rewind_mem') {
                 if (geminiHistory.length >= 2) {
                     geminiHistory.splice(geminiHistory.length - 2, 2);
+                    _memPersist();
                     logEvent('local', 'popped 2 history turns');
                 }
                 try {
@@ -3129,6 +3207,7 @@ api.controller = function ($scope, $timeout, $window) {
         setState('thinking');
         cue('think');
         logEvent('srv', 'sending: "' + transcript + '"');
+        logEvent('mem', 'carrying ' + c.mem.prompts + ' of your prompts (' + geminiHistory.length + ' turns, ~' + c.mem.kb + 'KB) to the brain');
         _convoPush('you', transcript);   // R7 - chat tab
 
         c.data.action  = 'chat';
@@ -3207,10 +3286,16 @@ api.controller = function ($scope, $timeout, $window) {
                             return { name: name, order: i + 1 };
                         });
                     }
-                    // R2.7 - server told us payload was too large, reset
-                    if (r.force_history_reset) {
+                    // R11 - payload got too heavy: the server now asks for a
+                    // HALF-trim (newest half survives) instead of a full
+                    // wipe. force_history_reset kept for belt-and-braces.
+                    if (r.trim_history_half) {
+                        geminiHistory = geminiHistory.slice(Math.floor(geminiHistory.length / 2));
+                        _memPersist();
+                        logEvent('mem', 'memory squeezed: kept the newest ' + geminiHistory.length + ' turns (server said payload too large)');
+                    } else if (r.force_history_reset) {
                         logEvent('warn', 'server requested history reset (payload too large)');
-                        geminiHistory = [];
+                        _memForget('server reset');
                     }
                     // R2 - act on client directives from tools
                     // R6 - never act on directives from a barged (stale) turn
@@ -3274,7 +3359,15 @@ api.controller = function ($scope, $timeout, $window) {
                     });
                     return;
                 }
-                if (Array.isArray(r.history)) geminiHistory = r.history;
+                if (Array.isArray(r.history)) {
+                    geminiHistory = r.history;
+                    _memPersist();   // R11 - survive refreshes
+                    if (r.memory) {
+                        logEvent('mem', 'memory: ' + (r.memory.prompts || 0) + '/50 prompts in the live window, ' +
+                            c.mem.entries + ' turns, ~' + c.mem.kb + 'KB' +
+                            (r.memory.digested ? ', ' + r.memory.digested + ' older prompts folded into the digest' : ''));
+                    }
+                }
                 if (stale) {
                     logEvent('barge', 'reply arrived after barge-in - kept in history, not spoken');
                     lastReply = r.message || lastReply;
@@ -5169,7 +5262,7 @@ api.controller = function ($scope, $timeout, $window) {
                 // R2.7 - Alt+Shift+R = NUCLEAR reset (history, mic, rec, AudioContext)
                 e.preventDefault();
                 logEvent('warn', 'Alt+Shift+R: nuclear reset of everything');
-                geminiHistory = [];
+                _memForget('nuclear reset');
                 recRestartCount = 0;
                 ignoreFinalsUntil = Date.now();
                 try { if (contRec) contRec.stop(); } catch (er) {}
@@ -5347,7 +5440,7 @@ api.controller = function ($scope, $timeout, $window) {
     // R2.7 - exposes Alt+Shift+R as a button click for sighted helpers
     c.devNuclearReset = function () {
         logEvent('warn', 'Reset all clicked - nuclear reset');
-        geminiHistory = [];
+        _memForget('nuclear reset');
         recRestartCount = 0;
         ignoreFinalsUntil = Date.now();
         try { if (contRec) contRec.stop(); } catch (e) {}

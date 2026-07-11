@@ -122,7 +122,45 @@
   .netra-3d-on .netra-stage-mesh { mix-blend-mode: screen; opacity: 0.34; }
   .netra-3d-on.netra-stage-speaking .netra-stage-mesh { opacity: 0.62; }
   .netra-3d-on.netra-stage-thinking .netra-stage-mesh { opacity: 0.48; }
+  /* R12 - the figma hues also bloom while she LISTENS, not just talks */
+  .netra-3d-on.netra-stage-listening .netra-stage-mesh { opacity: 0.56; }
+  .netra-3d-on.netra-stage-awaiting .netra-stage-mesh { opacity: 0.45; }
   .netra-3d-on .netra-mesh-5 { display: none; }
+  /* R13 - the room reads DARKER now: the CSS hue layers were out-shining
+     the darkened WebGL sky, so the blobs shrink toward the edges and the
+     aurora calms down. Hues stay on, the middle goes moody. */
+  .netra-3d-on .netra-mesh-blob { width: 42vmax; height: 42vmax; }
+  .netra-3d-on .netra-stage-aurora { opacity: 0.12; animation: none; }
+  /* R13 - stage text must survive ANY backdrop: solid dark chip under
+     white text, everywhere on the live stage */
+  .netra-stage .netra-stage-status {
+    color: #ffffff;
+    background: rgba(12, 8, 24, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  }
+  .netra-stage .netra-stage-caption {
+    color: #ffffff;
+    background: rgba(12, 8, 24, 0.55);
+    border-radius: 12px;
+    padding: 8px 16px;
+    max-width: 760px;
+    margin-left: auto;
+    margin-right: auto;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 12px rgba(0, 0, 0, 0.4);
+    /* R13 - long answers scroll inside the card instead of flooding the stage */
+    max-height: 26vh;
+    overflow-y: auto;
+    pointer-events: auto;
+    scrollbar-width: thin;
+  }
+  .netra-stage .netra-stage-header { text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); }
+  .netra-stage .netra-stage-pill {
+    color: #ffffff;
+    background: rgba(12, 8, 24, 0.5);
+    border-color: rgba(255, 255, 255, 0.22);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  }
 
   /* R9 - interactive calibration card */
   .netra-calib-card {
@@ -706,6 +744,41 @@
           <span class="netra-lab-chip">hue {{c.labHue()}}°</span>
           <span class="netra-lab-chip">amp {{c.labAmp()}}%</span>
           <span class="netra-lab-chip">60fps · voice-modulated</span>
+          <span class="netra-lab-chip">3D {{c.lab3dFps()}} fps</span>
+        </div>
+      </section>
+
+      <!-- R11 - DEEP MEMORY: what she remembers right now, live -->
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">DEEP MEMORY
+          <span class="netra-lab-chip" ng-if="c.mem.restored">restored {{c.mem.restored}} prompts after refresh</span>
+        </div>
+        <div class="netra-lab-grid">
+          <div><span>your prompts</span><b>{{c.mem.prompts}}</b></div>
+          <div><span>live window</span><b>last 50 + digest</b></div>
+          <div><span>total turns</span><b>{{c.mem.entries}}</b></div>
+          <div><span>size</span><b>~{{c.mem.kb}} KB</b></div>
+          <div><span>survives refresh</span><b>yes (this tab)</b></div>
+        </div>
+        <div class="netra-lab-row netra-lab-btns">
+          <button ng-click="c.memForget()">Forget everything</button>
+        </div>
+      </section>
+
+      <!-- R11 - BACKGROUND FEED: the live event log, same stream the old
+           dev console had - so you can watch what she does behind the
+           scenes right from the Live page -->
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">BACKGROUND FEED
+          <span class="netra-lab-chip">{{c.events.length}} events</span>
+        </div>
+        <div class="netra-lab-feed" role="log" aria-label="Background activity feed">
+          <div class="netra-lab-feed-row" ng-repeat="e in c.events track by $index">
+            <span class="netra-lab-feed-t">{{e.t}}</span>
+            <span class="netra-lab-feed-k" ng-class="'lk-' + e.l">{{e.l}}</span>
+            <span class="netra-lab-feed-m">{{e.m}}</span>
+          </div>
+          <div class="netra-lab-feed-row" ng-if="!c.events.length"><span class="netra-lab-feed-m">nothing yet - say something</span></div>
         </div>
       </section>
     </aside>

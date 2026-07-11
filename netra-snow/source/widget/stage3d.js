@@ -22,13 +22,15 @@ window.NetraStage3D = (function () {
     'use strict';
 
     var renderer, scene, camera, composer, bloomPass;
-    var blob, blobMat, core, coreLight, sunrise, groundGlow;
+    var blob, blobMat, coreLight, sunrise, groundGlow;
+    var coreAura, coreHeart, coreTex = {}, coreKey = '', corePulse = 0;
     var rafId = null, clockT = 0, lastTs = 0, host = null;
     var mouse = { x: 0, y: 0 };
     var reduceMotion = false;
     var uniforms = null;
     var speechMix = 0.25;
     var slowFrames = 0, degraded = false;
+    var fpsEma = 60;   // R12 - rolling fps, surfaced in Netra Lab
 
     // ashima 3D simplex noise, the usual GLSL snippet
     var SNOISE = [
@@ -109,7 +111,10 @@ window.NetraStage3D = (function () {
 
     function makeBlob() {
         var BASE_SCALE = 0.75;   // R10.1 - 25% smaller per user
-        var geo = new THREE.IcosahedronGeometry(1.05, 32);
+        // R12 perf - detail 24 instead of 32: ~45% fewer verts for the
+        // displacement shader to push, zero visible smoothness lost at
+        // this on-screen size
+        var geo = new THREE.IcosahedronGeometry(1.05, 24);
         // R10.1b - the glass reads GEMINI now, not white: a faint blue base
         // tint, much shorter attenuation (long light paths through the rim
         // soak up the hue instead of showing the dark sky refracted = no
@@ -160,22 +165,74 @@ window.NetraStage3D = (function () {
         blob.scale.setScalar(BASE_SCALE);
         scene.add(blob);
 
-        // glowing heart inside the glass
-        core = new THREE.Mesh(
-            new THREE.SphereGeometry(0.55, 48, 48),
-            new THREE.MeshBasicMaterial({
-                color: 0x9a5cff, transparent: true, opacity: 0.95,
-                blending: THREE.AdditiveBlending, depthWrite: false,
-                toneMapped: false
-            })
-        );
-        core.position.copy(blob.position);
-        core.scale.setScalar(0.75);
-        scene.add(core);
+        // R12 - the heart is no longer one flat glow: it is a pair of
+        // camera-facing sprites painted with MULTI-HUE radial gradients, so
+        // colour literally starts in the middle and diffuses out through
+        // the glass. One palette per mood - gemini while she talks/idles,
+        // GREEN while she listens, violet while she thinks.
+        function bakeRadial(stops) {
+            var cv = document.createElement('canvas');
+            cv.width = 256; cv.height = 256;
+            var g = cv.getContext('2d');
+            var rg = g.createRadialGradient(128, 128, 6, 128, 128, 126);
+            for (var i = 0; i < stops.length; i++) rg.addColorStop(stops[i][0], stops[i][1]);
+            g.fillStyle = rg;
+            g.fillRect(0, 0, 256, 256);
+            return new THREE.CanvasTexture(cv);
+        }
+        // R12.1 - MORE colour from the middle: tighter, more saturated
+        // rings so distinct hues actually read through the glass instead
+        // of blurring into one pastel
+        coreTex.gemini = bakeRadial([
+            [0.00, 'rgba(255,244,214,1.0)'],
+            [0.16, 'rgba(255,196,120,0.95)'],
+            [0.34, 'rgba(66,133,244,0.95)'],
+            [0.52, 'rgba(155,114,203,0.80)'],
+            [0.72, 'rgba(233,86,138,0.45)'],
+            [1.00, 'rgba(233,86,138,0)']
+        ]);
+        coreTex.green = bakeRadial([
+            [0.00, 'rgba(238,255,242,1.0)'],
+            [0.18, 'rgba(140,255,190,0.95)'],
+            [0.38, 'rgba(36,214,130,0.90)'],
+            [0.60, 'rgba(16,180,150,0.60)'],
+            [0.82, 'rgba(30,140,190,0.30)'],
+            [1.00, 'rgba(30,140,190,0)']
+        ]);
+        coreTex.violet = bakeRadial([
+            [0.00, 'rgba(248,242,255,1.0)'],
+            [0.18, 'rgba(196,160,255,0.95)'],
+            [0.40, 'rgba(150,100,245,0.85)'],
+            [0.64, 'rgba(96,70,220,0.50)'],
+            [0.85, 'rgba(66,133,244,0.25)'],
+            [1.00, 'rgba(66,133,244,0)']
+        ]);
+        function makeGlowSprite(scale, opacity) {
+            var m = new THREE.SpriteMaterial({
+                map: coreTex.gemini, transparent: true, opacity: opacity,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            var s = new THREE.Sprite(m);
+            s.position.copy(blob.position);
+            s.scale.setScalar(scale);
+            scene.add(s);
+            return s;
+        }
+        coreHeart = makeGlowSprite(1.2, 0.95);    // bright multi-hue center
+        coreHeart.material.toneMapped = false;    // let the colours punch through the glass
+        coreAura  = makeGlowSprite(2.3, 0.38);    // wide diffusion halo
+        coreKey = 'gemini';
 
         coreLight = new THREE.PointLight(0x9a5cff, 1.4, 10, 2);
         coreLight.position.copy(blob.position);
         scene.add(coreLight);
+    }
+
+    // R12 - which gradient palette belongs to which mood
+    function coreKeyFor(st) {
+        if (st === 'listening' || st === 'awaiting') return 'green';
+        if (st === 'thinking') return 'violet';
+        return 'gemini';
     }
 
     // R10.1 - SUNRISE. A golden-hour glow rising behind the blob: one big
@@ -186,18 +243,20 @@ window.NetraStage3D = (function () {
         var cv = document.createElement('canvas');
         cv.width = 1024; cv.height = 640;
         var g = cv.getContext('2d');
-        // R10.1b - the whole sky pulled ~35% darker (the first pass washed
-        // the entire page out); the sun keeps its shine but sits in a
-        // properly moody violet dawn now.
+        // R10.1b pulled the sky ~35% darker; R12 dials it ANOTHER 15% down
+        // per Mihir - the room goes properly moody and the blob (which
+        // keeps its own light) pops out of it even harder.
         var sky = g.createLinearGradient(0, 0, 0, 640);
-        sky.addColorStop(0.0, '#110c24');
-        sky.addColorStop(0.5, '#1b1435');
-        sky.addColorStop(0.75, '#372246');
-        sky.addColorStop(0.9, '#5d3749');
-        sky.addColorStop(1.0, '#835538');
+        sky.addColorStop(0.0, '#0e0a1f');
+        sky.addColorStop(0.5, '#17112d');
+        sky.addColorStop(0.75, '#2f1d3c');
+        sky.addColorStop(0.9, '#3a2542');
+        sky.addColorStop(1.0, '#463030');
         g.fillStyle = sky;
         g.fillRect(0, 0, 1024, 640);
-        var sun = g.createRadialGradient(512, 520, 10, 512, 520, 470);
+        // R13 - the sun moved to the TOP RIGHT per Mihir (was sitting low
+        // behind her like a horizon sunrise)
+        var sun = g.createRadialGradient(816, 104, 10, 816, 104, 500);
         sun.addColorStop(0.0, 'rgba(255, 240, 205, 0.7)');
         sun.addColorStop(0.16, 'rgba(255, 205, 140, 0.42)');
         sun.addColorStop(0.4, 'rgba(240, 140, 105, 0.24)');
@@ -218,8 +277,8 @@ window.NetraStage3D = (function () {
         cv2.width = 512; cv2.height = 512;
         var g2 = cv2.getContext('2d');
         var rg = g2.createRadialGradient(256, 256, 10, 256, 256, 250);
-        rg.addColorStop(0, 'rgba(255, 214, 160, 0.2)');
-        rg.addColorStop(0.5, 'rgba(217, 120, 130, 0.08)');
+        rg.addColorStop(0, 'rgba(255, 214, 160, 0.17)');
+        rg.addColorStop(0.5, 'rgba(217, 120, 130, 0.07)');
         rg.addColorStop(1, 'rgba(0, 0, 0, 0)');
         g2.fillStyle = rg;
         g2.fillRect(0, 0, 512, 512);
@@ -233,9 +292,10 @@ window.NetraStage3D = (function () {
         groundGlow.position.y = -1.2;
         scene.add(groundGlow);
 
-        // warm backlight so the glass rim catches the sun
+        // warm key so the glass rim catches the sun - from the top right,
+        // matching where the sun sits in the sky now
         var sunLight = new THREE.DirectionalLight(0xffc98a, 0.42);
-        sunLight.position.set(0, -0.5, -6);
+        sunLight.position.set(4.5, 4.5, -2.5);
         sunLight.target = blob;
         scene.add(sunLight);
     }
@@ -265,16 +325,32 @@ window.NetraStage3D = (function () {
         uniforms.uTre.value  += (bandAvg(16, 23) - uniforms.uTre.value) * 0.25;
         uniforms.uSpeech.value = speechMix;
 
-        // hue-linked glass + heart (emissive rides the hue too so the body
-        // of the glass actually LOOKS gemini-blue instead of washed white)
+        // hue-linked glass (emissive rides the hue too so the body of the
+        // glass actually LOOKS coloured instead of washed white)
         blobMat.attenuationColor.setHSL(hue, 0.8, 0.5);
         blobMat.emissive.setHSL(hue, 0.85, 0.4);
         blobMat.emissiveIntensity = 0.24 + amp * 0.35;
-        core.material.color.setHSL(hue, 0.9, 0.65);
-        core.material.opacity = 0.55 + amp * 0.45;
-        var cs = 0.75 * (1 + amp * 0.5 + Math.sin(clockT * 2.2) * 0.03);
-        core.scale.setScalar(cs);
-        coreLight.color.copy(core.material.color);
+
+        // R12 - swap the heart's gradient palette with the mood (green when
+        // she listens, violet thinking, gemini otherwise) with a short
+        // brightness dip so the change lands soft, not like a light switch
+        var wantKey = coreKeyFor(st);
+        if (wantKey !== coreKey) {
+            coreKey = wantKey;
+            coreHeart.material.map = coreTex[coreKey];
+            coreAura.material.map  = coreTex[coreKey];
+            coreHeart.material.needsUpdate = true;
+            coreAura.material.needsUpdate = true;
+            corePulse = 1;
+        }
+        if (corePulse > 0) corePulse = Math.max(0, corePulse - dt * 3.2);
+        var dip = 1 - corePulse * 0.55;
+        var breath = Math.sin(clockT * 2.2) * 0.04;
+        coreHeart.material.opacity = (0.72 + amp * 0.28) * dip;
+        coreAura.material.opacity  = (0.28 + amp * 0.32) * dip;
+        coreHeart.scale.setScalar(1.2 * (1 + amp * 0.45 + breath));
+        coreAura.scale.setScalar(2.3 * (1 + amp * 0.30 + breath * 0.6));
+        coreLight.color.setHSL(hue, 0.85, 0.6);
         coreLight.intensity = 1.0 + amp * 2.6;
 
         blob.rotation.y += dt * 0.12;
@@ -298,6 +374,8 @@ window.NetraStage3D = (function () {
         // adaptive insurance: if we cant hold ~30fps, drop bloom + dpr once
         if (dt > 0.033) { if (++slowFrames > 90 && !degraded) degrade(); }
         else if (slowFrames > 0) slowFrames--;
+        fpsEma += ((1 / Math.max(dt, 0.001)) - fpsEma) * 0.05;
+        window.__netra3dFps = Math.round(fpsEma);
     }
 
     function degrade() {
@@ -325,7 +403,7 @@ window.NetraStage3D = (function () {
         } catch (e) { renderer = null; return false; }
         try {
             reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));   // R10.1 perf
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.35));   // R12 perf - 1.5 -> 1.35, ~22% fewer shaded pixels
             renderer.outputEncoding = THREE.sRGBEncoding;
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
             renderer.toneMappingExposure = 1.02;
@@ -335,7 +413,7 @@ window.NetraStage3D = (function () {
             // matched to the darkened sky mid-tones - if a refracted ray
             // somehow still misses the sunrise plane it lands on a colour
             // that blends in instead of a black notch
-            scene.background = new THREE.Color(0x1d1535);
+            scene.background = new THREE.Color(0x19122e);
             camera = new THREE.PerspectiveCamera(45, 1, 0.1, 120);
             camera.position.set(0, 0.42, 5.4);
             camera.lookAt(0, 0.45, 0);
@@ -347,7 +425,7 @@ window.NetraStage3D = (function () {
             makeSunrise();
 
             // gentle fill so nothing goes pitch black off-reflection
-            scene.add(new THREE.AmbientLight(0x33224d, 0.5));
+            scene.add(new THREE.AmbientLight(0x33224d, 0.45));
             var rim = new THREE.DirectionalLight(0xAD89EB, 0.6);
             rim.position.set(-3, 4, -4);
             scene.add(rim);
