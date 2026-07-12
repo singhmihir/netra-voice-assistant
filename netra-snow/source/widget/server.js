@@ -3028,13 +3028,18 @@
         var blob = { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
         if (raw.indexOf('CTX:') === 0) {
             try {
+                // R14 - the blob is GENERIC now. The old version whitelisted
+                // five keys here and in the writer, which silently ate any
+                // new key (undo breadcrumbs and routines vanished on the
+                // very next write). Keep whatever is stored, default the
+                // known keys.
                 var parsed = JSON.parse(raw.substring(4)) || {};
-                blob.draft     = parsed.draft     || null;
-                blob.mem       = parsed.mem       || [];
-                blob.vocab     = parsed.vocab     || {};
-                blob.aliases   = parsed.aliases   || {};
-                blob.sentiment = parsed.sentiment || null;
-                return blob;
+                parsed.draft     = parsed.draft     || null;
+                parsed.mem       = parsed.mem       || [];
+                parsed.vocab     = parsed.vocab     || {};
+                parsed.aliases   = parsed.aliases   || {};
+                parsed.sentiment = parsed.sentiment || null;
+                return parsed;
             } catch (e) {}
         }
         // Backwards-compat: migrate old DRAFT: or MEM: prefixed values
@@ -3048,13 +3053,14 @@
     }
     function _ctxWriteBlob(blob) {
         var ctx = _ctxLoadGr();
-        var payload = {
-            draft:     blob.draft     || null,
-            mem:       blob.mem       || [],
-            vocab:     blob.vocab     || {},
-            aliases:   blob.aliases   || {},
-            sentiment: blob.sentiment || null
-        };
+        // serialise EVERY key the callers put on the blob (see note in
+        // _ctxReadBlob), just guarantee the core ones exist
+        var payload = blob || {};
+        payload.draft     = payload.draft     || null;
+        payload.mem       = payload.mem       || [];
+        payload.vocab     = payload.vocab     || {};
+        payload.aliases   = payload.aliases   || {};
+        payload.sentiment = payload.sentiment || null;
         // Safety truncate: if the serialised blob exceeds the column limit, drop
         // the oldest mem entries until it fits. The Context column is sized to
         // hold ~100 turns of typical-length exchanges; this guards the edge case
