@@ -259,7 +259,14 @@ api.controller = function ($scope, $timeout, $window) {
     c.labSetLang = function () {
         try { localStorage.setItem('netra_lang', c.recLang); } catch (e) {}
         logEvent('lab', 'recognition language -> ' + c.recLang);
-        _fullMicRecycle('language change');
+        // R13 FIX - if a recycle is already mid-flight the call used to be
+        // silently swallowed and the OLD language kept listening for up to
+        // ~5 minutes. Now we keep retrying until our recycle actually runs.
+        if (!_fullMicRecycle('language change')) {
+            $timeout(function retryLang() {
+                if (!_fullMicRecycle('language change (retry)')) $timeout(retryLang, 1200);
+            }, 1200);
+        }
     };
     c.labSetGain = function () {
         try { localStorage.setItem('netra_mic_gain', String(c.micGain)); } catch (e) {}
@@ -269,6 +276,54 @@ api.controller = function ($scope, $timeout, $window) {
         try { localStorage.setItem('netra_lab_mute', c.labMute ? '1' : '0'); } catch (e) {}
         logEvent('lab', 'TTS ' + (c.labMute ? 'muted' : 'unmuted'));
     };
+
+    /* ============================================================
+     *  R13 - NETRA SETUP (end-user preferences, docked LEFT)
+     *  The new-phone experience: everything you'd want to tune on
+     *  day one - the language you speak, the voice she answers in,
+     *  her pace and the mic meter - lives in one panel on the left
+     *  edge of the stage. Opens by itself the very first time so a
+     *  brand new user starts by making Netra theirs.
+     * ============================================================ */
+    c.setupOn = false;
+    c.setupToggle = function () {
+        c.setupOn = !c.setupOn;
+        logEvent('dev', c.setupOn ? 'setup panel opened' : 'setup panel closed');
+    };
+
+    /* ============================================================
+     *  R14 - MORNING BRIEFING, AUTOMATICALLY.
+     *  First visit of the day, once the calibration card is out of
+     *  the way, Netra reads the daily briefing on her own - open
+     *  tickets, approvals, reminders - like a good assistant should.
+     *  Toggle lives in the setup panel, memory of "already briefed
+     *  today" lives in localStorage.
+     * ============================================================ */
+    c.prefBrief = true;
+    try { c.prefBrief = localStorage.getItem('netra_brief_on') !== '0'; } catch (eB0) {}
+    c.setBrief = function () {
+        try { localStorage.setItem('netra_brief_on', c.prefBrief ? '1' : '0'); } catch (eB1) {}
+        logEvent('boot', 'morning briefing ' + (c.prefBrief ? 'on' : 'off'));
+    };
+    function _todayKey() {
+        var d = new Date();
+        return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+    }
+    function _maybeAutoBrief(tries) {
+        if (!c.liveMode || !c.prefBrief) return;
+        var last = '';
+        try { last = localStorage.getItem('netra_brief_last') || ''; } catch (eB2) {}
+        if (last === _todayKey()) return;   // already briefed today
+        var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
+        if (calibBusy || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
+            if (tries < 12) $timeout(function () { _maybeAutoBrief(tries + 1); }, 12000);
+            return;
+        }
+        try { localStorage.setItem('netra_brief_last', _todayKey()); } catch (eB3) {}
+        logEvent('boot', 'first visit today - reading the morning briefing');
+        processCommand('Give me my daily briefing. Keep it tight - the top items only.', 1.0);
+    }
+    if (c.liveMode) $timeout(function () { _maybeAutoBrief(0); }, 14000);
 
     // typed commands - same pipeline as voice, minus the microphone
     c.labCmd = '';
@@ -424,14 +479,22 @@ api.controller = function ($scope, $timeout, $window) {
         return Math.max(0, Math.round((1 - dp[m][n2] / m) * 100));
     }
 
+    var _calibSession = 0;   // R13 - stale TTS callbacks must never revive a skipped card
     function startCalibration(firstRun, preamble) {
         if (_calibActive) return;
         _calibActive = true;
         _calibFirstRun = !!firstRun;
+        var mySession = ++_calibSession;
         c.labCalib = { stage: 'prompt', heard: '', score: null, verdict: '' };
         $scope.$applyAsync();
         speak((preamble || '') + 'Quick mic calibration. After the tone, please read this sentence aloud: ' +
               CALIB_SENTENCE + '.', function () {
+            // R13 FIX - if Skip landed while the prompt was still being
+            // spoken, the cancelled speech still fires this done-callback
+            // (on every engine except edge-live). It used to push the card
+            // straight back into "listening" with all dismiss guards dead -
+            // THE "skip does nothing at page load" bug. Stale = no-op now.
+            if (!_calibActive || mySession !== _calibSession) return;
             cue('wake');
             _calibListenStart = Date.now();
             c.labCalib.stage = 'listening';
@@ -517,19 +580,26 @@ api.controller = function ($scope, $timeout, $window) {
         var uiLine = firstEver
             ? ('Running my first-time self check. Interface ' + (uiOk ? 'rendered' : 'failed to render') +
                ', animations ' + (animOk ? 'running' : 'stopped') +
-               ', microphone stream ' + (micOk ? 'live. All good.' : 'not detected - voice may not work.') + ' ')
+               ', microphone stream ' + (micOk ? 'live. All good.' : 'not detected - voice may not work.') +
+               ' Your settings live on the left edge of the screen - pick the language you speak, my voice, and the mic level, just like setting up a brand new phone. ')
             : (micOk ? 'Quick mic check - say skip to jump straight in. '
                      : 'Heads up, I am not seeing a microphone stream. ');
+        // R13 - out-of-box experience: the very first visit opens the
+        // setup panel so a new user starts with their preferences
+        if (firstEver) { c.setupOn = true; $scope.$applyAsync(); }
         startCalibration(firstEver, uiLine);
     }
     c.calibSkip = function () {
-        if (!_calibActive) return;
+        // R13 - always dismissable: even if a stale state left the card
+        // visible with _calibActive already false, Skip still kills it
+        var wasActive = _calibActive;
         _calibActive = false;
+        _calibSession++;   // invalidate any in-flight TTS done-callback
         if (_calibTimer) { $timeout.cancel(_calibTimer); _calibTimer = null; }
         c.labCalib.stage = 'skipped';
-        logEvent('lab', 'calibration skipped');
+        logEvent('lab', 'calibration skipped' + (wasActive ? '' : ' (defensive dismiss)'));
         stopSpeaking('calibration skipped');
-        speak('Skipped. I am listening - just speak.');
+        if (wasActive) speak('Skipped. I am listening - just speak.');
         $scope.$applyAsync();
     };
     c.calibRetry = function () {
@@ -1811,6 +1881,25 @@ api.controller = function ($scope, $timeout, $window) {
             _micStream = stream;
             c.micStreamActive = true;
             $scope.$applyAsync();
+            // R13 - react to track death INSTANTLY (Zoom/Teams style)
+            // instead of waiting for the 20s health poll. onmute fires when
+            // the OS/browser silences the device, onended when it goes away
+            // (unplugged headset, revoked permission, device sleep).
+            try {
+                stream.getAudioTracks().forEach(function (tr) {
+                    tr.onended = function () {
+                        logEvent('warn', 'mic track ended (device gone?) - rebuilding the whole stack');
+                        _fullMicRecycle('track ended');
+                    };
+                    tr.onmute = function () {
+                        logEvent('warn', 'mic track muted by the system - watching for unmute');
+                        $timeout(function () {
+                            var still = _micStream && _micStream.getAudioTracks().some(function (t2) { return t2.muted; });
+                            if (still) _fullMicRecycle('track stayed muted 3s');
+                        }, 3000);
+                    };
+                });
+            } catch (eTrk) {}
             _micCtx = new (window.AudioContext || window.webkitAudioContext)();
             var source = _micCtx.createMediaStreamSource(stream);
             // R3.5.1 - GainNode set to 1.0 (no extra boost). AGC already
@@ -2601,8 +2690,26 @@ api.controller = function ($scope, $timeout, $window) {
      */
     var SR_IDLE_RESTART_MS = 60000;   // tightened 90s -> 60s
     var _recyclingMic = false;
+    // R13 - Zoom/Teams behaviour: the moment the audio device list changes
+    // (headset plugged in / unplugged / bluetooth reconnects / OS default
+    // switches) rebuild the whole capture stack so we are ALWAYS on the
+    // device the user expects - never silently recording a dead mic.
+    var _devChangeDebounce = null;
+    try {
+        if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) {
+            navigator.mediaDevices.addEventListener('devicechange', function () {
+                if (_ctrlDestroyed) return;
+                if (_devChangeDebounce) $timeout.cancel(_devChangeDebounce);
+                _devChangeDebounce = $timeout(function () {
+                    logEvent('mic', 'audio devices changed - rebuilding mic stack on the new device');
+                    _fullMicRecycle('device change');
+                }, 900);
+            });
+        }
+    } catch (eDC) {}
+
     function _fullMicRecycle(reason) {
-        if (_recyclingMic) return;
+        if (_recyclingMic) return false;   // R13 - callers can now tell it was skipped
         _recyclingMic = true;
         c.micHealth.fullRecycles++;
         logEvent('rec', 'full mic+SR recycle (' + reason + ')');
@@ -2618,6 +2725,7 @@ api.controller = function ($scope, $timeout, $window) {
                 _recyclingMic = false;
             }, 300);
         }, 600);
+        return true;
     }
     function _srActivityWatchdog() {
         if (_ctrlDestroyed) return;   // R4.5 - don't reschedule after destroy
@@ -3617,7 +3725,7 @@ api.controller = function ($scope, $timeout, $window) {
     var backchannelCache = [];   // [{url, text}]
     function preloadBackchannels() {
         if (typeof WebSocket === 'undefined') return;
-        if (_edgeFails >= REMOTE_FAIL_LIMIT) return;
+        if (_edgeCircuitOpen()) return;
         BACKCHANNEL_PHRASES.forEach(function (p) {
             _edgeBlob(p, c.edgeVoice, function (blob) {
                 if (blob) backchannelCache.push({ url: URL.createObjectURL(blob), text: p });
@@ -3796,7 +3904,7 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     function speakEdgePipelined(text, done) {
-        if (_edgeFails >= REMOTE_FAIL_LIMIT || typeof WebSocket === 'undefined') {
+        if (_edgeCircuitOpen() || typeof WebSocket === 'undefined') {
             return speakEdgeTTS(text, done);
         }
         var session = ++_speakSessionId;
@@ -3881,7 +3989,7 @@ api.controller = function ($scope, $timeout, $window) {
      * ============================================================ */
     var _edgeLiveWs = null;
     function speakEdgeLive(text, done) {
-        if (_edgeFails >= REMOTE_FAIL_LIMIT) return speakStreamElements(text, done);
+        if (_edgeCircuitOpen()) return speakStreamElements(text, done);
         if (typeof WebSocket === 'undefined') return speakStreamElements(text, done);
         if (typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported('audio/mpeg')) {
             return (text.length > 220 ? speakEdgePipelined(text, done) : speakEdgeTTS(text, done));
@@ -4296,6 +4404,7 @@ api.controller = function ($scope, $timeout, $window) {
         'en-IN-NeerjaNeural', 'en-IN-AashiNeural', 'en-IN-AnanyaNeural',
         'hi-IN-SwaraNeural', 'en-GB-SoniaNeural'
     ];
+    c.edgeVoices = EDGE_VOICES;   // R13 - the setup panel lists them too
     // R7 - Edge audio: 48 -> 96 kbps. The low bitrate was a big part of
     // the "tin box" sound; 96k MP3 at 24kHz is transparent for speech.
     var EDGE_AUDIO_FORMAT = 'audio-24khz-96kbitrate-mono-mp3';
@@ -4504,7 +4613,7 @@ api.controller = function ($scope, $timeout, $window) {
     // a genuinely-broken build (e.g. the pre-GEC Edge 403 storm) stayed
     // open in localStorage across every future session, permanently
     // pinning Netra to the robotic fallback even after the fix shipped.
-    var NETRA_BUILD = 'R8-gec-1';
+    var NETRA_BUILD = 'R13-prefs-1';   // bumped: reopens Edge TTS for everyone whose breaker tripped on an old build
     try {
         if (_store && _store.getItem('netra_build') !== NETRA_BUILD) {
             _store.removeItem('netra_edgeFails');
@@ -4521,10 +4630,27 @@ api.controller = function ($scope, $timeout, $window) {
     function _edgeFallback(text, done) {
         _edgeFails++;
         _ssSet('netra_edgeFails', _edgeFails);
+        _ssSet('netra_edgeFailsAt', Date.now());   // R13 - lets the breaker half-open later
         if (_edgeFails === REMOTE_FAIL_LIMIT) {
-            logEvent('tts', 'edge circuit open - skipping for this session');
+            logEvent('tts', 'edge circuit open - will retry once after 10 quiet minutes');
         }
         speakStreamElements(text, done);
+    }
+    // R13 - HALF-OPEN breaker (the old one latched FOREVER: two flaky
+    // seconds of wifi and every future session was stuck on the fallback
+    // voice, which is why picking a voice "did nothing"). After 10 minutes
+    // the circuit lets ONE fresh edge attempt through; success resets it,
+    // failure re-latches for another 10.
+    function _edgeCircuitOpen() {
+        if (_edgeFails < REMOTE_FAIL_LIMIT) return false;
+        var trippedAt = _ssGet('netra_edgeFailsAt', 0);
+        if (!trippedAt || Date.now() - trippedAt > 600000) {
+            _edgeFails = REMOTE_FAIL_LIMIT - 1;
+            _ssSet('netra_edgeFails', _edgeFails);
+            logEvent('tts', 'edge circuit half-open - giving edge one fresh shot');
+            return false;
+        }
+        return true;
     }
     function _streamFallback(text, done, reason) {
         _streamFails++;
@@ -4538,8 +4664,8 @@ api.controller = function ($scope, $timeout, $window) {
 
     function speakEdgeTTS(text, done) {
         if (!text) { _afterTTS(done); return; }
-        // R3.5.2 - skip if circuit is open
-        if (_edgeFails >= REMOTE_FAIL_LIMIT) {
+        // R3.5.2 - skip if circuit is open (R13: half-opens after 10 min)
+        if (_edgeCircuitOpen()) {
             return speakStreamElements(text, done);
         }
         // Some networks/CSPs forbid arbitrary WSS - fall back fast if blocked.
@@ -4777,7 +4903,7 @@ api.controller = function ($scope, $timeout, $window) {
         // spam 27 more failed WSS connections at boot - they all fail
         // identically. The filler chain (R4.1) will use live browser TTS
         // instead.
-        if (_edgeFails >= REMOTE_FAIL_LIMIT) {
+        if (_edgeCircuitOpen()) {
             logEvent('tts', 'skipping filler preload - edge circuit open (' + _edgeFails + ' prior fails); chain will use live browser TTS');
             return;
         }
@@ -5096,7 +5222,7 @@ api.controller = function ($scope, $timeout, $window) {
             .replace(/\.{3,}/g, ',');   // ellipsis -> short pause via comma
         if (plain.length > 28000) plain = plain.substring(0, 28000) + '...';
         var u = new SpeechSynthesisUtterance(plain);
-        u.rate  = 1.06;   // R7 - closer to natural; 1.15 sounded rushed
+        u.rate  = c.speechRate || 1.06;   // R13 - follow the pace slider here too
         u.pitch = 1.05;
         u.volume = 1.0;
         var v = chooseVoice();
@@ -5105,8 +5231,10 @@ api.controller = function ($scope, $timeout, $window) {
             u.lang  = v.lang || 'en-IN';
             logEvent('tts', 'browser: ' + v.name + ' / ' + (v.lang || 'en-IN') + ' (' + text.length + ' chars)');
         } else {
-            u.lang = 'en-IN';
-            logEvent('tts', 'browser DEFAULT voice (no en-IN found) (' + text.length + ' chars)');
+            // R13 - even with no matching voice object, follow the locale
+            // of the picked voice instead of hardcoding en-IN
+            u.lang = (String(c.edgeVoice || '').match(/^[a-z]{2}-[A-Z]{2}/) || ['en-IN'])[0];
+            logEvent('tts', 'browser DEFAULT voice for ' + u.lang + ' (' + text.length + ' chars)');
         }
 
         var startedAt = Date.now();
@@ -5151,6 +5279,23 @@ api.controller = function ($scope, $timeout, $window) {
             var fv = voices.find(function (vv) { return vv.name === forcedVoiceName; });
             if (fv) return fv;
         }
+        // R13 FIX - the browser fallback now honors the picked voice too:
+        // match the same speaker name first (Edge exposes "Microsoft Ava
+        // Online (Natural)..." locally), then the same locale, and only
+        // then the generic quality picker. Before this, falling back to
+        // browser TTS silently ignored the user's choice.
+        try {
+            var mV = String(c.edgeVoice || '').match(/^([a-z]{2}-[A-Z]{2})-([A-Za-z]+?)(Multilingual)?Neural$/);
+            if (mV) {
+                var wantLoc = mV[1], wantName = mV[2];
+                var byName = voices.find(function (vv) { return vv.name.indexOf(wantName) >= 0; });
+                if (byName) return byName;
+                var sameLoc = function (vv) { return String(vv.lang || '').replace('_', '-').indexOf(wantLoc) === 0; };
+                var byLoc = voices.find(function (vv) { return sameLoc(vv) && /Natural|Neural|Online|Google/i.test(vv.name); }) ||
+                            voices.find(sameLoc);
+                if (byLoc) return byLoc;
+            }
+        } catch (eCV) {}
         return pickFemaleVoice();
     }
 
@@ -5483,7 +5628,25 @@ api.controller = function ($scope, $timeout, $window) {
     // R7 - voice picker + pace slider (persisted; used by the Edge SSML path)
     c.devSetEdgeVoice = function () {
         try { localStorage.setItem('netra_edgeVoice', c.edgeVoice); } catch (e) {}
-        logEvent('dev', 'edge voice -> ' + c.edgeVoice);
+        // R13 FIX - picking a voice is a clear "I want to hear THIS" signal:
+        // reopen the edge/stream circuits so the pick actually plays instead
+        // of being silently swallowed by a breaker from some old failure.
+        // (This was THE "voice never changes" bug - edge had tripped, every
+        // reply fell back to remote/browser and ignored the picker.)
+        _edgeFails = 0; _streamFails = 0;
+        _ssSet('netra_edgeFails', 0); _ssSet('netra_streamFails', 0);
+        // R13 FIX - the pre-baked filler/backchannel audio was rendered in
+        // the OLD voice at boot and never refreshed, so "Mm-hmm" and the
+        // thinking cues kept the previous voice forever. Rebuild them.
+        try {
+            fillerCache.forEach(function (f) { try { URL.revokeObjectURL(f.url); } catch (e1) {} });
+            backchannelCache.forEach(function (b) { try { URL.revokeObjectURL(b.url); } catch (e2) {} });
+            fillerCache.length = 0;
+            backchannelCache.length = 0;
+            $timeout(preloadFillers, 400);
+            $timeout(preloadBackchannels, 900);
+        } catch (eVC) {}
+        logEvent('dev', 'voice -> ' + c.edgeVoice + ' (TTS circuits reset, filler cache rebuilding in the new voice)');
     };
     c.devSetRate = function () {
         var r = parseFloat(c.speechRate);

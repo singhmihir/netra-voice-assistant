@@ -46,16 +46,32 @@ NetraContext.prototype = {
         };
     },
 
-    /** Track the last spoken sentence so the user can ask "what did you say?" */
+    /** Track the last spoken sentence so the user can ask "what did you say?"
+     *  R14 - the last_utterance column doubles as the widget's CTX: context
+     *  blob (memory, routines, undo breadcrumbs, drafts). The old version
+     *  blindly overwrote the column with the plain reply text, wiping the
+     *  whole blob on EVERY turn - that is why saved routines and undo
+     *  info kept evaporating. Now the utterance lives INSIDE the blob. */
     setLastUtterance: function (text) {
         var gr = this._get(true);
-        gr.last_utterance = String(text || '').substring(0, 1000);
+        var raw = String(gr.last_utterance || '');
+        var t = String(text || '').substring(0, 1000);
+        var blob = {};
+        if (raw.indexOf('CTX:') === 0) {
+            try { blob = JSON.parse(raw.substring(4)) || {}; } catch (e) { blob = {}; }
+        }
+        blob.last_spoken = t;
+        gr.last_utterance = 'CTX:' + JSON.stringify(blob);
         gr.update();
     },
 
     getLastUtterance: function () {
         var gr = this._get(false);
-        return gr ? String(gr.last_utterance || '') : '';
+        var raw = gr ? String(gr.last_utterance || '') : '';
+        if (raw.indexOf('CTX:') === 0) {
+            try { return String((JSON.parse(raw.substring(4)) || {}).last_spoken || ''); } catch (e) { return ''; }
+        }
+        return raw;
     },
 
     clear: function () {

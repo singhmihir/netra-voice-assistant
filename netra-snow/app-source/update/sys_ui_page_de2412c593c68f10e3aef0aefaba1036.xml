@@ -1,0 +1,1182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_ui_page"><sys_ui_page action="DELETE"><category>general</category><client_script/><description>Interactive Monte Carlo simulation over the GRC risk register</description><direct>false</direct><endpoint>x_196061_netra_v1_mc_risk_dashboard.do</endpoint><html>&lt;?xml version="1.0" encoding="utf-8" ?&gt;
+&lt;j:jelly trim="false" xmlns:j="jelly:core" xmlns:g="glide" xmlns:j2="null" xmlns:g2="null"&gt;
+&lt;div class="viz-root" id="mcRoot"&gt;
+&lt;style&gt;
+.viz-root {
+  --surface-1: #fcfcfb; --page: #f9f9f7;
+  --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #898781;
+  --grid: #e1e0d9; --axisline: #c3c2b7; --ring: rgba(11,11,11,0.10);
+  --series-1: #2a78d6; --series-2: #1baf7a; --series-3: #eda100;
+  --series-4: #008300; --series-5: #4a3aa7; --series-6: #e34948;
+  --series-7: #e87ba4; --series-8: #eb6834;
+  --demph: #c3c2b7; --area-wash: rgba(42,120,214,0.10);
+  --good: #006300; --bad: #d03b3b;
+  --accent-soft: rgba(42,120,214,0.12);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink-1); background: var(--page);
+  margin: 0; padding: 20px; min-height: 100vh; box-sizing: border-box;
+}
+@media (prefers-color-scheme: dark) {
+  .viz-root {
+    --surface-1: #1a1a19; --page: #0d0d0d;
+    --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #898781;
+    --grid: #2c2c2a; --axisline: #383835; --ring: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --series-2: #199e70; --series-3: #c98500;
+    --series-4: #008300; --series-5: #9085e9; --series-6: #e66767;
+    --series-7: #d55181; --series-8: #d95926;
+    --demph: #52514e; --area-wash: rgba(57,135,229,0.12);
+    --good: #0ca30c; --bad: #e66767;
+    --accent-soft: rgba(57,135,229,0.18);
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  --surface-1: #1a1a19; --page: #0d0d0d;
+  --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #898781;
+  --grid: #2c2c2a; --axisline: #383835; --ring: rgba(255,255,255,0.10);
+  --series-1: #3987e5; --series-2: #199e70; --series-3: #c98500;
+  --series-4: #008300; --series-5: #9085e9; --series-6: #e66767;
+  --series-7: #d55181; --series-8: #d95926;
+  --demph: #52514e; --area-wash: rgba(57,135,229,0.12);
+  --good: #0ca30c; --bad: #e66767;
+  --accent-soft: rgba(57,135,229,0.18);
+}
+:root[data-theme="light"] .viz-root {
+  --surface-1: #fcfcfb; --page: #f9f9f7;
+  --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #898781;
+  --grid: #e1e0d9; --axisline: #c3c2b7; --ring: rgba(11,11,11,0.10);
+  --series-1: #2a78d6; --series-2: #1baf7a; --series-3: #eda100;
+  --series-4: #008300; --series-5: #4a3aa7; --series-6: #e34948;
+  --series-7: #e87ba4; --series-8: #eb6834;
+  --demph: #c3c2b7; --area-wash: rgba(42,120,214,0.10);
+  --good: #006300; --bad: #d03b3b;
+  --accent-soft: rgba(42,120,214,0.12);
+}
+.viz-root * { box-sizing: border-box; }
+.mc-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 16px; margin-bottom: 6px; }
+.mc-header h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.mc-sub { color: var(--ink-3); font-size: 12.5px; }
+.mc-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  background: var(--surface-1); border: 1px solid var(--ring); border-radius: 10px;
+  padding: 10px 14px; margin: 12px 0 16px 0; }
+.ctl { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); }
+.ctl label { white-space: nowrap; }
+.seg { display: inline-flex; border: 1px solid var(--ring); border-radius: 7px; overflow: hidden; }
+.seg button { border: 0; background: transparent; color: var(--ink-2); padding: 5px 10px;
+  font: inherit; font-size: 12.5px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--ring); }
+.seg button.on { background: var(--accent-soft); color: var(--ink-1); font-weight: 600; }
+.ctl input[type="number"] { width: 84px; font: inherit; font-size: 12.5px; color: var(--ink-1);
+  background: var(--page); border: 1px solid var(--ring); border-radius: 6px; padding: 5px 7px; }
+.ctl input[type="range"] { width: 110px; accent-color: var(--series-1); }
+.ctl .mult { min-width: 44px; font-variant-numeric: tabular-nums; color: var(--ink-1); font-weight: 600; }
+.btn { border: 1px solid var(--ring); background: var(--surface-1); color: var(--ink-1);
+  border-radius: 7px; padding: 6px 14px; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.btn.primary { background: var(--series-1); border-color: var(--series-1); color: #ffffff; }
+.btn[disabled] { opacity: 0.5; cursor: default; }
+.mc-progress { flex: 1 1 120px; height: 6px; border-radius: 3px; background: var(--accent-soft);
+  overflow: hidden; min-width: 90px; }
+.mc-progress &gt; div { height: 100%; width: 0%; background: var(--series-1); border-radius: 3px;
+  transition: width 100ms linear; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 10px; padding: 12px 14px; }
+.tile .t-label { font-size: 12px; color: var(--ink-2); margin-bottom: 4px; }
+.tile .t-value { font-size: 26px; font-weight: 650; line-height: 1.15; }
+.tile.hero .t-value { font-size: 48px; }
+.tile .t-delta { font-size: 12px; margin-top: 3px; font-weight: 600; }
+.tile .t-delta.worse { color: var(--bad); }
+.tile .t-delta.better { color: var(--good); }
+.tile .t-delta.flat { color: var(--ink-3); font-weight: 400; }
+.tile .t-note { font-size: 11px; color: var(--ink-3); margin-top: 3px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
+figure.card { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 10px;
+  margin: 0 0 14px 0; padding: 14px 14px 10px 14px; position: relative; min-width: 0; }
+figure.card figcaption { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+figure.card .c-title { font-size: 13.5px; font-weight: 650; }
+figure.card .c-sub { font-size: 11.5px; color: var(--ink-3); }
+.tbl-toggle { border: 0; background: transparent; color: var(--series-1); font: inherit;
+  font-size: 11.5px; cursor: pointer; padding: 2px 4px; white-space: nowrap; }
+.chart-box { position: relative; }
+.chart-box svg { display: block; width: 100%; }
+.chart-box.faded svg { opacity: 0.45; }
+.axis-text { font-size: 10.5px; fill: var(--ink-3); }
+.dl-text { font-size: 11px; fill: var(--ink-2); font-weight: 600; }
+.mc-tip { position: absolute; pointer-events: none; background: var(--surface-1);
+  border: 1px solid var(--ring); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.13);
+  padding: 7px 10px; font-size: 12px; display: none; z-index: 30; min-width: 130px; max-width: 280px; }
+.mc-tip .tip-h { color: var(--ink-3); font-size: 11px; margin-bottom: 3px; }
+.mc-tip .tip-row { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; }
+.mc-tip .tip-key { width: 12px; height: 0; border-top: 3px solid var(--series-1); border-radius: 2px; flex: none; align-self: center; }
+.mc-tip .tip-val { font-weight: 650; }
+.mc-tip .tip-lbl { color: var(--ink-2); }
+.data-table { display: none; overflow-x: auto; margin-top: 6px; }
+.data-table.show { display: block; }
+.data-table table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.data-table th { text-align: left; color: var(--ink-2); font-weight: 600; border-bottom: 1px solid var(--grid);
+  padding: 4px 10px 4px 0; white-space: nowrap; }
+.data-table td { padding: 4px 10px 4px 0; border-bottom: 1px solid var(--grid);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11.5px; color: var(--ink-2); margin: 4px 0 2px 0; }
+.legend .lg { display: inline-flex; align-items: center; gap: 5px; }
+.legend .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.risk-card { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 10px; padding: 14px; }
+.risk-card h2 { font-size: 13.5px; font-weight: 650; margin: 0 0 2px 0; }
+.risk-card .c-sub { font-size: 11.5px; color: var(--ink-3); margin-bottom: 8px; }
+.risk-wrap { overflow-x: auto; }
+table.risks { border-collapse: collapse; width: 100%; font-size: 12.5px; min-width: 900px; }
+table.risks th { text-align: left; font-weight: 600; color: var(--ink-2); font-size: 11.5px;
+  border-bottom: 1px solid var(--grid); padding: 6px 10px 6px 0; white-space: nowrap; }
+table.risks th.num, table.risks td.num { text-align: right; }
+table.risks td { border-bottom: 1px solid var(--grid); padding: 5px 10px 5px 0;
+  font-variant-numeric: tabular-nums; }
+table.risks td.name { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.risks input[type="number"] { width: 98px; font: inherit; font-size: 12px; color: var(--ink-1);
+  background: var(--page); border: 1px solid var(--ring); border-radius: 5px; padding: 3px 6px; text-align: right; }
+table.risks select { font: inherit; font-size: 12px; color: var(--ink-1); background: var(--page);
+  border: 1px solid var(--ring); border-radius: 5px; padding: 3px 4px; }
+table.risks tr.off td { opacity: 0.45; }
+table.risks .catdot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; }
+.bar-hit { fill: transparent; cursor: pointer; }
+.bar-hit:focus { outline: none; }
+.mc-foot { color: var(--ink-3); font-size: 11.5px; margin-top: 10px; line-height: 1.5; }
+&lt;/style&gt;
+
+&lt;div class="mc-header"&gt;
+  &lt;h1&gt;Monte Carlo Risk Simulation&lt;/h1&gt;
+  &lt;span class="mc-sub" id="mcMeta"&gt;initializing…&lt;/span&gt;
+&lt;/div&gt;
+
+&lt;div class="mc-controls" role="group" aria-label="Simulation controls"&gt;
+  &lt;div class="ctl"&gt;&lt;label&gt;Trials&lt;/label&gt;
+    &lt;span class="seg" id="trialSeg"&gt;
+      &lt;button type="button" data-trials="1000"&gt;1k&lt;/button&gt;
+      &lt;button type="button" data-trials="10000" class="on"&gt;10k&lt;/button&gt;
+      &lt;button type="button" data-trials="50000"&gt;50k&lt;/button&gt;
+      &lt;button type="button" data-trials="100000"&gt;100k&lt;/button&gt;
+    &lt;/span&gt;
+  &lt;/div&gt;
+  &lt;div class="ctl"&gt;&lt;label for="seedIn"&gt;Seed&lt;/label&gt;
+    &lt;input type="number" id="seedIn" value="42" step="1" /&gt;&lt;/div&gt;
+  &lt;div class="ctl"&gt;&lt;label for="freqStress"&gt;Frequency stress&lt;/label&gt;
+    &lt;input type="range" id="freqStress" min="-2" max="2" step="0.1" value="0" /&gt;
+    &lt;span class="mult" id="freqStressVal"&gt;×1.0&lt;/span&gt;&lt;/div&gt;
+  &lt;div class="ctl"&gt;&lt;label for="sevStress"&gt;Severity stress&lt;/label&gt;
+    &lt;input type="range" id="sevStress" min="-2" max="2" step="0.1" value="0" /&gt;
+    &lt;span class="mult" id="sevStressVal"&gt;×1.0&lt;/span&gt;&lt;/div&gt;
+  &lt;button type="button" class="btn primary" id="runBtn"&gt;Re-run&lt;/button&gt;
+  &lt;button type="button" class="btn" id="resetBtn"&gt;Reset scenario&lt;/button&gt;
+  &lt;button type="button" class="btn" id="liveBtn" style="display:none"&gt;Reload live risks&lt;/button&gt;
+  &lt;div class="mc-progress" aria-hidden="true"&gt;&lt;div id="progBar"&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div class="tiles" id="tiles"&gt;&lt;/div&gt;
+
+&lt;div class="grid2"&gt;
+  &lt;figure class="card"&gt;
+    &lt;figcaption&gt;
+      &lt;div&gt;&lt;div class="c-title"&gt;Annual loss distribution&lt;/div&gt;
+        &lt;div class="c-sub" id="histSub"&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;button type="button" class="tbl-toggle" data-table="histTable"&gt;Table view&lt;/button&gt;
+    &lt;/figcaption&gt;
+    &lt;div class="chart-box" id="histBox"&gt;&lt;/div&gt;
+    &lt;div class="data-table" id="histTable"&gt;&lt;/div&gt;
+  &lt;/figure&gt;
+
+  &lt;figure class="card"&gt;
+    &lt;figcaption&gt;
+      &lt;div&gt;&lt;div class="c-title"&gt;Loss exceedance curve&lt;/div&gt;
+        &lt;div class="c-sub"&gt;Probability that annual loss meets or exceeds x — log loss scale&lt;/div&gt;&lt;/div&gt;
+      &lt;button type="button" class="tbl-toggle" data-table="lecTable"&gt;Table view&lt;/button&gt;
+    &lt;/figcaption&gt;
+    &lt;div class="chart-box" id="lecBox"&gt;&lt;/div&gt;
+    &lt;div class="data-table" id="lecTable"&gt;&lt;/div&gt;
+  &lt;/figure&gt;
+
+  &lt;figure class="card"&gt;
+    &lt;figcaption&gt;
+      &lt;div&gt;&lt;div class="c-title"&gt;Top risk drivers&lt;/div&gt;
+        &lt;div class="c-sub"&gt;Expected annual loss by risk, colored by entity&lt;/div&gt;&lt;/div&gt;
+      &lt;button type="button" class="tbl-toggle" data-table="torTable"&gt;Table view&lt;/button&gt;
+    &lt;/figcaption&gt;
+    &lt;div class="legend" id="torLegend"&gt;&lt;/div&gt;
+    &lt;div class="chart-box" id="torBox"&gt;&lt;/div&gt;
+    &lt;div class="data-table" id="torTable"&gt;&lt;/div&gt;
+  &lt;/figure&gt;
+
+  &lt;figure class="card"&gt;
+    &lt;figcaption&gt;
+      &lt;div&gt;&lt;div class="c-title"&gt;Convergence of expected annual loss&lt;/div&gt;
+        &lt;div class="c-sub"&gt;Running mean as trials accumulate — flat means enough trials&lt;/div&gt;&lt;/div&gt;
+      &lt;button type="button" class="tbl-toggle" data-table="convTable"&gt;Table view&lt;/button&gt;
+    &lt;/figcaption&gt;
+    &lt;div class="chart-box" id="convBox"&gt;&lt;/div&gt;
+    &lt;div class="data-table" id="convTable"&gt;&lt;/div&gt;
+  &lt;/figure&gt;
+&lt;/div&gt;
+
+&lt;div class="risk-card"&gt;
+  &lt;h2&gt;Risk register — scenario inputs&lt;/h2&gt;
+  &lt;div class="c-sub"&gt;Edit frequency and per-event impact estimates or toggle risks out of the portfolio; the simulation re-runs automatically. Stress sliders above multiply every enabled risk.&lt;/div&gt;
+  &lt;div class="risk-wrap"&gt;&lt;table class="risks"&gt;
+    &lt;thead&gt;&lt;tr&gt;
+      &lt;th&gt;On&lt;/th&gt;&lt;th&gt;Risk&lt;/th&gt;&lt;th&gt;Entity&lt;/th&gt;
+      &lt;th class="num"&gt;Freq min&lt;/th&gt;&lt;th class="num"&gt;Freq ML&lt;/th&gt;&lt;th class="num"&gt;Freq max&lt;/th&gt;
+      &lt;th class="num"&gt;Impact min&lt;/th&gt;&lt;th class="num"&gt;Impact ML&lt;/th&gt;&lt;th class="num"&gt;Impact max&lt;/th&gt;
+      &lt;th&gt;Severity&lt;/th&gt;
+      &lt;th class="num"&gt;EAL&lt;/th&gt;&lt;th class="num"&gt;Share&lt;/th&gt;
+    &lt;/tr&gt;&lt;/thead&gt;
+    &lt;tbody id="riskRows"&gt;&lt;/tbody&gt;
+  &lt;/table&gt;&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div class="mc-foot" id="mcFoot"&gt;&lt;/div&gt;
+
+&lt;script&gt;
+//&lt;![CDATA[
+(function () {
+  "use strict";
+
+  var DATA = /*__DATA__*/ {"generated_at": "2026-07-11 12:39 UTC", "instance": "https://YOUR-INSTANCE.service-now.com", "risks": [{"sys_id": "1db0564193c68f10e3aef0aefaba1056", "number": "RK0020002", "name": "Payment gateway outage halts card processing", "category": "Payment Platform", "freq_min": 0.5, "freq_ml": 1.5, "freq_max": 4.0, "imp_min": 50000.0, "imp_ml": 250000.0, "imp_max": 1200000.0, "model": "pert"}, {"sys_id": "ddb0564193c68f10e3aef0aefaba109d", "number": "RK0020003", "name": "Cardholder data breach via payment API", "category": "Payment Platform", "freq_min": 0.02, "freq_ml": 0.08, "freq_max": 0.3, "imp_min": 500000.0, "imp_ml": 3000000.0, "imp_max": 15000000.0, "model": "pert"}, {"sys_id": "95b0564193c68f10e3aef0aefaba10a4", "number": "RK0020004", "name": "Regulatory fine for transaction-reporting failure", "category": "Payment Platform", "freq_min": 0.05, "freq_ml": 0.15, "freq_max": 0.5, "imp_min": 500000.0, "imp_ml": 2000000.0, "imp_max": 10000000.0, "model": "pert"}, {"sys_id": "6db0564193c68f10e3aef0aefaba10aa", "number": "RK0020005", "name": "Customer PII exposure through storage misconfiguration", "category": "Customer Data Service", "freq_min": 0.1, "freq_ml": 0.35, "freq_max": 1.0, "imp_min": 100000.0, "imp_ml": 800000.0, "imp_max": 5000000.0, "model": "pert"}, {"sys_id": "25b0564193c68f10e3aef0aefaba10b1", "number": "RK0020006", "name": "Insider exfiltration of customer records", "category": "Customer Data Service", "freq_min": 0.02, "freq_ml": 0.1, "freq_max": 0.4, "imp_min": 150000.0, "imp_ml": 900000.0, "imp_max": 4000000.0, "model": "pert"}, {"sys_id": "e9b0564193c68f10e3aef0aefaba10b7", "number": "RK0020007", "name": "Ransomware attack encrypts corporate systems", "category": "Corporate IT", "freq_min": 0.05, "freq_ml": 0.15, "freq_max": 0.5, "imp_min": 200000.0, "imp_ml": 1500000.0, "imp_max": 8000000.0, "model": "pert"}, {"sys_id": "a1b0564193c68f10e3aef0aefaba10be", "number": "RK0020008", "name": "Phishing-led credential compromise", "category": "Corporate IT", "freq_min": 1.0, "freq_ml": 3.0, "freq_max": 8.0, "imp_min": 5000.0, "imp_ml": 40000.0, "imp_max": 250000.0, "model": "pert"}, {"sys_id": "e9b0564193c68f10e3aef0aefaba10c4", "number": "RK0020009", "name": "Cloud region failure degrades core services", "category": "Corporate IT", "freq_min": 0.1, "freq_ml": 0.25, "freq_max": 0.8, "imp_min": 100000.0, "imp_ml": 500000.0, "imp_max": 2500000.0, "model": "pert"}, {"sys_id": "a1b0564193c68f10e3aef0aefaba10cb", "number": "RK0020010", "name": "Critical vendor SaaS outage disrupts operations", "category": "Vendor Ecosystem", "freq_min": 0.5, "freq_ml": 1.2, "freq_max": 3.0, "imp_min": 20000.0, "imp_ml": 120000.0, "imp_max": 600000.0, "model": "pert"}, {"sys_id": "b1b0564193c68f10e3aef0aefaba10de", "number": "RK0020011", "name": "Vendor mishandles regulated data processing", "category": "Vendor Ecosystem", "freq_min": 0.05, "freq_ml": 0.2, "freq_max": 0.6, "imp_min": 250000.0, "imp_ml": 1000000.0, "imp_max": 6000000.0, "model": "pert"}]};
+
+  // ---------- seeded RNG ----------
+  function mulberry32(seed) {
+    var a = seed &gt;&gt;&gt; 0;
+    return function () {
+      a = (a + 0x6D2B79F5) &gt;&gt;&gt; 0;
+      var t = a;
+      t = Math.imul(t ^ (t &gt;&gt;&gt; 15), t | 1);
+      t ^= t + Math.imul(t ^ (t &gt;&gt;&gt; 7), t | 61);
+      return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+    };
+  }
+  function normal(rng) {
+    var u = 0, v = 0;
+    while (u === 0) { u = rng(); }
+    v = rng();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+  }
+  function poisson(rng, lam) {
+    if (lam &lt;= 0) { return 0; }
+    if (lam &gt;= 30) {
+      var n = Math.round(lam + Math.sqrt(lam) * normal(rng));
+      return n &gt; 0 ? n : 0;
+    }
+    var L = Math.exp(-lam), k = 0, p = 1;
+    do { k += 1; p *= rng(); } while (p &gt; L);
+    return k - 1;
+  }
+  function gammaSample(rng, shape) {
+    if (shape &lt; 1) {
+      return gammaSample(rng, shape + 1) * Math.pow(rng(), 1 / shape);
+    }
+    var d = shape - 1 / 3, c = 1 / Math.sqrt(9 * d);
+    for (;;) {
+      var x = normal(rng), v = 1 + c * x;
+      if (v &lt;= 0) { continue; }
+      v = v * v * v;
+      var u = rng();
+      if (u &lt; 1 - 0.0331 * x * x * x * x) { return d * v; }
+      if (Math.log(u) &lt; 0.5 * x * x + d * (1 - v + Math.log(v))) { return d * v; }
+    }
+  }
+  function betaSample(rng, a, b) {
+    var x = gammaSample(rng, a);
+    var y = gammaSample(rng, b);
+    return x / (x + y);
+  }
+  var Z90 = 1.2815515655446004;
+  function severitySampler(low, ml, high, model) {
+    if (high &lt;= 0) { return function () { return 0; }; }
+    if (model === "pert") {
+      var span = high - low;
+      if (span &lt;= 0) { return function () { return ml; }; }
+      var al = 1 + 4 * (ml - low) / span;
+      var be = 1 + 4 * (high - ml) / span;
+      return function (rng) { return low + betaSample(rng, al, be) * span; };
+    }
+    var mu, sigma;
+    if (low &gt; 0 &amp;&amp; high &gt; low) {
+      mu = (Math.log(low) + Math.log(high)) / 2;
+      sigma = (Math.log(high) - Math.log(low)) / (2 * Z90);
+    } else { mu = Math.log(ml &gt; 0 ? ml : 1); sigma = 0.5; }
+    if (sigma &lt; 1e-9) { sigma = 1e-9; }
+    return function (rng) { return Math.exp(mu + sigma * normal(rng)); };
+  }
+
+  // ---------- formatting ----------
+  function fmtMoney(v) {
+    var a = Math.abs(v), s = v &lt; 0 ? "-" : "";
+    function trim(x) {
+      var t = x.toFixed(x &gt;= 100 ? 0 : (x &gt;= 10 ? 1 : 2));
+      return t.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+    }
+    if (a &gt;= 1e9) { return s + "$" + trim(a / 1e9) + "B"; }
+    if (a &gt;= 1e6) { return s + "$" + trim(a / 1e6) + "M"; }
+    if (a &gt;= 1e3) { return s + "$" + trim(a / 1e3) + "K"; }
+    return s + "$" + Math.round(a);
+  }
+  function fmtMoneyFull(v) {
+    return "$" + Math.round(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+  function fmtInt(v) {
+    return Math.round(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+  function fmtPct(v, digits) {
+    return (100 * v).toFixed(digits === undefined ? 1 : digits) + "%";
+  }
+
+  // ---------- percentiles ----------
+  function percentileSorted(sorted, q) {
+    if (sorted.length === 0) { return 0; }
+    var idx = (q / 100) * (sorted.length - 1);
+    var lo = Math.floor(idx), hi = Math.ceil(idx);
+    if (lo === hi) { return sorted[lo]; }
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+
+  // ---------- DOM / SVG helpers ----------
+  var SVGNS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs, parent) {
+    var node = document.createElementNS(SVGNS, tag);
+    if (attrs) {
+      for (var k in attrs) {
+        if (k === "text") { node.appendChild(document.createTextNode(attrs[k])); }
+        else { node.setAttribute(k, attrs[k]); }
+      }
+    }
+    if (parent) { parent.appendChild(node); }
+    return node;
+  }
+  function hel(tag, cls, parent) {
+    var node = document.createElement(tag);
+    if (cls) { node.className = cls; }
+    if (parent) { parent.appendChild(node); }
+    return node;
+  }
+  function byId(id) { return document.getElementById(id); }
+  function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
+
+  var CAT_VARS = ["--series-1", "--series-2", "--series-3", "--series-4",
+                  "--series-5", "--series-6", "--series-7", "--series-8"];
+
+  // ---------- tooltip ----------
+  function makeTip(box) {
+    var tip = hel("div", "mc-tip", box);
+    return {
+      show: function (rows, x, y, header) {
+        clear(tip);
+        if (header) { hel("div", "tip-h", tip).textContent = header; }
+        rows.forEach(function (r) {
+          var row = hel("div", "tip-row", tip);
+          if (r.color) {
+            var key = hel("span", "tip-key", row);
+            key.style.borderTopColor = r.color;
+          }
+          hel("span", "tip-val", row).textContent = r.value;
+          hel("span", "tip-lbl", row).textContent = r.label;
+        });
+        tip.style.display = "block";
+        var bw = box.clientWidth, tw = tip.offsetWidth, th = tip.offsetHeight;
+        var left = x + 14;
+        if (left + tw &gt; bw - 4) { left = x - tw - 14; }
+        if (left &lt; 0) { left = 4; }
+        var top = y - th - 10;
+        if (top &lt; 0) { top = y + 14; }
+        tip.style.left = left + "px";
+        tip.style.top = top + "px";
+      },
+      hide: function () { tip.style.display = "none"; }
+    };
+  }
+
+  // ---------- state ----------
+  var scenario = [];    // per-risk editable params
+  var trials = 10000;
+  var seed = 42;
+  var freqMult = 1.0, sevMult = 1.0;
+  var baseline = null;  // summary of the un-stressed initial portfolio
+  var lastResult = null;
+  var runToken = 0;
+  var catColor = {};    // category -&gt; css var
+  var dataSource = "snapshot";
+
+  function initScenario() {
+    scenario = DATA.risks.map(function (r) {
+      return {
+        sys_id: r.sys_id, number: r.number, name: r.name, category: r.category,
+        enabled: true, model: r.model,
+        fmin: r.freq_min, fml: r.freq_ml, fmax: r.freq_max,
+        imin: r.imp_min, iml: r.imp_ml, imax: r.imp_max
+      };
+    });
+    var cats = [];
+    scenario.forEach(function (r) {
+      if (cats.indexOf(r.category) === -1) { cats.push(r.category); }
+    });
+    catColor = {};
+    cats.forEach(function (c, i) {
+      catColor[c] = i &lt; 8 ? "var(" + CAT_VARS[i] + ")" : "var(--demph)";
+    });
+  }
+
+  // ---------- simulation (chunked, cancellable) ----------
+  function activeModels() {
+    return scenario.filter(function (r) { return r.enabled; }).map(function (r) {
+      var fml = Math.max(r.fml, 0);
+      var lam = ((Math.max(r.fmin, 0) + 4 * fml + Math.max(r.fmax, 0)) / 6) * freqMult;
+      var low = Math.max(r.imin, 0) * sevMult;
+      var ml = Math.max(r.iml, 0) * sevMult;
+      var high = Math.max(r.imax, 0) * sevMult;
+      if (ml &lt; low) { ml = low; }
+      if (high &lt; ml) { high = ml; }
+      return { ref: r, lam: lam, sample: severitySampler(low, ml, high, r.model) };
+    });
+  }
+
+  function runSimulation(done) {
+    var models = activeModels();
+    var token = ++runToken;
+    var progress = byId("progBar");
+    var n = trials;
+    var rng = mulberry32(seed);
+    var portfolio = new Float64Array(n);
+    var perRiskSum = new Array(models.length);
+    var storePerRisk = models.length * n &lt;= 5000000;
+    var perRiskArr = storePerRisk ? models.length : 0;
+    var perRisk = [];
+    var m;
+    for (m = 0; m &lt; models.length; m++) {
+      perRiskSum[m] = 0;
+      if (storePerRisk) { perRisk.push(new Float64Array(n)); }
+    }
+    var checkEvery = Math.max(1, Math.floor(n / 120));
+    var conv = [];
+    var runningSum = 0;
+    var i = 0;
+    var CHUNK = 2500;
+
+    document.querySelectorAll(".chart-box").forEach(function (b) { b.classList.add("faded"); });
+
+    function step() {
+      if (token !== runToken) { return; }  // superseded run
+      var stop = Math.min(i + CHUNK, n);
+      for (; i &lt; stop; i++) {
+        var yearLoss = 0;
+        for (m = 0; m &lt; models.length; m++) {
+          var events = poisson(rng, models[m].lam);
+          var loss = 0;
+          for (var e = 0; e &lt; events; e++) { loss += models[m].sample(rng); }
+          if (storePerRisk) { perRisk[m][i] = loss; }
+          perRiskSum[m] += loss;
+          yearLoss += loss;
+        }
+        portfolio[i] = yearLoss;
+        runningSum += yearLoss;
+        if ((i + 1) % checkEvery === 0 || i === n - 1) {
+          conv.push([i + 1, runningSum / (i + 1)]);
+        }
+      }
+      progress.style.width = Math.round(100 * i / n) + "%";
+      if (i &lt; n) { setTimeout(step, 0); return; }
+
+      var sorted = Float64Array.from(portfolio);
+      Array.prototype.sort.call(sorted, function (a, b) { return a - b; });
+      var zero = 0;
+      for (var z = 0; z &lt; sorted.length &amp;&amp; sorted[z] === 0; z++) { zero++; }
+      var mean = runningSum / n;
+      var per = models.map(function (mod, idx) {
+        var eal = perRiskSum[idx] / n;
+        var p95 = null;
+        if (storePerRisk) {
+          var s = Float64Array.from(perRisk[idx]);
+          Array.prototype.sort.call(s, function (a, b) { return a - b; });
+          p95 = percentileSorted(s, 95);
+        }
+        return { ref: mod.ref, eal: eal, p95: p95 };
+      });
+      var totalEal = per.reduce(function (acc, p) { return acc + p.eal; }, 0);
+      per.forEach(function (p) { p.share = totalEal &gt; 0 ? p.eal / totalEal : 0; });
+      per.sort(function (a, b) { return b.eal - a.eal; });
+
+      var result = {
+        trials: n, seed: seed, mean: mean,
+        sorted: sorted, conv: conv, per: per,
+        p50: percentileSorted(sorted, 50),
+        p90: percentileSorted(sorted, 90),
+        var95: percentileSorted(sorted, 95),
+        var99: percentileSorted(sorted, 99),
+        probZero: zero / n
+      };
+      var tail = sorted.length - Math.floor(0.95 * sorted.length);
+      var tSum = 0;
+      for (var t = sorted.length - tail; t &lt; sorted.length; t++) { tSum += sorted[t]; }
+      result.es95 = tail &gt; 0 ? tSum / tail : result.var95;
+
+      progress.style.width = "100%";
+      setTimeout(function () {
+        if (token === runToken) { progress.style.width = "0%"; }
+      }, 400);
+      document.querySelectorAll(".chart-box").forEach(function (b) { b.classList.remove("faded"); });
+      done(result);
+    }
+    step();
+  }
+
+  // ---------- tiles ----------
+  function tile(parent, label, value, deltaPct, note, hero) {
+    var t = hel("div", hero ? "tile hero" : "tile", parent);
+    hel("div", "t-label", t).textContent = label;
+    hel("div", "t-value", t).textContent = value;
+    if (deltaPct !== null &amp;&amp; baseline) {
+      var d = hel("div", "t-delta", t);
+      if (Math.abs(deltaPct) &lt; 0.5) {
+        d.className = "t-delta flat"; d.textContent = "≈ baseline";
+      } else {
+        var up = deltaPct &gt; 0;
+        d.className = "t-delta " + (up ? "worse" : "better");
+        d.textContent = (up ? "▲ +" : "▼ ") + deltaPct.toFixed(1) + "% vs baseline";
+      }
+    }
+    if (note) { hel("div", "t-note", t).textContent = note; }
+  }
+  function renderTiles(r) {
+    var tiles = byId("tiles");
+    clear(tiles);
+    function dp(cur, base) { return base &gt; 0 ? (100 * (cur - base) / base) : 0; }
+    var b = baseline;
+    tile(tiles, "Expected annual loss", fmtMoney(r.mean), b ? dp(r.mean, b.mean) : null,
+         "mean across " + fmtInt(r.trials) + " simulated years", true);
+    tile(tiles, "VaR 95", fmtMoney(r.var95), b ? dp(r.var95, b.var95) : null,
+         "1-in-20 year loss");
+    tile(tiles, "VaR 99", fmtMoney(r.var99), b ? dp(r.var99, b.var99) : null,
+         "1-in-100 year loss");
+    tile(tiles, "Expected shortfall 95", fmtMoney(r.es95), b ? dp(r.es95, b.es95) : null,
+         "mean of the worst 5% of years");
+    tile(tiles, "Quiet-year chance", fmtPct(r.probZero), null,
+         "years with zero loss events");
+  }
+
+  // ---------- axes ----------
+  function niceTicks(min, max, count) {
+    var span = max - min;
+    if (span &lt;= 0) { return [min]; }
+    var step = Math.pow(10, Math.floor(Math.log(span / count) / Math.LN10));
+    var err = span / count / step;
+    if (err &gt;= 7.5) { step *= 10; } else if (err &gt;= 3.5) { step *= 5; } else if (err &gt;= 1.5) { step *= 2; }
+    var ticks = [];
+    for (var v = Math.ceil(min / step) * step; v &lt;= max + step * 0.001; v += step) { ticks.push(v); }
+    return ticks;
+  }
+
+  // ---------- histogram ----------
+  function renderHist(r) {
+    var box = byId("histBox");
+    clear(box);
+    var W = Math.max(box.clientWidth, 280), H = 240;
+    var padL = 44, padR = 12, padT = 10, padB = 30;
+    var svg = el("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H }, box);
+    var tip = makeTip(box);
+
+    var clip = percentileSorted(r.sorted, 99);
+    if (clip &lt;= 0) { clip = 1; }
+    var BINS = 36;
+    var counts = new Array(BINS); var bi;
+    for (bi = 0; bi &lt; BINS; bi++) { counts[bi] = 0; }
+    var over = 0;
+    for (var i = 0; i &lt; r.sorted.length; i++) {
+      var v = r.sorted[i];
+      if (v &gt; clip) { over++; continue; }
+      var b = Math.min(BINS - 1, Math.floor(BINS * v / clip));
+      counts[b]++;
+    }
+    var maxC = 1;
+    for (bi = 0; bi &lt; BINS; bi++) { if (counts[bi] &gt; maxC) { maxC = counts[bi]; } }
+    byId("histSub").textContent = fmtInt(r.trials) + " simulated years · binned to P99 (" +
+      fmtMoney(clip) + "); " + fmtPct(over / r.trials) + " of years beyond";
+
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+    var yTicks = niceTicks(0, maxC, 4);
+    yTicks.forEach(function (t) {
+      var y = padT + plotH - plotH * t / maxC;
+      el("line", { x1: padL, x2: W - padR, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+      el("text", { x: padL - 6, y: y + 3.5, "text-anchor": "end", "class": "axis-text", text: fmtInt(t) }, svg);
+    });
+    var xTicks = niceTicks(0, clip, 5);
+    xTicks.forEach(function (t) {
+      var x = padL + plotW * t / clip;
+      el("text", { x: x, y: H - 10, "text-anchor": "middle", "class": "axis-text", text: fmtMoney(t) }, svg);
+    });
+    el("line", { x1: padL, x2: W - padR, y1: padT + plotH, y2: padT + plotH, stroke: "var(--axisline)", "stroke-width": 1 }, svg);
+
+    var bw = plotW / BINS;
+    var barW = Math.min(bw - 2, 24);
+    for (bi = 0; bi &lt; BINS; bi++) {
+      var h = plotH * counts[bi] / maxC;
+      if (h &gt; 0 &amp;&amp; h &lt; 1) { h = 1; }
+      var x0 = padL + bi * bw + (bw - barW) / 2;
+      var y0 = padT + plotH - h;
+      var rad = Math.min(4, barW / 2, h);
+      el("path", {
+        d: "M" + x0 + "," + (y0 + h) + " L" + x0 + "," + (y0 + rad) +
+           " Q" + x0 + "," + y0 + " " + (x0 + rad) + "," + y0 +
+           " L" + (x0 + barW - rad) + "," + y0 +
+           " Q" + (x0 + barW) + "," + y0 + " " + (x0 + barW) + "," + (y0 + rad) +
+           " L" + (x0 + barW) + "," + (y0 + h) + " Z",
+        style: "fill:var(--series-1)"
+      }, svg);
+    }
+    for (bi = 0; bi &lt; BINS; bi++) {
+      (function (bi) {
+        var lo = clip * bi / BINS, hi2 = clip * (bi + 1) / BINS;
+        var hit = el("rect", {
+          x: padL + bi * bw, y: padT, width: bw, height: plotH,
+          "class": "bar-hit", tabindex: 0,
+          "aria-label": fmtMoney(lo) + " to " + fmtMoney(hi2) + ": " + fmtInt(counts[bi]) + " years"
+        }, svg);
+        function show(evt) {
+          var rect = box.getBoundingClientRect();
+          var px = evt &amp;&amp; evt.clientX ? evt.clientX - rect.left : padL + bi * bw + bw / 2;
+          var py = evt &amp;&amp; evt.clientY ? evt.clientY - rect.top : padT + 20;
+          tip.show([
+            { value: fmtInt(counts[bi]) + " years", label: fmtPct(counts[bi] / r.trials), color: getComputedStyle(box.closest(".viz-root")).getPropertyValue("--series-1") }
+          ], px, py, fmtMoney(lo) + " – " + fmtMoney(hi2));
+        }
+        hit.addEventListener("pointermove", show);
+        hit.addEventListener("focus", function () { show(null); });
+        hit.addEventListener("pointerleave", tip.hide);
+        hit.addEventListener("blur", tip.hide);
+      })(bi);
+    }
+
+    var tbl = byId("histTable");
+    clear(tbl);
+    var t2 = hel("table", null, tbl);
+    var tr = hel("tr", null, hel("thead", null, t2));
+    ["Loss bin", "Years", "Share"].forEach(function (h) { hel("th", null, tr).textContent = h; });
+    var tb = hel("tbody", null, t2);
+    for (bi = 0; bi &lt; BINS; bi++) {
+      if (counts[bi] === 0) { continue; }
+      var row = hel("tr", null, tb);
+      hel("td", null, row).textContent = fmtMoney(clip * bi / BINS) + " – " + fmtMoney(clip * (bi + 1) / BINS);
+      hel("td", null, row).textContent = fmtInt(counts[bi]);
+      hel("td", null, row).textContent = fmtPct(counts[bi] / r.trials);
+    }
+    if (over &gt; 0) {
+      var orow = hel("tr", null, tb);
+      hel("td", null, orow).textContent = "beyond " + fmtMoney(clip);
+      hel("td", null, orow).textContent = fmtInt(over);
+      hel("td", null, orow).textContent = fmtPct(over / r.trials);
+    }
+  }
+
+  // ---------- loss exceedance curve ----------
+  function renderLec(r) {
+    var box = byId("lecBox");
+    clear(box);
+    var W = Math.max(box.clientWidth, 280), H = 240;
+    var padL = 44, padR = 14, padT = 10, padB = 30;
+    var svg = el("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H }, box);
+    var tip = makeTip(box);
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+
+    var sorted = r.sorted;
+    var minPos = 0;
+    for (var i = 0; i &lt; sorted.length; i++) { if (sorted[i] &gt; 0) { minPos = sorted[i]; break; } }
+    if (minPos === 0) { minPos = 1; }
+    var maxV = sorted[sorted.length - 1];
+    if (maxV &lt;= minPos) { maxV = minPos * 10; }
+    var logMin = Math.log(minPos), logMax = Math.log(maxV);
+    function xOf(v) { return padL + plotW * (Math.log(v) - logMin) / (logMax - logMin); }
+    function exceed(v) {
+      var lo = 0, hi = sorted.length;
+      while (lo &lt; hi) { var mid = (lo + hi) &gt;&gt; 1; if (sorted[mid] &lt; v) { lo = mid + 1; } else { hi = mid; } }
+      return (sorted.length - lo) / sorted.length;
+    }
+    var pts = [];
+    var STEPS = 90;
+    for (var s = 0; s &lt;= STEPS; s++) {
+      var v = Math.exp(logMin + (logMax - logMin) * s / STEPS);
+      pts.push([v, exceed(v)]);
+    }
+    var maxP = pts[0][1];
+    function yOf(p) { return padT + plotH * (1 - (maxP &gt; 0 ? p / maxP : 0)); }
+
+    var pTicks = niceTicks(0, maxP, 4);
+    pTicks.forEach(function (t) {
+      var y = yOf(t);
+      el("line", { x1: padL, x2: W - padR, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+      el("text", { x: padL - 6, y: y + 3.5, "text-anchor": "end", "class": "axis-text", text: fmtPct(t, 0) }, svg);
+    });
+    var decade = Math.pow(10, Math.ceil(Math.log(minPos) / Math.LN10));
+    for (var d2 = decade; d2 &lt;= maxV * 1.0001; d2 *= 10) {
+      var xd = xOf(d2);
+      el("text", { x: xd, y: H - 10, "text-anchor": "middle", "class": "axis-text", text: fmtMoney(d2) }, svg);
+    }
+    el("line", { x1: padL, x2: W - padR, y1: padT + plotH, y2: padT + plotH, stroke: "var(--axisline)", "stroke-width": 1 }, svg);
+
+    var dArea = "M" + xOf(pts[0][0]) + "," + (padT + plotH);
+    var dLine = "";
+    pts.forEach(function (p, idx) {
+      var cmd = (idx === 0 ? "M" : "L");
+      dLine += cmd + xOf(p[0]).toFixed(1) + "," + yOf(p[1]).toFixed(1);
+      dArea += "L" + xOf(p[0]).toFixed(1) + "," + yOf(p[1]).toFixed(1);
+    });
+    dArea += "L" + xOf(pts[pts.length - 1][0]).toFixed(1) + "," + (padT + plotH) + " Z";
+    el("path", { d: dArea, style: "fill:var(--area-wash)" }, svg);
+    el("path", { d: dLine, style: "stroke:var(--series-1);fill:none", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+
+    [[r.var95, "VaR 95", -9], [r.var99, "VaR 99", 18]].forEach(function (mark) {
+      if (mark[0] &lt;= minPos || mark[0] &gt; maxV) { return; }
+      var mx = xOf(mark[0]), my = yOf(exceed(mark[0]));
+      el("circle", { cx: mx, cy: my, r: 4.5, style: "fill:var(--series-1);stroke:var(--surface-1)", "stroke-width": 2 }, svg);
+      var anchor = mx &gt; padL + plotW - 34 ? "end" : "middle";
+      el("text", { x: mx, y: my + mark[2], "text-anchor": anchor, "class": "dl-text", text: mark[1] }, svg);
+    });
+
+    var cross = el("line", { x1: 0, x2: 0, y1: padT, y2: padT + plotH, stroke: "var(--axisline)", "stroke-width": 1, opacity: 0 }, svg);
+    var dot = el("circle", { r: 4.5, style: "fill:var(--series-1);stroke:var(--surface-1)", "stroke-width": 2, opacity: 0 }, svg);
+    var hover = el("rect", { x: padL, y: padT, width: plotW, height: plotH, fill: "transparent" }, svg);
+    hover.addEventListener("pointermove", function (evt) {
+      var rect = box.getBoundingClientRect();
+      var px = evt.clientX - rect.left;
+      if (px &lt; padL) { px = padL; }
+      if (px &gt; padL + plotW) { px = padL + plotW; }
+      var v = Math.exp(logMin + (logMax - logMin) * (px - padL) / plotW);
+      var p = exceed(v);
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("opacity", 1);
+      dot.setAttribute("cx", px); dot.setAttribute("cy", yOf(p)); dot.setAttribute("opacity", 1);
+      tip.show([
+        { value: fmtPct(p), label: "chance annual loss ≥ " + fmtMoney(v), color: getComputedStyle(box.closest(".viz-root")).getPropertyValue("--series-1") },
+        { value: p &gt; 0 ? "1-in-" + fmtInt(Math.round(1 / Math.max(p, 1e-6))) : "—", label: "return period (years)" }
+      ], px, evt.clientY - rect.top);
+    });
+    hover.addEventListener("pointerleave", function () {
+      cross.setAttribute("opacity", 0); dot.setAttribute("opacity", 0); tip.hide();
+    });
+
+    var tbl = byId("lecTable");
+    clear(tbl);
+    var t2 = hel("table", null, tbl);
+    var tr = hel("tr", null, hel("thead", null, t2));
+    ["Annual loss ≥", "Probability", "Return period"].forEach(function (h) { hel("th", null, tr).textContent = h; });
+    var tb = hel("tbody", null, t2);
+    [0.5, 0.2, 0.1, 0.05, 0.02, 0.01].forEach(function (p) {
+      var v = percentileSorted(sorted, 100 * (1 - p));
+      var row = hel("tr", null, tb);
+      hel("td", null, row).textContent = fmtMoneyFull(v);
+      hel("td", null, row).textContent = fmtPct(p, 0);
+      hel("td", null, row).textContent = "1-in-" + Math.round(1 / p) + " years";
+    });
+  }
+
+  // ---------- tornado ----------
+  function renderTornado(r) {
+    var box = byId("torBox");
+    clear(box);
+    var tip = makeTip(box);
+    var TOP = 10;
+    var shown = r.per.slice(0, TOP);
+    var rest = r.per.slice(TOP);
+    var W = Math.max(box.clientWidth, 280);
+    var rowH = 26, padL = 10, padR = 74, padT = 4, padB = 6;
+    var labelW = Math.min(230, Math.max(140, W * 0.36));
+    var rows = shown.length + (rest.length &gt; 0 ? 1 : 0);
+    var H = padT + padB + rows * rowH;
+    var svg = el("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H }, box);
+    var plotW = W - padL - labelW - padR;
+    var maxE = shown.length &gt; 0 ? shown[0].eal : 1;
+    var restSum = rest.reduce(function (a, p) { return a + p.eal; }, 0);
+    if (restSum &gt; maxE) { maxE = restSum; }
+
+    var legend = byId("torLegend");
+    clear(legend);
+    var seen = [];
+    r.per.forEach(function (p) {
+      var c = p.ref.category;
+      if (seen.indexOf(c) === -1) { seen.push(c); }
+    });
+    seen.forEach(function (c) {
+      var lg = hel("span", "lg", legend);
+      var sw = hel("span", "sw", lg);
+      sw.style.background = catColor[c] || "var(--demph)";
+      lg.appendChild(document.createTextNode(c || "uncategorized"));
+    });
+
+    var maxChars = Math.max(8, Math.floor((labelW - 12) / 6.4));
+    function bar(idx, name, eal, share, p95, color, cat) {
+      var y = padT + idx * rowH;
+      var bw = Math.max(plotW * eal / maxE, 1.5);
+      var bh = 16;
+      var by = y + (rowH - bh) / 2;
+      var lbl = el("text", { x: padL + labelW - 8, y: y + rowH / 2 + 3.5, "text-anchor": "end", "class": "axis-text", text: name.length &gt; maxChars ? name.slice(0, maxChars - 1) + "…" : name }, svg);
+      lbl.style.fill = "var(--ink-2)";
+      var rad = Math.min(4, bw);
+      el("path", {
+        d: "M" + (padL + labelW) + "," + by +
+           " L" + (padL + labelW + bw - rad) + "," + by +
+           " Q" + (padL + labelW + bw) + "," + by + " " + (padL + labelW + bw) + "," + (by + rad) +
+           " L" + (padL + labelW + bw) + "," + (by + bh - rad) +
+           " Q" + (padL + labelW + bw) + "," + (by + bh) + " " + (padL + labelW + bw - rad) + "," + (by + bh) +
+           " L" + (padL + labelW) + "," + (by + bh) + " Z",
+        style: "fill:" + color
+      }, svg);
+      el("text", { x: padL + labelW + bw + 6, y: y + rowH / 2 + 3.5, "class": "dl-text", text: fmtMoney(eal) }, svg);
+      var hit = el("rect", { x: 0, y: y, width: W, height: rowH, "class": "bar-hit", tabindex: 0,
+        "aria-label": name + ": " + fmtMoney(eal) + " expected annual loss, " + fmtPct(share) }, svg);
+      function show(evt) {
+        var rect = box.getBoundingClientRect();
+        var px = evt &amp;&amp; evt.clientX ? evt.clientX - rect.left : padL + labelW + 40;
+        var py = evt &amp;&amp; evt.clientY ? evt.clientY - rect.top : y;
+        var rowsData = [
+          { value: fmtMoney(eal), label: "expected annual loss", color: color.indexOf("var(") === 0 ? getComputedStyle(box.closest(".viz-root")).getPropertyValue(color.slice(4, -1)) : color },
+          { value: fmtPct(share), label: "of portfolio EAL" }
+        ];
+        if (p95 !== null &amp;&amp; p95 !== undefined) {
+          rowsData.push({ value: fmtMoney(p95), label: "P95 annual loss" });
+        }
+        tip.show(rowsData, px, py, cat ? name + " · " + cat : name);
+      }
+      hit.addEventListener("pointermove", show);
+      hit.addEventListener("focus", function () { show(null); });
+      hit.addEventListener("pointerleave", tip.hide);
+      hit.addEventListener("blur", tip.hide);
+    }
+
+    shown.forEach(function (p, idx) {
+      bar(idx, p.ref.name, p.eal, p.share, p.p95, catColor[p.ref.category] || "var(--demph)", p.ref.category);
+    });
+    if (rest.length &gt; 0) {
+      var restShare = r.per.reduce(function (a, p2) { return a + p2.share; }, 0);
+      var shownShare = shown.reduce(function (a, p2) { return a + p2.share; }, 0);
+      bar(shown.length, "Other (" + rest.length + " risks)", restSum, restShare - shownShare, null, "var(--demph)", "");
+    }
+
+    var tbl = byId("torTable");
+    clear(tbl);
+    var t2 = hel("table", null, tbl);
+    var tr = hel("tr", null, hel("thead", null, t2));
+    ["Risk", "Entity", "EAL", "Share", "P95 annual loss"].forEach(function (h) { hel("th", null, tr).textContent = h; });
+    var tb = hel("tbody", null, t2);
+    r.per.forEach(function (p) {
+      var row = hel("tr", null, tb);
+      hel("td", null, row).textContent = p.ref.name;
+      hel("td", null, row).textContent = p.ref.category;
+      hel("td", null, row).textContent = fmtMoneyFull(p.eal);
+      hel("td", null, row).textContent = fmtPct(p.share);
+      hel("td", null, row).textContent = p.p95 !== null ? fmtMoneyFull(p.p95) : "—";
+    });
+  }
+
+  // ---------- convergence ----------
+  function renderConv(r) {
+    var box = byId("convBox");
+    clear(box);
+    var W = Math.max(box.clientWidth, 280), H = 240;
+    var padL = 52, padR = 60, padT = 12, padB = 30;
+    var svg = el("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H }, box);
+    var tip = makeTip(box);
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+    var conv = r.conv;
+    if (conv.length &lt; 2) { return; }
+    var minY = Infinity, maxY = -Infinity;
+    var start = Math.min(4, conv.length - 1);
+    for (var i = start; i &lt; conv.length; i++) {
+      if (conv[i][1] &lt; minY) { minY = conv[i][1]; }
+      if (conv[i][1] &gt; maxY) { maxY = conv[i][1]; }
+    }
+    var padY = (maxY - minY) * 0.25 + 1;
+    minY -= padY; maxY += padY;
+    if (minY &lt; 0) { minY = 0; }
+    function xOf(t) { return padL + plotW * t / r.trials; }
+    function yOf(v) { return padT + plotH * (1 - (v - minY) / (maxY - minY)); }
+
+    niceTicks(minY, maxY, 4).forEach(function (t) {
+      var y = yOf(t);
+      if (y &lt; padT || y &gt; padT + plotH) { return; }
+      el("line", { x1: padL, x2: W - padR, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+      el("text", { x: padL - 6, y: y + 3.5, "text-anchor": "end", "class": "axis-text", text: fmtMoney(t) }, svg);
+    });
+    niceTicks(0, r.trials, 5).forEach(function (t) {
+      if (t === 0) { return; }
+      el("text", { x: xOf(t), y: H - 10, "text-anchor": "middle", "class": "axis-text", text: fmtInt(t) }, svg);
+    });
+    el("line", { x1: padL, x2: W - padR, y1: padT + plotH, y2: padT + plotH, stroke: "var(--axisline)", "stroke-width": 1 }, svg);
+
+    var d = "";
+    conv.forEach(function (p, idx) {
+      d += (idx === 0 ? "M" : "L") + xOf(p[0]).toFixed(1) + "," + yOf(Math.min(Math.max(p[1], minY), maxY)).toFixed(1);
+    });
+    el("path", { d: d, style: "stroke:var(--series-1);fill:none", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    var last = conv[conv.length - 1];
+    el("circle", { cx: xOf(last[0]), cy: yOf(last[1]), r: 4.5, style: "fill:var(--series-1);stroke:var(--surface-1)", "stroke-width": 2 }, svg);
+    el("text", { x: xOf(last[0]) + 8, y: yOf(last[1]) + 3.5, "class": "dl-text", text: fmtMoney(last[1]) }, svg);
+
+    var cross = el("line", { x1: 0, x2: 0, y1: padT, y2: padT + plotH, stroke: "var(--axisline)", "stroke-width": 1, opacity: 0 }, svg);
+    var dot = el("circle", { r: 4.5, style: "fill:var(--series-1);stroke:var(--surface-1)", "stroke-width": 2, opacity: 0 }, svg);
+    var hover = el("rect", { x: padL, y: padT, width: plotW, height: plotH, fill: "transparent" }, svg);
+    hover.addEventListener("pointermove", function (evt) {
+      var rect = box.getBoundingClientRect();
+      var px = evt.clientX - rect.left;
+      var t = (px - padL) / plotW * r.trials;
+      var best = conv[0];
+      for (var i2 = 0; i2 &lt; conv.length; i2++) {
+        if (Math.abs(conv[i2][0] - t) &lt; Math.abs(best[0] - t)) { best = conv[i2]; }
+      }
+      cross.setAttribute("x1", xOf(best[0])); cross.setAttribute("x2", xOf(best[0])); cross.setAttribute("opacity", 1);
+      dot.setAttribute("cx", xOf(best[0])); dot.setAttribute("cy", yOf(best[1])); dot.setAttribute("opacity", 1);
+      tip.show([
+        { value: fmtMoney(best[1]), label: "running mean EAL", color: getComputedStyle(box.closest(".viz-root")).getPropertyValue("--series-1") }
+      ], xOf(best[0]), evt.clientY - rect.top, "after " + fmtInt(best[0]) + " trials");
+    });
+    hover.addEventListener("pointerleave", function () {
+      cross.setAttribute("opacity", 0); dot.setAttribute("opacity", 0); tip.hide();
+    });
+
+    var tbl = byId("convTable");
+    clear(tbl);
+    var t2 = hel("table", null, tbl);
+    var tr = hel("tr", null, hel("thead", null, t2));
+    ["Trials", "Running mean EAL"].forEach(function (h) { hel("th", null, tr).textContent = h; });
+    var tb = hel("tbody", null, t2);
+    var stride = Math.max(1, Math.floor(conv.length / 10));
+    for (var i3 = 0; i3 &lt; conv.length; i3 += stride) {
+      var row = hel("tr", null, tb);
+      hel("td", null, row).textContent = fmtInt(conv[i3][0]);
+      hel("td", null, row).textContent = fmtMoneyFull(conv[i3][1]);
+    }
+  }
+
+  // ---------- risk table ----------
+  function renderRiskTable(r) {
+    var body = byId("riskRows");
+    clear(body);
+    var byId2 = {};
+    if (r) {
+      r.per.forEach(function (p) { byId2[p.ref.sys_id || p.ref.name] = p; });
+    }
+    scenario.forEach(function (risk) {
+      var row = hel("tr", risk.enabled ? null : "off", body);
+      var tdOn = hel("td", null, row);
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = risk.enabled;
+      cb.addEventListener("change", function () { risk.enabled = cb.checked; scheduleRun(); });
+      tdOn.appendChild(cb);
+      var tdName = hel("td", "name", row);
+      tdName.textContent = risk.name;
+      tdName.title = (risk.number ? risk.number + " — " : "") + risk.name;
+      var tdCat = hel("td", null, row);
+      var dotSpan = hel("span", "catdot", tdCat);
+      dotSpan.style.background = catColor[risk.category] || "var(--demph)";
+      tdCat.appendChild(document.createTextNode(risk.category || "—"));
+
+      [["fmin", 0.01], ["fml", 0.01], ["fmax", 0.01], ["imin", 1000], ["iml", 1000], ["imax", 1000]].forEach(function (f) {
+        var td = hel("td", "num", row);
+        var inp = document.createElement("input");
+        inp.type = "number"; inp.min = "0"; inp.step = String(f[1]);
+        inp.value = String(risk[f[0]]);
+        inp.addEventListener("change", function () {
+          var v = parseFloat(inp.value);
+          if (!isFinite(v) || v &lt; 0) { v = 0; inp.value = "0"; }
+          risk[f[0]] = v;
+          scheduleRun();
+        });
+        td.appendChild(inp);
+      });
+
+      var tdModel = hel("td", null, row);
+      var sel = document.createElement("select");
+      ["pert", "lognormal"].forEach(function (m) {
+        var opt = document.createElement("option");
+        opt.value = m; opt.textContent = m;
+        if (risk.model === m) { opt.selected = true; }
+        sel.appendChild(opt);
+      });
+      sel.addEventListener("change", function () { risk.model = sel.value; scheduleRun(); });
+      tdModel.appendChild(sel);
+
+      var p = byId2[risk.sys_id || risk.name];
+      hel("td", "num", row).textContent = risk.enabled &amp;&amp; p ? fmtMoney(p.eal) : "—";
+      hel("td", "num", row).textContent = risk.enabled &amp;&amp; p ? fmtPct(p.share) : "—";
+    });
+  }
+
+  // ---------- orchestration ----------
+  var pendingTimer = null;
+  function scheduleRun() {
+    if (pendingTimer) { clearTimeout(pendingTimer); }
+    pendingTimer = setTimeout(run, 450);
+  }
+
+  function renderAll(r) {
+    renderTiles(r);
+    renderHist(r);
+    renderLec(r);
+    renderTornado(r);
+    renderConv(r);
+    renderRiskTable(r);
+    var stressed = freqMult !== 1 || sevMult !== 1;
+    byId("mcFoot").textContent =
+      "Source: " + dataSource + " · " + scenario.filter(function (x) { return x.enabled; }).length +
+      " of " + scenario.length + " risks enabled · seed " + r.seed +
+      (stressed ? " · stress freq ×" + freqMult.toFixed(2) + ", severity ×" + sevMult.toFixed(2) : "") +
+      " · Engine: Poisson frequency × PERT/lognormal severity, seeded Mulberry32 RNG · " +
+      "Generated " + DATA.generated_at + " from " + DATA.instance;
+  }
+
+  function run() {
+    runSimulation(function (result) {
+      lastResult = result;
+      if (!baseline &amp;&amp; freqMult === 1 &amp;&amp; sevMult === 1) { baseline = result; }
+      renderAll(result);
+    });
+  }
+
+  // ---------- controls ----------
+  function wireControls() {
+    byId("trialSeg").querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        byId("trialSeg").querySelectorAll("button").forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        trials = parseInt(b.getAttribute("data-trials"), 10);
+        scheduleRun();
+      });
+    });
+    byId("seedIn").addEventListener("change", function () {
+      var v = parseInt(byId("seedIn").value, 10);
+      seed = isFinite(v) ? v : 42;
+      scheduleRun();
+    });
+    function wireStress(id, valId, setter) {
+      byId(id).addEventListener("input", function () {
+        var mult = Math.pow(2, parseFloat(byId(id).value));
+        setter(mult);
+        byId(valId).textContent = "×" + mult.toFixed(mult &lt; 1 ? 2 : 1);
+        scheduleRun();
+      });
+    }
+    wireStress("freqStress", "freqStressVal", function (m) { freqMult = m; });
+    wireStress("sevStress", "sevStressVal", function (m) { sevMult = m; });
+    byId("runBtn").addEventListener("click", run);
+    byId("resetBtn").addEventListener("click", function () {
+      initScenario();
+      freqMult = 1; sevMult = 1;
+      byId("freqStress").value = "0"; byId("sevStress").value = "0";
+      byId("freqStressVal").textContent = "×1.0"; byId("sevStressVal").textContent = "×1.0";
+      baseline = null;
+      run();
+    });
+    document.querySelectorAll(".tbl-toggle").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var t = byId(b.getAttribute("data-table"));
+        var showing = t.classList.toggle("show");
+        b.textContent = showing ? "Chart view" : "Table view";
+      });
+    });
+    var resizeTimer = null;
+    window.addEventListener("resize", function () {
+      if (resizeTimer) { clearTimeout(resizeTimer); }
+      resizeTimer = setTimeout(function () { if (lastResult) { renderAll(lastResult); } }, 200);
+    });
+  }
+
+  // ---------- optional live reload from the instance ----------
+  function num(rec, name) {
+    var v = rec[name];
+    if (v &amp;&amp; typeof v === "object") { v = v.value; }
+    var f = parseFloat(v);
+    return isFinite(f) &amp;&amp; f &gt; 0 ? f : null;
+  }
+  function disp(rec, name) {
+    var v = rec[name];
+    if (v &amp;&amp; typeof v === "object") { return String(v.display_value || ""); }
+    return v === undefined || v === null ? "" : String(v);
+  }
+  function mapLive(records) {
+    var out = [];
+    records.forEach(function (rec) {
+      var fml = num(rec, "u_mc_freq_most_likely");
+      var iml = num(rec, "u_mc_impact_most_likely");
+      var model = "pert";
+      var fmin, fmax, imin, imax;
+      if (!fml || !iml) {
+        var aro = num(rec, "residual_aro") || num(rec, "inherent_aro");
+        var sle = num(rec, "residual_sle") || num(rec, "inherent_sle");
+        if (!aro || !sle) { return; }
+        fml = aro; fmin = aro; fmax = aro;
+        iml = sle; imin = sle * 0.5; imax = sle * 2.5;
+        model = "lognormal";
+      } else {
+        fmin = num(rec, "u_mc_freq_min") || fml;
+        fmax = num(rec, "u_mc_freq_max") || fml;
+        imin = num(rec, "u_mc_impact_min") || iml * 0.5;
+        imax = num(rec, "u_mc_impact_max") || iml * 2.5;
+      }
+      out.push({
+        sys_id: disp(rec, "sys_id") || (rec.sys_id &amp;&amp; rec.sys_id.value) || rec.sys_id,
+        number: disp(rec, "number"),
+        name: disp(rec, "short_description") || disp(rec, "number") || "unnamed risk",
+        category: disp(rec, "profile") || "uncategorized",
+        freq_min: fmin, freq_ml: fml, freq_max: fmax,
+        imp_min: imin, imp_ml: iml, imp_max: imax,
+        model: model
+      });
+    });
+    return out;
+  }
+  function tryLive() {
+    var host = window.location.hostname || "";
+    if (host.indexOf("service-now.com") === -1) { return; }
+    var btn = byId("liveBtn");
+    btn.style.display = "";
+    function reload() {
+      btn.disabled = true;
+      var headers = { "Accept": "application/json" };
+      if (window.g_ck) { headers["X-UserToken"] = window.g_ck; }
+      fetch("/api/now/table/sn_risk_risk?sysparm_display_value=all&amp;sysparm_limit=500", { headers: headers, credentials: "same-origin" })
+        .then(function (resp) {
+          if (!resp.ok) { throw new Error("HTTP " + resp.status); }
+          return resp.json();
+        })
+        .then(function (json) {
+          var mapped = mapLive(json.result || []);
+          if (mapped.length === 0) { throw new Error("no readable risks (check GRC roles)"); }
+          DATA.risks = mapped;
+          dataSource = "live sn_risk_risk (" + mapped.length + " risks)";
+          byId("mcMeta").textContent = mapped.length + " risks · live from this instance";
+          initScenario();
+          baseline = null;
+          run();
+        })
+        .catch(function (err) {
+          dataSource = "embedded snapshot (live fetch failed: " + err.message + ")";
+          if (lastResult) { renderAll(lastResult); }
+        })
+        .then(function () { btn.disabled = false; });
+    }
+    btn.addEventListener("click", reload);
+    reload();
+  }
+
+  // ---------- boot ----------
+  function boot() {
+    if (!DATA || !DATA.risks || DATA.risks.length === 0) {
+      byId("mcMeta").textContent = "no risk data embedded";
+      return;
+    }
+    dataSource = "embedded snapshot (" + DATA.risks.length + " risks)";
+    byId("mcMeta").textContent = DATA.risks.length + " risks · snapshot " + DATA.generated_at;
+    initScenario();
+    wireControls();
+    run();
+    tryLive();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else { boot(); }
+})();
+//]]&gt;
+&lt;/script&gt;
+&lt;/div&gt;
+
+&lt;/j:jelly&gt;
+</html><name>mc_risk_dashboard</name><processing_script/><sys_class_name>sys_ui_page</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-11 12:39:07</sys_created_on><sys_id>de2412c593c68f10e3aef0aefaba1036</sys_id><sys_mod_count>0</sys_mod_count><sys_name>mc_risk_dashboard</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_ui_page_de2412c593c68f10e3aef0aefaba1036</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-11 12:39:07</sys_updated_on></sys_ui_page></record_update>

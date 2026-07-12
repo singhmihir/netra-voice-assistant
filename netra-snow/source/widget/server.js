@@ -607,7 +607,7 @@
         if (!hasCue) {
             try {
                 var b = _ctxReadBlob();
-                b.sentiment = b.sentiment || { history: [], consecutive_frustrated: 0 };
+                b.sentiment = (b.sentiment && b.sentiment.history) ? b.sentiment : { history: [], consecutive_frustrated: 0 };
                 b.sentiment.history.push({ t: new GlideDateTime().toString(), label: 'neutral', score: 0 });
                 if (b.sentiment.history.length > 10) b.sentiment.history = b.sentiment.history.slice(-10);
                 b.sentiment.consecutive_frustrated = 0;
@@ -628,7 +628,7 @@
         if (!useLlmSentiment) {
             try {
                 var bk = _ctxReadBlob();
-                bk.sentiment = bk.sentiment || { history: [], consecutive_frustrated: 0 };
+                bk.sentiment = (bk.sentiment && bk.sentiment.history) ? bk.sentiment : { history: [], consecutive_frustrated: 0 };
                 bk.sentiment.history.push({ t: new GlideDateTime().toString(), label: 'frustrated', score: 0.6 });
                 if (bk.sentiment.history.length > 10) bk.sentiment.history = bk.sentiment.history.slice(-10);
                 bk.sentiment.consecutive_frustrated = (bk.sentiment.consecutive_frustrated || 0) + 1;
@@ -665,7 +665,7 @@
         // Persist in Context blob as a rolling list (last 10 turns)
         try {
             var blob = _ctxReadBlob();
-            blob.sentiment = blob.sentiment || { history: [], consecutive_frustrated: 0 };
+            blob.sentiment = (blob.sentiment && blob.sentiment.history) ? blob.sentiment : { history: [], consecutive_frustrated: 0 };
             blob.sentiment.history.push({
                 t: new GlideDateTime().toString(),
                 label: label,
@@ -1135,10 +1135,18 @@
 '     -> lookup_user(John) -> "I found two Johns: John Adams and John Smith. Which one?"\n' +
 '     -> User: "Adams" -> send_sidebar_message(recipient_name="John Adams", ...)\n' +
 '\n' +
-'2. CONFIRM BEFORE WRITING (blind-user safety) - for EVERY operation that changes something, describe what you are about to do and wait for explicit yes. Tools that need confirmation: create_ticket, create_problem, create_change, confirm_and_create, resolve_ticket, update_ticket, add_work_note, change_priority, escalate_ticket, assign_ticket_to_group, assign_ticket_to_user, update_field, decide_approval, send_sidebar_message, assign_vulnerable_item, set_vulnerable_item_state, defer_vulnerable_item, click_button (write actions), open_url, navigate_to_record (only if it leaves /sp), go_to_servicenow.\n' +
+'2. CONFIRM BEFORE WRITING (blind-user safety) - for EVERY operation that changes something, describe what you are about to do and wait for explicit yes. Tools that need confirmation: create_ticket, create_problem, create_change, confirm_and_create, resolve_ticket, update_ticket, add_work_note, change_priority, escalate_ticket, assign_ticket_to_group, assign_ticket_to_user, update_field, decide_approval, send_sidebar_message, assign_vulnerable_item, set_vulnerable_item_state, defer_vulnerable_item, click_button (write actions), open_url, navigate_to_record (only if it leaves /sp), go_to_servicenow, batch_update_tickets, undo_last_action.\n' +
 '   - For read-only operations (list, lookup, search, summarize, briefing) you do NOT confirm. Just do them - speed is the feature.\n' +
+'   - BATCH updates are confirm-at-scale: read the FULL list of ticket numbers and the exact change aloud, then wait for yes in a LATER turn. Never batch more than the user explicitly listed or approved.\n' +
+'   - UNDO: first say precisely what will be undone ("that deletes INC0012345 you just created" / "that puts priority back to 3"), wait for yes, then call undo_last_action.\n' +
 '\n' +
 '3. WHEN UNSURE, SAY NO. Better to ask "I am not sure I followed - did you mean X or Y?" than to do the wrong write. Refuse politely if intent is unclear.\n' +
+'\n' +
+'R14 - ROUTINES, RADAR, UNDO (power moves):\n' +
+'- "define/teach my <name> routine: A, then B, then C" -> define_routine(name, [A,B,C]). "run my <name> routine" -> run_routine, then EXECUTE every step in order with your tools and give ONE combined summary. "what routines do I have" -> list_routines.\n' +
+'- "what is about to breach / anything at risk / SLA status" -> sla_radar. Read the worst offenders with percent consumed and time left, most urgent first.\n' +
+'- "undo that / take it back / I did not mean that" -> say what the last action was and what undo will do, confirm, then undo_last_action.\n' +
+'- "do X to all of those" after a list -> batch_update_tickets with the exact numbers from your last answer (max 25), after the confirm-at-scale readback.\n' +
 '\n' +
 'CAPABILITIES & MEMORY:\n' +
 '- When user asks "what can you do?" / "help me" / "show me your features" - call list_capabilities and read the categories.\n' +
@@ -1310,6 +1318,49 @@
                         },
                         required: ['ref_number','decision']
                     }
+                },
+                {
+                    name: 'undo_last_action',
+                    description: 'Undo the last write Netra made: deletes a just-created record, restores a changed field (priority/assignment) to its previous value, or reopens a just-resolved ticket. Always tell the user WHAT will be undone and get a clear yes in a later turn BEFORE calling this.',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'define_routine',
+                    description: 'Save a named voice routine (macro) of 1-6 steps the user can run later with run_routine. Steps are plain-language commands like "read my daily briefing".',
+                    parameters: { type: 'object', properties: {
+                        name:  { type: 'string', description: 'short name, e.g. "morning routine"' },
+                        steps: { type: 'array', items: { type: 'string' } }
+                    }, required: ['name','steps'] }
+                },
+                {
+                    name: 'run_routine',
+                    description: 'Fetch a saved routine and execute its steps in order in this turn, then give one combined summary.',
+                    parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }
+                },
+                {
+                    name: 'list_routines',
+                    description: 'List the voice routines the user has saved.',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'delete_routine',
+                    description: 'Delete a saved voice routine by name.',
+                    parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }
+                },
+                {
+                    name: 'sla_radar',
+                    description: 'What is ABOUT to breach: active SLAs ranked by percent consumed (or an aging report if no SLAs run here). Use for "what is about to breach", "anything at risk", "SLA status".',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
+                    name: 'batch_update_tickets',
+                    description: 'Update up to 25 tickets in one go: add the same comment, set priority, and/or set state. DESTRUCTIVE AT SCALE - first read the full list of numbers aloud, get an explicit yes in a LATER turn, only then call.',
+                    parameters: { type: 'object', properties: {
+                        ticket_numbers: { type: 'array', items: { type: 'string' } },
+                        comment:  { type: 'string' },
+                        priority: { type: 'string', enum: ['1','2','3','4'] },
+                        state:    { type: 'string', description: 'numeric state value, e.g. 2 = In Progress, 6 = Resolved' }
+                    }, required: ['ticket_numbers'] }
                 },
                 {
                     name: 'pause_notifications',
@@ -1880,7 +1931,8 @@
         return {
             resolve_ticket: 1, update_ticket: 1, change_priority: 1,
             escalate_ticket: 1, assign_ticket_to_group: 1,
-            assign_ticket_to_user: 1, add_work_note: 1, update_field: 1
+            assign_ticket_to_user: 1, add_work_note: 1, update_field: 1,
+            batch_update_tickets: 1, undo_last_action: 1   // R14
         };
     }
     function _ticketWritesEnabled() {
@@ -1910,11 +1962,23 @@
             var tools = new NetraTools();
             switch (name) {
                 case 'create_ticket':
-                    return tools.createTicket(String(args.short_description || ''), String(args.urgency || '3'));
+                    return _noteUndoCreated(tools.createTicket(String(args.short_description || ''), String(args.urgency || '3')), 'incident');
                 case 'list_tickets':
                     return tools.listMyTickets(8);
-                case 'resolve_ticket':
-                    return tools.resolveTicket(_normNum(args.ticket_number), args.close_notes || '');
+                case 'resolve_ticket': {
+                    // R14 - remember the pre-resolve state so undo can reopen
+                    var numRT = _normNum(args.ticket_number);
+                    var tblRT = _tableForNumber(numRT), oldStateRT = '';
+                    if (tblRT) {
+                        var preRT = new GlideRecord(tblRT);
+                        if (preRT.get('number', numRT)) oldStateRT = String(preRT.state);
+                    }
+                    var resRT = tools.resolveTicket(numRT, args.close_notes || '');
+                    if (resRT && resRT.ok !== false) {
+                        _noteUndo({ kind: 'resolved', number: numRT, table: tblRT || '', old_state: oldStateRT || '2' });
+                    }
+                    return resRT;
+                }
                 case 'update_ticket':
                     return tools.updateTicket(_normNum(args.ticket_number), String(args.comment || ''));
                 case 'get_ticket_status':
@@ -1966,9 +2030,9 @@
                 case 'workload_summary':
                     return _workloadSummary();
                 case 'create_problem':
-                    return _createProblem(String(args.short_description || ''), String(args.impact || '3'));
+                    return _noteUndoCreated(_createProblem(String(args.short_description || ''), String(args.impact || '3')), 'problem');
                 case 'create_change':
-                    return _createChange(String(args.short_description || ''), String(args.change_type || 'normal'));
+                    return _noteUndoCreated(_createChange(String(args.short_description || ''), String(args.change_type || 'normal')), 'change_request');
                 case 'list_overdue':
                     return _listOverdue();
                 case 'set_focus_ticket':
@@ -1993,7 +2057,22 @@
                 case 'review_draft':
                     return _reviewDraft();
                 case 'confirm_and_create':
-                    return _confirmAndCreate();
+                    return _noteUndoCreated(_confirmAndCreate());
+                // ------- R14 advanced layer -------
+                case 'undo_last_action':
+                    return _undoLastAction();
+                case 'define_routine':
+                    return _defineRoutine(String(args.name || ''), args.steps || []);
+                case 'run_routine':
+                    return _runRoutine(String(args.name || ''));
+                case 'list_routines':
+                    return _listRoutines();
+                case 'delete_routine':
+                    return _deleteRoutine(String(args.name || ''));
+                case 'sla_radar':
+                    return _slaRadar();
+                case 'batch_update_tickets':
+                    return _batchUpdateTickets(args.ticket_numbers || [], String(args.comment || ''), String(args.priority || ''), String(args.state || ''));
                 case 'cancel_draft':
                     return _cancelDraft();
                 case 'send_sidebar_message':
@@ -2123,8 +2202,10 @@
     function _changePriority(num, p) {
         var gr = _getIncident(num);
         if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        var oldP = String(gr.priority);
         gr.priority = p;
         gr.update();
+        _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: 'priority', old: oldP, old_display: 'priority ' + oldP });
         return { ok: true, message: 'Priority of ' + num + ' changed to ' + p + '.' };
     }
 
@@ -2136,6 +2217,7 @@
         gr.priority = cur - 1;
         gr.work_notes = '[Netra] Escalated by voice from priority ' + cur + ' to ' + (cur - 1) + '.';
         gr.update();
+        _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: 'priority', old: String(cur), old_display: 'priority ' + cur });
         return { ok: true, message: 'Escalated ' + num + ' from priority ' + cur + ' to ' + (cur - 1) + '.', from: cur, to: cur - 1 };
     }
 
@@ -2149,9 +2231,12 @@
         gg.setLimit(1);
         gg.query();
         if (!gg.next()) return { ok: false, error: 'No group matching "' + groupName + '"' };
+        var oldGrp = String(gr.assignment_group);
+        var oldGrpName = String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : '') || 'unassigned';
         gr.assignment_group = String(gg.sys_id);
         gr.work_notes = '[Netra] Assigned to group ' + gg.name + ' by voice.';
         gr.update();
+        _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: 'assignment_group', old: oldGrp, old_display: oldGrpName });
         return { ok: true, message: num + ' assigned to ' + gg.name + '.' };
     }
 
@@ -2165,9 +2250,12 @@
         u.setLimit(1);
         u.query();
         if (!u.next()) return { ok: false, error: 'No user matching "' + userName + '"' };
+        var oldWho = String(gr.assigned_to);
+        var oldWhoName = String(gr.assigned_to.getDisplayValue ? gr.assigned_to.getDisplayValue() : '') || 'unassigned';
         gr.assigned_to = String(u.sys_id);
         gr.work_notes = '[Netra] Assigned to ' + u.name + ' by voice.';
         gr.update();
+        _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: 'assigned_to', old: oldWho, old_display: oldWhoName });
         return { ok: true, message: num + ' assigned to ' + u.name + '.' };
     }
 
@@ -2701,6 +2789,208 @@
     }
 
     /* ===================================================================
+     *  R14 - UNDO. Every write Netra makes leaves a little breadcrumb in
+     *  the context blob (what changed, what it was before), and
+     *  undo_last_action walks it back. Created records get deleted,
+     *  changed fields get their old value back, resolves get reopened.
+     * =================================================================== */
+    function _noteUndo(entry) {
+        try {
+            var b = _ctxReadBlob();
+            entry.at = new GlideDateTime().toString();
+            b.last_action = entry;
+            _ctxWriteBlob(b);
+        } catch (e) {}
+    }
+    function _noteUndoCreated(res, table) {
+        if (res && res.ok !== false && res.number) {
+            _noteUndo({ kind: 'created', number: String(res.number), table: table || '' });
+        }
+        return res;
+    }
+    function _undoLastAction() {
+        var b = _ctxReadBlob();
+        var a = b.last_action;
+        if (!a) return { ok: false, error: 'There is nothing on record to undo.' };
+        var table, gr;
+        if (a.kind === 'created') {
+            table = a.table || _tableForNumber(a.number);
+            if (!table) return { ok: false, error: 'Cannot work out the table for ' + a.number };
+            gr = new GlideRecord(table);
+            if (!gr.get('number', a.number)) return { ok: false, error: a.number + ' is already gone.' };
+            // cross-scope deletes on global task tables fail SILENTLY for a
+            // scoped app, so verify - and fall back to cancel-and-close,
+            // which is arguably the better audit trail anyway
+            gr.deleteRecord();
+            var check = new GlideRecord(table);
+            if (check.get('number', a.number)) {
+                check.setValue('state', '8');   // Canceled on incident; harmless elsewhere
+                check.setValue('active', 'false');
+                check.work_notes = '[Netra] Undo by voice: raised by mistake, cancelled.';
+                check.update();
+                b.last_action = null; _ctxWriteBlob(b);
+                return { ok: true, message: 'Undone - the platform does not allow hard deletes here, so ' + a.number + ' is cancelled and closed instead.' };
+            }
+            b.last_action = null; _ctxWriteBlob(b);
+            return { ok: true, message: 'Undone - ' + a.number + ' has been deleted.' };
+        }
+        if (a.kind === 'field') {
+            table = a.table || _tableForNumber(a.number);
+            gr = new GlideRecord(table);
+            if (!gr.get('number', a.number)) return { ok: false, error: 'Ticket not found: ' + a.number };
+            gr.setValue(a.field, a.old);
+            gr.work_notes = '[Netra] Undo by voice: ' + a.field + ' restored to "' + a.old_display + '".';
+            gr.update();
+            b.last_action = null; _ctxWriteBlob(b);
+            return { ok: true, message: 'Undone - ' + a.field + ' on ' + a.number + ' is back to ' + (a.old_display || a.old) + '.' };
+        }
+        if (a.kind === 'resolved') {
+            table = a.table || _tableForNumber(a.number);
+            gr = new GlideRecord(table);
+            if (!gr.get('number', a.number)) return { ok: false, error: 'Ticket not found: ' + a.number };
+            gr.setValue('state', a.old_state || '2');
+            gr.work_notes = '[Netra] Undo by voice: reopened after an accidental resolve.';
+            gr.update();
+            b.last_action = null; _ctxWriteBlob(b);
+            return { ok: true, message: 'Undone - ' + a.number + ' is reopened and back in progress.' };
+        }
+        return { ok: false, error: 'I do not know how to undo that (' + a.kind + ').' };
+    }
+
+    /* ===================================================================
+     *  R14 - VOICE ROUTINES. Named macros the user teaches once ("define
+     *  my morning routine: briefing, then overdue tickets, then
+     *  approvals") and runs with three words forever after. The steps
+     *  live in the context blob; run_routine hands them back to the
+     *  model with marching orders to execute in order.
+     * =================================================================== */
+    function _defineRoutine(name, steps) {
+        if (!name) return { ok: false, error: 'The routine needs a name.' };
+        if (!steps || !steps.length) return { ok: false, error: 'The routine needs at least one step.' };
+        var b = _ctxReadBlob();
+        b.routines = b.routines || {};
+        if (Object.keys(b.routines).length >= 12 && !b.routines[name.toLowerCase()]) {
+            return { ok: false, error: 'Routine limit reached (12). Delete one first.' };
+        }
+        var clean = [];
+        for (var i = 0; i < Math.min(6, steps.length); i++) {
+            clean.push(String(steps[i]).substring(0, 200));
+        }
+        b.routines[name.toLowerCase()] = { steps: clean, created: new GlideDateTime().toString() };
+        _ctxWriteBlob(b);
+        return { ok: true, message: 'Routine "' + name + '" saved with ' + clean.length + ' step' + (clean.length === 1 ? '' : 's') + '. Say "run my ' + name + '" any time.' };
+    }
+    function _runRoutine(name) {
+        var b = _ctxReadBlob();
+        var r = (b.routines || {})[String(name || '').toLowerCase()];
+        if (!r) {
+            var names = Object.keys(b.routines || {});
+            return { ok: false, error: 'No routine called "' + name + '".',
+                     available: names, message: names.length ? 'You have: ' + names.join(', ') : 'No routines saved yet. Teach me one!' };
+        }
+        return {
+            ok: true, steps: r.steps,
+            instruction: 'EXECUTE each step above IN ORDER right now using your tools, then give ONE combined spoken summary of everything. Do not ask for permission between read-only steps; still confirm any create/delete as usual.'
+        };
+    }
+    function _listRoutines() {
+        var b = _ctxReadBlob();
+        var out = [];
+        for (var k in (b.routines || {})) out.push({ name: k, steps: b.routines[k].steps });
+        return { ok: true, routines: out, count: out.length,
+                 message: out.length ? '' : 'No routines yet. Say something like "define my morning routine: daily briefing, then overdue tickets, then my approvals".' };
+    }
+    function _deleteRoutine(name) {
+        var b = _ctxReadBlob();
+        if (!b.routines || !b.routines[String(name || '').toLowerCase()]) return { ok: false, error: 'No routine called "' + name + '".' };
+        delete b.routines[String(name).toLowerCase()];
+        _ctxWriteBlob(b);
+        return { ok: true, message: 'Routine "' + name + '" deleted.' };
+    }
+
+    /* ===================================================================
+     *  R14 - SLA RADAR. What is ABOUT to breach (not what already did -
+     *  list_overdue covers that). Reads task_sla percentages; if the
+     *  instance has no SLAs running it falls back to an aging report of
+     *  the user's open tickets so the answer is never a shrug.
+     * =================================================================== */
+    function _slaRadar() {
+        try {
+            var out = [];
+            var sla = new GlideRecord('task_sla');
+            sla.addQuery('active', true);
+            sla.addQuery('percentage', '>=', 60);
+            sla.orderByDesc('percentage');
+            sla.setLimit(8);
+            sla.query();
+            while (sla.next()) {
+                out.push({
+                    number: String(sla.task.number),
+                    short_description: String(sla.task.short_description || '').substring(0, 120),
+                    sla: String(sla.sla.name || ''),
+                    percent_consumed: Math.round(parseFloat(String(sla.percentage)) || 0),
+                    time_left: String(sla.time_left.getDisplayValue ? sla.time_left.getDisplayValue() : sla.time_left || ''),
+                    assigned_to: String(sla.task.assigned_to.getDisplayValue ? sla.task.assigned_to.getDisplayValue() : '')
+                });
+            }
+            if (out.length) {
+                return { ok: true, mode: 'sla', at_risk: out,
+                         message: out.length + ' SLA' + (out.length === 1 ? ' is' : 's are') + ' burning down. Read the worst 2-3 aloud with percent consumed and time left.' };
+            }
+            // no SLA engine data - aging fallback
+            var gr = new GlideRecord('incident');
+            gr.addActiveQuery();
+            gr.addQuery('assigned_to', gs.getUserID());
+            gr.orderBy('priority');
+            gr.orderBy('sys_created_on');
+            gr.setLimit(8);
+            gr.query();
+            var aging = [];
+            var now = new GlideDateTime().getNumericValue();
+            while (gr.next()) {
+                var made = new GlideDateTime(String(gr.sys_created_on)).getNumericValue();
+                var days = Math.floor((now - made) / 86400000);
+                if (days >= 2) {
+                    aging.push({ number: String(gr.number), short_description: String(gr.short_description).substring(0, 120),
+                                 priority: String(gr.priority), age_days: days });
+                }
+            }
+            return { ok: true, mode: 'aging', aging: aging,
+                     message: aging.length ? 'No SLA definitions are running here, so this is the aging view - oldest and highest priority first.'
+                                           : 'Nothing is close to breaching and nothing is aging badly. All clear.' };
+        } catch (e) { return { ok: false, error: String(e.message || e) }; }
+    }
+
+    /* ===================================================================
+     *  R14 - BATCH UPDATES. "Add a note to all five of those" / "close my
+     *  stale P4s". Hard cap of 25, explicit numbers only (the model must
+     *  list them from a previous turn), and the STRICT confirm policy in
+     *  the prompt applies before this ever fires.
+     * =================================================================== */
+    function _batchUpdateTickets(numbers, comment, priority, state) {
+        if (!numbers || !numbers.length) return { ok: false, error: 'A list of ticket numbers is required.' };
+        if (numbers.length > 25) return { ok: false, error: 'Batch is capped at 25 tickets at a time (you sent ' + numbers.length + ').' };
+        if (!comment && !priority && !state) return { ok: false, error: 'Nothing to change - give a comment, a priority, or a state.' };
+        var done = [], failed = [];
+        for (var i = 0; i < numbers.length; i++) {
+            var num = _normNum(String(numbers[i]));
+            var table = _tableForNumber(num);
+            var gr = table ? new GlideRecord(table) : null;
+            if (!gr || !gr.get('number', num)) { failed.push({ number: num, why: 'not found' }); continue; }
+            try {
+                if (comment)  gr.comments = '[Netra batch] ' + comment;
+                if (priority) gr.setValue('priority', String(priority));
+                if (state)    gr.setValue('state', String(state));
+                gr.update();
+                done.push(num);
+            } catch (eU) { failed.push({ number: num, why: String(eU.message || eU) }); }
+        }
+        return { ok: true, updated: done, failed: failed,
+                 message: 'Updated ' + done.length + ' of ' + numbers.length + ' tickets.' +
+                          (failed.length ? ' ' + failed.length + ' failed - read those out.' : '') };
+    }
+
+    /* ===================================================================
      *  R1.3 - DRAFT + CONFIRMATION FLOW (multi-turn)
      *
      *  Drafts are persisted as JSON in the user's Netra Context row under
@@ -2750,13 +3040,18 @@
         var blob = { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
         if (raw.indexOf('CTX:') === 0) {
             try {
+                // R14 - the blob is GENERIC now. The old version whitelisted
+                // five keys here and in the writer, which silently ate any
+                // new key (undo breadcrumbs and routines vanished on the
+                // very next write). Keep whatever is stored, default the
+                // known keys.
                 var parsed = JSON.parse(raw.substring(4)) || {};
-                blob.draft     = parsed.draft     || null;
-                blob.mem       = parsed.mem       || [];
-                blob.vocab     = parsed.vocab     || {};
-                blob.aliases   = parsed.aliases   || {};
-                blob.sentiment = parsed.sentiment || null;
-                return blob;
+                parsed.draft     = parsed.draft     || null;
+                parsed.mem       = parsed.mem       || [];
+                parsed.vocab     = parsed.vocab     || {};
+                parsed.aliases   = parsed.aliases   || {};
+                parsed.sentiment = parsed.sentiment || null;
+                return parsed;
             } catch (e) {}
         }
         // Backwards-compat: migrate old DRAFT: or MEM: prefixed values
@@ -2770,13 +3065,14 @@
     }
     function _ctxWriteBlob(blob) {
         var ctx = _ctxLoadGr();
-        var payload = {
-            draft:     blob.draft     || null,
-            mem:       blob.mem       || [],
-            vocab:     blob.vocab     || {},
-            aliases:   blob.aliases   || {},
-            sentiment: blob.sentiment || null
-        };
+        // serialise EVERY key the callers put on the blob (see note in
+        // _ctxReadBlob), just guarantee the core ones exist
+        var payload = blob || {};
+        payload.draft     = payload.draft     || null;
+        payload.mem       = payload.mem       || [];
+        payload.vocab     = payload.vocab     || {};
+        payload.aliases   = payload.aliases   || {};
+        payload.sentiment = payload.sentiment || null;
         // Safety truncate: if the serialised blob exceeds the column limit, drop
         // the oldest mem entries until it fits. The Context column is sized to
         // hold ~100 turns of typical-length exchanges; this guards the edge case

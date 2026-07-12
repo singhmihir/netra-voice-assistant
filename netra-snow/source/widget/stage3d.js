@@ -24,6 +24,7 @@ window.NetraStage3D = (function () {
     var renderer, scene, camera, composer, bloomPass;
     var blob, blobMat, coreLight, sunrise, groundGlow;
     var coreAura, coreHeart, coreTex = {}, coreKey = '', corePulse = 0;
+    var smoke = [], beatEnv = 0, lastBass = 0;   // R13 - edge smoke + beat glow
     var rafId = null, clockT = 0, lastTs = 0, host = null;
     var mouse = { x: 0, y: 0 };
     var reduceMotion = false;
@@ -235,6 +236,50 @@ window.NetraStage3D = (function () {
         return 'gemini';
     }
 
+    // R13 - SMOKE. Soft wisps hugging the orb's edge that diffuse outward
+    // as she talks: violet smoke while SPEAKING, a greenish haze around
+    // the whole perimeter while LISTENING, and every strong beat of voice
+    // makes the wisps glow and push out a little further.
+    function makeSmokeTexture() {
+        var cv = document.createElement('canvas');
+        cv.width = 128; cv.height = 128;
+        var g = cv.getContext('2d');
+        function puff(x, y, r, a) {
+            var rg = g.createRadialGradient(x, y, 1, x, y, r);
+            rg.addColorStop(0, 'rgba(255,255,255,' + a + ')');
+            rg.addColorStop(0.55, 'rgba(255,255,255,' + (a * 0.35) + ')');
+            rg.addColorStop(1, 'rgba(255,255,255,0)');
+            g.fillStyle = rg;
+            g.fillRect(0, 0, 128, 128);
+        }
+        puff(64, 64, 60, 0.55);
+        puff(46, 52, 34, 0.5);
+        puff(82, 58, 30, 0.45);
+        puff(58, 84, 30, 0.4);
+        puff(78, 82, 24, 0.35);
+        return new THREE.CanvasTexture(cv);
+    }
+    function makeSmoke() {
+        var tex = makeSmokeTexture();
+        for (var i = 0; i < 14; i++) {
+            var m = new THREE.SpriteMaterial({
+                map: tex, transparent: true, opacity: 0,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            var s = new THREE.Sprite(m);
+            var ang = (i / 14) * Math.PI * 2;
+            s.userData = {
+                ang: ang,
+                drift: 0.10 + (i % 5) * 0.035,       // slow orbit, staggered
+                wob: 0.5 + (i % 4) * 0.31,            // per-wisp bob phase
+                scl: 0.55 + (i % 3) * 0.22
+            };
+            s.position.copy(blob.position);
+            scene.add(s);
+            smoke.push(s);
+        }
+    }
+
     // R10.1 - SUNRISE. A golden-hour glow rising behind the blob: one big
     // painted billboard (sky + sun) and a soft warm pool of light under
     // the orb. Two draw calls total - this REPLACED the mirror floor and
@@ -358,6 +403,35 @@ window.NetraStage3D = (function () {
         var bs = 0.75 * (1 + amp * 0.10);
         blob.scale.setScalar(bs);
 
+        // R13 - SMOKE around the edge. Beat detector first: a rising bass
+        // edge = one "beat" -> the wisps flash and push outward, then decay.
+        var bass = bandAvg(0, 4);
+        if (bass - lastBass > 0.09) beatEnv = 1;
+        lastBass += (bass - lastBass) * 0.3;
+        beatEnv = Math.max(0, beatEnv - dt * 2.6);
+        var speaking = (st === 'speaking');
+        var hearing  = (st === 'listening' || st === 'awaiting');
+        // violet smoke when SHE talks, greenish haze when she hears YOU,
+        // barely-there neutral wisps otherwise
+        var smokeBase = speaking ? 0.16 : (hearing ? 0.13 : 0.05);
+        var smokeHue  = speaking ? 0.74 : (hearing ? 0.36 : hue);
+        var smokeSat  = (speaking || hearing) ? 0.75 : 0.35;
+        for (var si = 0; si < smoke.length; si++) {
+            var sp = smoke[si], ud = sp.userData;
+            ud.ang += dt * ud.drift * (1 + amp * 0.8);
+            var breathe = Math.sin(clockT * 0.7 + ud.wob * 7) * 0.06;
+            var rad = 0.84 + breathe + amp * 0.34 + beatEnv * 0.16;   // diffuse outward with the voice
+            sp.position.set(
+                blob.position.x + Math.cos(ud.ang) * rad,
+                blob.position.y + Math.sin(ud.ang) * rad * 0.9,
+                blob.position.z + Math.sin(ud.ang * 2 + ud.wob) * 0.25
+            );
+            sp.scale.setScalar(ud.scl * (1 + amp * 0.7 + beatEnv * 0.5));
+            sp.material.opacity = smokeBase * (0.6 + 0.4 * Math.sin(clockT * 0.9 + ud.wob * 9))
+                                + amp * 0.22 + beatEnv * 0.18;
+            sp.material.color.setHSL(smokeHue, smokeSat, 0.55 + beatEnv * 0.2);
+        }
+
         if (!reduceMotion) {
             var cx = Math.sin(clockT * 0.1) * 0.18 + mouse.x * 0.45;
             var cy = 0.42 + Math.sin(clockT * 0.07) * 0.06 - mouse.y * 0.28;
@@ -423,6 +497,7 @@ window.NetraStage3D = (function () {
 
             makeBlob();
             makeSunrise();
+            makeSmoke();
 
             // gentle fill so nothing goes pitch black off-reflection
             scene.add(new THREE.AmbientLight(0x33224d, 0.45));

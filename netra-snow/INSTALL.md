@@ -97,13 +97,26 @@ Proactive scan check:
 
 ---
 
-## Path B — Update Set XML (alternative)
+## Path B — Update Set XML (v4.0 batch, RECOMMENDED)
 
-If you'd rather use the standard Update Set flow, see the older instructions
-in [`README.md`](README.md). The XML at `update-set/Netra_v2.0.0-R4.7_Batch.xml`
-contains the 4 Script Includes + Business Rule + Scheduled Job. You'd still
-need to manually create the 2 tables, the Scripted REST API, and the
-Widget via the UI — about 6 steps total, ~10 minutes.
+The complete app ships as ONE file now: `update-set/Netra_v4.0_Batch.xml`
+(parent "Netra - v4.0" + six children, ~280 updates - tables, script
+includes, widget + page, REST API, automation, app shell, properties and
+the navigator menu).
+
+1. *System Update Sets → Retrieved Update Sets → Import Update Set from XML*
+2. Upload `Netra_v4.0_Batch.xml`
+3. Open the parent **"Netra - v4.0"**, click **Preview Update Set Batch**
+4. Click **Commit Update Set Batch** - the children commit in order
+5. Set your Gemini key in the `x_196061_netra_v1.gemini_api_key` property
+   (shipped blank on purpose) and open `/sp?id=netra_live`
+
+## Path C — Studio app import
+
+`app-source/` holds the whole scoped app in Studio's source-control layout.
+Push this repo to a git remote your instance can reach, then
+*Studio → Import From Source Control* → repo URL + credentials → Netra
+installs as a real application you can keep developing in Studio.
 
 ---
 

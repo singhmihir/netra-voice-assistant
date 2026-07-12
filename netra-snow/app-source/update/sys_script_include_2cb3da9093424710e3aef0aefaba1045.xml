@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include"><sys_script_include action="INSERT_OR_UPDATE"><access>package_private</access><active>true</active><api_name>x_196061_netra_v1.NetraChat</api_name><caller_access/><client_callable>false</client_callable><description>Read and reply to Connect Chat conversations.</description><mobile_callable>false</mobile_callable><name>NetraChat</name><sandbox_callable>false</sandbox_callable><script><![CDATA[/**
+ * NetraChat — read and send messages in ServiceNow Connect Chat conversations.
+ *
+ * Uses the ootb Connect tables (sys_cs_session / sys_cs_message) when
+ * available. Gracefully no-ops if the instance does not have Connect Chat.
+ *
+ * Use cases for blind users:
+ *   - "Read new chat messages"  -> reads aloud unread inbound messages
+ *   - "Reply to last chat with X" -> posts a message to the last active session
+ *   - Proactive: NetraScanner enqueues a notification when a new message arrives
+ */
+var NetraChat = Class.create();
+NetraChat.prototype = {
+
+    initialize: function () {
+        this.user = gs.getUserID();
+        this.userName = gs.getUserName();
+    },
+
+    isEnabled: function () {
+        var t = new GlideRecord('sys_cs_message');
+        return t.isValid();
+    },
+
+    /** Recent unread messages addressed to the current user (across sessions). */
+    listUnread: function (since) {
+        if (!this.isEnabled()) return { ok: false, error: 'Connect Chat is not enabled.', messages: [] };
+
+        var sinceGdt = since ? new GlideDateTime(since) : (function () {
+            var g = new GlideDateTime(); g.subtract(24 * 3600 * 1000); return g;
+        })();
+
+        var gr = new GlideRecord('sys_cs_message');
+        gr.addQuery('sys_created_on', '>=', sinceGdt);
+        gr.addQuery('created_by', '!=', this.userName);
+        gr.orderByDesc('sys_created_on');
+        gr.setLimit(50);
+        gr.query();
+
+        var out = [];
+        while (gr.next()) {
+            // Only include messages from sessions where the current user is a participant
+            var session = String(gr.session || '');
+            if (session && this._userInSession(session)) {
+                out.push({
+                    sys_id: String(gr.sys_id),
+                    session: session,
+                    author: String(gr.created_by),
+                    body: this._plain(String(gr.message_text || gr.message || '')),
+                    created: String(gr.sys_created_on)
+                });
+            }
+        }
+        return { ok: true, messages: out };
+    },
+
+    /** Post a message to the user's most recently active chat session. */
+    replyToLast: function (text) {
+        if (!this.isEnabled()) return { ok: false, error: 'Connect Chat is not enabled.' };
+        if (!text || !text.trim()) return { ok: false, error: 'Reply text is empty.' };
+
+        var session = this._mostRecentSession();
+        if (!session) return { ok: false, error: 'No recent chat session to reply to.' };
+
+        var m = new GlideRecord('sys_cs_message');
+        m.initialize();
+        m.session = session;
+        // Field names vary by Connect version — set the most common ones
+        if (m.isValidField('message_text')) m.message_text = text;
+        else if (m.isValidField('message')) m.message = text;
+        m.author = this.user;
+        m.insert();
+        return { ok: true, session: session };
+    },
+
+    // ---- helpers ----
+    _mostRecentSession: function () {
+        var gr = new GlideRecord('sys_cs_message');
+        gr.addQuery('created_by', this.userName);
+        gr.orderByDesc('sys_created_on');
+        gr.setLimit(1);
+        gr.query();
+        return gr.next() ? String(gr.session) : null;
+    },
+
+    _userInSession: function (sessionSysId) {
+        // sys_cs_session typically has 'opened_by' and a member-list table
+        var s = new GlideRecord('sys_cs_session');
+        if (!s.get(sessionSysId)) return false;
+        if (String(s.opened_by) === this.user) return true;
+        // try member table if it exists
+        var members = new GlideRecord('sys_cs_session_member');
+        if (!members.isValid()) return true;  // unknown - default to true
+        members.addQuery('session', sessionSysId);
+        members.addQuery('user', this.user);
+        members.setLimit(1);
+        members.query();
+        return members.next();
+    },
+
+    _plain: function (s) {
+        return String(s || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    },
+
+    type: 'NetraChat'
+};
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:39</sys_created_on><sys_id>2cb3da9093424710e3aef0aefaba1045</sys_id><sys_mod_count>0</sys_mod_count><sys_name>NetraChat</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_2cb3da9093424710e3aef0aefaba1045</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-09 04:41:39</sys_updated_on></sys_script_include></record_update>

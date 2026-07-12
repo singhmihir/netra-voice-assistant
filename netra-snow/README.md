@@ -1,6 +1,38 @@
-# Netra on ServiceNow 🎙️ v3.0 (R9 "Prism")
+# Netra on ServiceNow 🎙️ v4.0
 
 A voice-first, fully accessible assistant that runs **natively inside ServiceNow** as a scoped application. Zero external services, zero recurring cost. Designed for blind and visually-impaired ServiceNow users.
+
+---
+
+## v4.0 — what's new (2026-07)
+
+- **Deep memory** — the conversation window covers the last **50 user prompts**
+  (counted in prompts, not raw turns), survives page refreshes in the same tab,
+  and anything older gets folded into a one-line-per-prompt digest instead of
+  falling off a cliff. Payload-too-large now trims the older half; it never
+  wipes memory. A DEEP MEMORY card in Netra Lab shows it live.
+- **Voice routines** — teach her macros: *"define my morning routine: daily
+  briefing, then overdue tickets, then my approvals"* → *"run my morning
+  routine"* executes every step and gives one combined summary.
+- **Undo by voice** — *"undo that"* deletes a just-created record, restores a
+  changed priority/assignment to its previous value, or reopens an accidental
+  resolve. Confirm-first, always.
+- **SLA radar** — *"what's about to breach?"* reads active SLAs ranked by
+  percent consumed (aging fallback when no SLA engine runs).
+- **Batch updates** — *"add that note to all five of those"*: up to 25 tickets
+  in one confirmed sweep.
+- **Automatic morning briefing** — first visit of the day, Netra reads the top
+  items unprompted (toggle in the setup panel).
+- **Out-of-box setup** — a left-edge "MAKE NETRA YOURS" panel (language, voice
+  with preview, pace, mic meter + sensitivity, mic check) that opens itself on
+  the very first visit, like a brand-new phone.
+- **Real 3D stage** — an iridescent glass orb (three.js, embedded — no CDN)
+  with a multi-hue gradient heart that diffuses from the centre (green while
+  listening, gemini blues while speaking), smoke wisps off its edges, a
+  top-right sun, pastel edge hues, bloom — all voice-reactive at 60fps.
+- **Zoom-grade mic handling** — persistent DSP stream + instant recovery on
+  track death/mute and headset plug/unplug; language/voice/pace changes apply
+  immediately and reliably.
 
 ---
 
@@ -114,12 +146,16 @@ A voice-first, fully accessible assistant that runs **natively inside ServiceNow
 
 ## Install
 
-**~3 minutes, two paths:**
+**~3 minutes, three paths:**
 
 | Path | Files | Manual steps |
 |---|---|---|
-| **A. Background Script (Recommended)** | `install/setup-netra.js` | Create scope (1 click), paste + Run script (1 click), drop widget on page (1 click) |
-| B. Update Set XML (batch) | `update-set/Netra_v3.0_Batch.xml` | Import XML, then Preview & Commit the parent "Netra - v3.0" — the six children commit automatically |
+| **A. Update Set XML (Recommended)** | `update-set/Netra_v4.0_Batch.xml` | *Retrieved Update Sets → Import Update Set from XML*, then Preview & Commit the parent **"Netra - v4.0"** — the six children commit automatically |
+| B. Studio app import | `app-source/` | Push this repo to your own git remote, then *Studio → Import From Source Control* — Netra installs as a real scoped application |
+| C. Background Script | `install/setup-netra.js` | Create scope (1 click), paste + Run script (1 click), drop widget on page (1 click) |
+
+After any path: set your Gemini API key in the `x_196061_netra_v1.gemini_api_key`
+system property (it ships blank on purpose) and open `/sp?id=netra_live`.
 
 See [`INSTALL.md`](INSTALL.md) for the click-by-click walkthrough.
 

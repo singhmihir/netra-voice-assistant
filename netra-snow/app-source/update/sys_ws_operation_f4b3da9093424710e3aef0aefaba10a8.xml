@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_ws_operation"><sys_ws_operation action="INSERT_OR_UPDATE"><active>true</active><consumes>application/json,application/xml,text/xml</consumes><consumes_customized>false</consumes_customized><default_operation_uri/><enforce_acl/><http_method>GET</http_method><name>notifications</name><operation_script><![CDATA[/**
+ * Scripted REST resource: GET /api/x_196061_netra_v1/voice/notifications
+ *
+ * Returns AND consumes (marks delivered) any pending Netra notifications
+ * for the current user - UNLESS the user has paused notifications, in
+ * which case it returns an empty list (without consuming).
+ *
+ * Response (always HTTP 200):
+ *   {
+ *     ok, paused, paused_until,
+ *     notifications: [ { id, ticket_number, ticket_sys_id, message, kind, created } ]
+ *   }
+ */
+(function process(request, response) {
+
+    try {
+        var user = gs.getUserID();
+
+        // Check pause state
+        var pref = new GlideRecord('x_196061_netra_v1_user_pref');
+        pref.addQuery('user', user);
+        pref.setLimit(1);
+        pref.query();
+        var paused = false;
+        var pausedUntil = null;
+        if (pref.next()) {
+            var pu = pref.paused_until;
+            if (pu && String(pu) !== '') {
+                var now = new GlideDateTime();
+                if (new GlideDateTime(String(pu)).compareTo(now) > 0) {
+                    paused = true;
+                    pausedUntil = String(pu);
+                } else {
+                    // Pause window expired - clear it
+                    pref.paused_until = '';
+                    pref.update();
+                }
+            }
+        }
+
+        if (paused) {
+            return { ok: true, paused: true, paused_until: pausedUntil, notifications: [] };
+        }
+
+        var gr = new GlideRecord('x_196061_netra_v1_notification');
+        gr.addQuery('user', user);
+        gr.addQuery('delivered', false);
+        gr.orderBy('sys_created_on');
+        gr.setLimit(10);
+        gr.query();
+
+        var out = [];
+        while (gr.next()) {
+            out.push({
+                id:             String(gr.sys_id),
+                ticket_number:  String(gr.ticket_number),
+                ticket_sys_id:  String(gr.ticket_sys_id),
+                message:        String(gr.message),
+                kind:           String(gr.kind),
+                created:        String(gr.sys_created_on)
+            });
+            gr.delivered    = true;
+            gr.delivered_at = new GlideDateTime();
+            gr.update();
+        }
+
+        return { ok: true, paused: false, paused_until: null, notifications: out };
+
+    } catch (e) {
+        gs.error('[NetraNotifications] error: ' + e);
+        return {
+            ok: false,
+            paused: false,
+            paused_until: null,
+            notifications: [],
+            error: String(e.message || e)
+        };
+    }
+
+})(request, response);
+]]></operation_script><operation_uri>/api/x_196061_netra_v1/voice/notifications</operation_uri><produces>application/json,application/xml,text/xml</produces><produces_customized>false</produces_customized><relative_path>/notifications</relative_path><request_example/><requires_acl_authorization>false</requires_acl_authorization><requires_authentication>true</requires_authentication><requires_snc_internal_role>true</requires_snc_internal_role><short_description/><support_trailing_slash>false</support_trailing_slash><sys_class_name>sys_ws_operation</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:40</sys_created_on><sys_id>f4b3da9093424710e3aef0aefaba10a8</sys_id><sys_mod_count>0</sys_mod_count><sys_name>notifications</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_ws_operation_f4b3da9093424710e3aef0aefaba10a8</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-09 04:41:40</sys_updated_on><web_service_definition display_value="Netra Voice">f8b3da9093424710e3aef0aefaba1066</web_service_definition><web_service_version/></sys_ws_operation></record_update>
