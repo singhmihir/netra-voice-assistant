@@ -3034,7 +3034,18 @@
         }
         return ctx;
     }
+    // R15 perf - the blob can reach 250KB and a busy turn read+wrote it up
+    // to 8 times (memory, sentiment, undo breadcrumbs, drafts...). One
+    // request = one parse now: the parsed object is cached for the rest of
+    // the request and writes go through the same object, so callers stay
+    // perfectly coherent while the JSON.parse storm disappears.
+    var _ctxBlobCache = null;
     function _ctxReadBlob() {
+        if (_ctxBlobCache) return _ctxBlobCache;
+        _ctxBlobCache = _ctxReadBlobFresh();
+        return _ctxBlobCache;
+    }
+    function _ctxReadBlobFresh() {
         var ctx = _ctxLoadGr();
         var raw = String(ctx.last_utterance || '');
         var blob = { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
@@ -3064,6 +3075,7 @@
         return blob;
     }
     function _ctxWriteBlob(blob) {
+        _ctxBlobCache = blob;   // write-through: later reads in this request see it
         var ctx = _ctxLoadGr();
         // serialise EVERY key the callers put on the blob (see note in
         // _ctxReadBlob), just guarantee the core ones exist
