@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_ws_operation"><sys_ws_operation action="INSERT_OR_UPDATE"><active>true</active><consumes>application/json,application/xml,text/xml</consumes><consumes_customized>false</consumes_customized><default_operation_uri/><enforce_acl/><http_method>GET</http_method><name>ping</name><operation_script><![CDATA[/**
+ * Scripted REST resource: GET /api/x_196061_netra_v1/voice/ping
+ *
+ * Debug-only. Returns a small JSON document that proves:
+ *   - the Scripted REST API is reachable
+ *   - authentication worked
+ *   - the script in this resource is being executed
+ *
+ * Use this any time the widget reports a 400. If /ping ALSO 400s, the
+ * problem is the API plumbing (scope, ACL, resource not active, etc.).
+ * If /ping succeeds but /command 400s, the problem is somewhere in
+ * NetraIntent / NetraResponder / one of the helper Script Includes.
+ *
+ * Try it in the browser address bar:
+ *   https://YOUR-INSTANCE.service-now.com/api/x_196061_netra_v1/voice/ping
+ *
+ * Expected:
+ *   { "ok": true, "now": "2026-...", "scope": "x_196061_netra_v1",
+ *     "user": "<your sys_id>", "user_name": "<your username>",
+ *     "scripts": { "NetraIntent": true, "NetraResponder": true, ... } }
+ */
+(function process(request, response) {
+
+    var out = {
+        ok: true,
+        now: String(new GlideDateTime()),
+        scope: 'x_196061_netra_v1',
+        user: '',
+        user_name: '',
+        scripts: {}
+    };
+
+    try { out.user = String(gs.getUserID()); } catch (e) {}
+    try { out.user_name = String(gs.getUserName()); } catch (e) {}
+
+    // Probe each Script Include - true if the constructor doesn't throw
+    [
+        'NetraIntent', 'NetraTools', 'NetraResponder', 'NetraScanner',
+        'NetraKnowledge', 'NetraChat', 'NetraSummarizer', 'NetraContext',
+        'NetraNavigator'
+    ].forEach(function (name) {
+        try {
+            var ctor = (typeof x_196061_netra_v1 !== 'undefined' && x_196061_netra_v1[name]) ||
+                       (typeof global !== 'undefined' && global[name]);
+            // Fall back: evaluate by name in this scope
+            if (!ctor) {
+                /*jshint evil:true */
+                ctor = eval(name);
+            }
+            new ctor();
+            out.scripts[name] = true;
+        } catch (e) {
+            out.scripts[name] = String(e.message || e);
+        }
+    });
+
+    // Probe each table
+    out.tables = {};
+    ['notification', 'user_pref', 'context', 'watchlist'].forEach(function (suffix) {
+        var tableName = 'x_196061_netra_v1_' + suffix;
+        try {
+            var gr = new GlideRecord(tableName);
+            out.tables[tableName] = gr.isValid();
+        } catch (e) {
+            out.tables[tableName] = String(e.message || e);
+        }
+    });
+
+    return out;
+
+})(request, response);
+]]></operation_script><operation_uri>/api/x_196061_netra_v1/voice/ping</operation_uri><produces>application/json,application/xml,text/xml</produces><produces_customized>false</produces_customized><relative_path>/ping</relative_path><request_example/><requires_acl_authorization>false</requires_acl_authorization><requires_authentication>true</requires_authentication><requires_snc_internal_role>true</requires_snc_internal_role><short_description/><support_trailing_slash>false</support_trailing_slash><sys_class_name>sys_ws_operation</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:40</sys_created_on><sys_id>f0b3da9093424710e3aef0aefaba10c5</sys_id><sys_mod_count>0</sys_mod_count><sys_name>ping</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_ws_operation_f0b3da9093424710e3aef0aefaba10c5</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-09 04:41:40</sys_updated_on><web_service_definition display_value="Netra Voice">f8b3da9093424710e3aef0aefaba1066</web_service_definition><web_service_version/></sys_ws_operation></record_update>

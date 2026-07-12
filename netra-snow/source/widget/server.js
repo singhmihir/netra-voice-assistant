@@ -607,7 +607,7 @@
         if (!hasCue) {
             try {
                 var b = _ctxReadBlob();
-                b.sentiment = b.sentiment || { history: [], consecutive_frustrated: 0 };
+                b.sentiment = (b.sentiment && b.sentiment.history) ? b.sentiment : { history: [], consecutive_frustrated: 0 };
                 b.sentiment.history.push({ t: new GlideDateTime().toString(), label: 'neutral', score: 0 });
                 if (b.sentiment.history.length > 10) b.sentiment.history = b.sentiment.history.slice(-10);
                 b.sentiment.consecutive_frustrated = 0;
@@ -628,7 +628,7 @@
         if (!useLlmSentiment) {
             try {
                 var bk = _ctxReadBlob();
-                bk.sentiment = bk.sentiment || { history: [], consecutive_frustrated: 0 };
+                bk.sentiment = (bk.sentiment && bk.sentiment.history) ? bk.sentiment : { history: [], consecutive_frustrated: 0 };
                 bk.sentiment.history.push({ t: new GlideDateTime().toString(), label: 'frustrated', score: 0.6 });
                 if (bk.sentiment.history.length > 10) bk.sentiment.history = bk.sentiment.history.slice(-10);
                 bk.sentiment.consecutive_frustrated = (bk.sentiment.consecutive_frustrated || 0) + 1;
@@ -665,7 +665,7 @@
         // Persist in Context blob as a rolling list (last 10 turns)
         try {
             var blob = _ctxReadBlob();
-            blob.sentiment = blob.sentiment || { history: [], consecutive_frustrated: 0 };
+            blob.sentiment = (blob.sentiment && blob.sentiment.history) ? blob.sentiment : { history: [], consecutive_frustrated: 0 };
             blob.sentiment.history.push({
                 t: new GlideDateTime().toString(),
                 label: label,

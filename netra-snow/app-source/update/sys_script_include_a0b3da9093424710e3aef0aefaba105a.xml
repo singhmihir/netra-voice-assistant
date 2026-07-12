@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include"><sys_script_include action="INSERT_OR_UPDATE"><access>package_private</access><active>true</active><api_name>x_196061_netra_v1.NetraContext</api_name><caller_access/><client_callable>false</client_callable><description>Per-user conversational context (last ticket etc.).</description><mobile_callable>false</mobile_callable><name>NetraContext</name><sandbox_callable>false</sandbox_callable><script><![CDATA[/**
+ * NetraContext — per-user session context.
+ *
+ * Lets the conversation refer to "that ticket", "resolve it", "read it again"
+ * by remembering the last entity mentioned. Stored on x_196061_netra_v1_context.
+ *
+ * Context is short-lived (12 hours by default) and cleared on "forget context".
+ *
+ * NOTE: The string x_196061_netra_v1 is replaced with the user's actual scope
+ * (e.g. x_NNNNN_netra) by the Fix Script at install time, so this code
+ * works regardless of company id.
+ */
+var NetraContext = Class.create();
+NetraContext.prototype = {
+    TABLE: 'x_196061_netra_v1_context',
+    TTL_MS: 12 * 3600 * 1000,
+
+    initialize: function () {
+        this.user = gs.getUserID();
+    },
+
+    /** Set the focus to the given table+sys_id. */
+    setFocus: function (table, sysId, number) {
+        var gr = this._get(true);
+        gr.focus_table = table;
+        gr.focus_sys_id = sysId;
+        gr.focus_number = number || '';
+        gr.focus_set_at = new GlideDateTime();
+        gr.update();
+    },
+
+    /** @returns {{table,sys_id,number}|null} */
+    getFocus: function () {
+        var gr = this._get(false);
+        if (!gr) return null;
+        if (!gr.focus_table || !gr.focus_sys_id) return null;
+        var set = gr.focus_set_at;
+        if (set) {
+            var age = new GlideDateTime().getNumericValue() - new GlideDateTime(String(set)).getNumericValue();
+            if (age > this.TTL_MS) return null;
+        }
+        return {
+            table:  String(gr.focus_table),
+            sys_id: String(gr.focus_sys_id),
+            number: String(gr.focus_number || '')
+        };
+    },
+
+    /** Track the last spoken sentence so the user can ask "what did you say?"
+     *  R14 - the last_utterance column doubles as the widget's CTX: context
+     *  blob (memory, routines, undo breadcrumbs, drafts). The old version
+     *  blindly overwrote the column with the plain reply text, wiping the
+     *  whole blob on EVERY turn - that is why saved routines and undo
+     *  info kept evaporating. Now the utterance lives INSIDE the blob. */
+    setLastUtterance: function (text) {
+        var gr = this._get(true);
+        var raw = String(gr.last_utterance || '');
+        var t = String(text || '').substring(0, 1000);
+        var blob = {};
+        if (raw.indexOf('CTX:') === 0) {
+            try { blob = JSON.parse(raw.substring(4)) || {}; } catch (e) { blob = {}; }
+        }
+        blob.last_spoken = t;
+        gr.last_utterance = 'CTX:' + JSON.stringify(blob);
+        gr.update();
+    },
+
+    getLastUtterance: function () {
+        var gr = this._get(false);
+        var raw = gr ? String(gr.last_utterance || '') : '';
+        if (raw.indexOf('CTX:') === 0) {
+            try { return String((JSON.parse(raw.substring(4)) || {}).last_spoken || ''); } catch (e) { return ''; }
+        }
+        return raw;
+    },
+
+    clear: function () {
+        var gr = this._get(false);
+        if (gr) {
+            gr.focus_table = ''; gr.focus_sys_id = ''; gr.focus_number = '';
+            gr.update();
+        }
+    },
+
+    _get: function (createIfMissing) {
+        var gr = new GlideRecord(this.TABLE);
+        gr.addQuery('user', this.user);
+        gr.setLimit(1);
+        gr.query();
+        if (gr.next()) return gr;
+        if (!createIfMissing) return null;
+        gr.initialize();
+        gr.user = this.user;
+        gr.insert();
+        gr.get(gr.sys_id);
+        return gr;
+    },
+
+    type: 'NetraContext'
+};
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:39</sys_created_on><sys_id>a0b3da9093424710e3aef0aefaba105a</sys_id><sys_mod_count>1</sys_mod_count><sys_name>NetraContext</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_a0b3da9093424710e3aef0aefaba105a</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-12 03:17:53</sys_updated_on></sys_script_include></record_update>
