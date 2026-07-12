@@ -248,6 +248,11 @@
   }
   .netra-setup-btn:hover { background: rgba(139, 61, 240, 0.38); }
   .netra-setup-ghost { background: transparent; border-color: rgba(255, 255, 255, 0.2); color: #cfc4e8; }
+  .netra-setup-check {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 12px; font-size: 11.5px; color: #d9d0f0; cursor: pointer;
+  }
+  .netra-setup-check input { accent-color: #8b3df0; width: 15px; height: 15px; }
   @media (max-width: 900px) {
     .netra-setup { left: 8px; }
     .netra-setup-body { width: 210px; }
@@ -733,6 +738,11 @@
         <input id="netra-set-gain" type="range" min="0.5" max="3" step="0.1"
                ng-model="c.micGain" ng-change="c.labSetGain()" aria-label="Microphone meter sensitivity"/>
         <div class="netra-setup-meter" aria-hidden="true"><i ng-style="{width: (c.micLevel || 0) + '%'}"></i></div>
+        <!-- R14 - morning briefing preference -->
+        <label class="netra-setup-check">
+          <input type="checkbox" ng-model="c.prefBrief" ng-change="c.setBrief()"/>
+          <span>Morning briefing on my first visit of the day</span>
+        </label>
         <button class="netra-setup-btn" ng-click="c.calibRetry()">Run mic check</button>
         <button class="netra-setup-btn netra-setup-ghost" ng-click="c.setupToggle()">Done</button>
       </div>

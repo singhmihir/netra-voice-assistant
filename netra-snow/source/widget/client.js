@@ -291,6 +291,40 @@ api.controller = function ($scope, $timeout, $window) {
         logEvent('dev', c.setupOn ? 'setup panel opened' : 'setup panel closed');
     };
 
+    /* ============================================================
+     *  R14 - MORNING BRIEFING, AUTOMATICALLY.
+     *  First visit of the day, once the calibration card is out of
+     *  the way, Netra reads the daily briefing on her own - open
+     *  tickets, approvals, reminders - like a good assistant should.
+     *  Toggle lives in the setup panel, memory of "already briefed
+     *  today" lives in localStorage.
+     * ============================================================ */
+    c.prefBrief = true;
+    try { c.prefBrief = localStorage.getItem('netra_brief_on') !== '0'; } catch (eB0) {}
+    c.setBrief = function () {
+        try { localStorage.setItem('netra_brief_on', c.prefBrief ? '1' : '0'); } catch (eB1) {}
+        logEvent('boot', 'morning briefing ' + (c.prefBrief ? 'on' : 'off'));
+    };
+    function _todayKey() {
+        var d = new Date();
+        return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+    }
+    function _maybeAutoBrief(tries) {
+        if (!c.liveMode || !c.prefBrief) return;
+        var last = '';
+        try { last = localStorage.getItem('netra_brief_last') || ''; } catch (eB2) {}
+        if (last === _todayKey()) return;   // already briefed today
+        var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
+        if (calibBusy || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
+            if (tries < 12) $timeout(function () { _maybeAutoBrief(tries + 1); }, 12000);
+            return;
+        }
+        try { localStorage.setItem('netra_brief_last', _todayKey()); } catch (eB3) {}
+        logEvent('boot', 'first visit today - reading the morning briefing');
+        processCommand('Give me my daily briefing. Keep it tight - the top items only.', 1.0);
+    }
+    if (c.liveMode) $timeout(function () { _maybeAutoBrief(0); }, 14000);
+
     // typed commands - same pipeline as voice, minus the microphone
     c.labCmd = '';
     c.labSendCmd = function () {
