@@ -2818,7 +2818,19 @@
             if (!table) return { ok: false, error: 'Cannot work out the table for ' + a.number };
             gr = new GlideRecord(table);
             if (!gr.get('number', a.number)) return { ok: false, error: a.number + ' is already gone.' };
+            // cross-scope deletes on global task tables fail SILENTLY for a
+            // scoped app, so verify - and fall back to cancel-and-close,
+            // which is arguably the better audit trail anyway
             gr.deleteRecord();
+            var check = new GlideRecord(table);
+            if (check.get('number', a.number)) {
+                check.setValue('state', '8');   // Canceled on incident; harmless elsewhere
+                check.setValue('active', 'false');
+                check.work_notes = '[Netra] Undo by voice: raised by mistake, cancelled.';
+                check.update();
+                b.last_action = null; _ctxWriteBlob(b);
+                return { ok: true, message: 'Undone - the platform does not allow hard deletes here, so ' + a.number + ' is cancelled and closed instead.' };
+            }
             b.last_action = null; _ctxWriteBlob(b);
             return { ok: true, message: 'Undone - ' + a.number + ' has been deleted.' };
         }
