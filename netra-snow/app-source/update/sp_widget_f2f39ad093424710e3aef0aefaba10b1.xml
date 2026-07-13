@@ -10934,7 +10934,18 @@ api.controller = function ($scope, $timeout, $window) {
         }
         return ctx;
     }
+    // R15 perf - the blob can reach 250KB and a busy turn read+wrote it up
+    // to 8 times (memory, sentiment, undo breadcrumbs, drafts...). One
+    // request = one parse now: the parsed object is cached for the rest of
+    // the request and writes go through the same object, so callers stay
+    // perfectly coherent while the JSON.parse storm disappears.
+    var _ctxBlobCache = null;
     function _ctxReadBlob() {
+        if (_ctxBlobCache) return _ctxBlobCache;
+        _ctxBlobCache = _ctxReadBlobFresh();
+        return _ctxBlobCache;
+    }
+    function _ctxReadBlobFresh() {
         var ctx = _ctxLoadGr();
         var raw = String(ctx.last_utterance || '');
         var blob = { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
@@ -10964,6 +10975,7 @@ api.controller = function ($scope, $timeout, $window) {
         return blob;
     }
     function _ctxWriteBlob(blob) {
+        _ctxBlobCache = blob;   // write-through: later reads in this request see it
         var ctx = _ctxLoadGr();
         // serialise EVERY key the callers put on the blob (see note in
         // _ctxReadBlob), just guarantee the core ones exist
@@ -13198,7 +13210,7 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
 })();
-]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>32</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-12 03:25:20</sys_updated_on><template><![CDATA[<!--
+]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>33</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-12 10:42:48</sys_updated_on><template><![CDATA[<!--
   Netra Mic widget template - R9 "Prism"
 
   R8.1: the prism hue engine drives every colour in this template via
