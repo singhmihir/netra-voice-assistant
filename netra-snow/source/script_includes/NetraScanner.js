@@ -34,6 +34,13 @@ NetraScanner.prototype = {
             gs.warn('[NetraScanner] reminder promotion failed: ' + eR);
         }
 
+        // R16 - look for an outage forming. This one is instance-wide, not
+        // per-user, so it runs ONCE up here instead of re-crunching the same
+        // numbers inside every user's scan.
+        try { enqueued += this.detectMajorIncidentClusters(); } catch (eM) {
+            gs.warn('[NetraScanner] cluster detection failed: ' + eM);
+        }
+
         var prefs = new GlideRecord('x_196061_netra_v1_user_pref');
         prefs.addQuery('active', true);
         prefs.query();
@@ -74,6 +81,76 @@ NetraScanner.prototype = {
         }
         if (promoted) gs.info('[NetraScanner] promoted ' + promoted + ' due reminder(s).');
         return promoted;
+    },
+
+    /**
+     * R16 - MAJOR INCIDENT RADAR (proactive).
+     *
+     * Three or more active tickets landing on the same configuration item
+     * (or five on one category) inside a couple of hours is almost never a
+     * coincidence - its one outage wearing several hats. Netra says so out
+     * loud instead of waiting to be asked.
+     *
+     * Dedupe: the cluster key goes in ticket_sys_id, so _alreadyNotified
+     * stops us announcing the same server every five minutes. The key
+     * carries the hour bucket, so a genuinely NEW flare-up later still
+     * gets announced.
+     */
+    detectMajorIncidentClusters: function () {
+        var WINDOW_HOURS = 2;
+        var CI_MIN  = 3;
+        var CAT_MIN = 5;
+
+        var gr = new GlideRecord('incident');
+        gr.addActiveQuery();
+        gr.addEncodedQuery('sys_created_on>=javascript:gs.hoursAgoStart(' + WINDOW_HOURS + ')');
+        gr.setLimit(200);
+        gr.query();
+
+        var byCi = {}, byCat = {}, total = 0;
+        while (gr.next()) {
+            total++;
+            var ci = String(gr.cmdb_ci.getDisplayValue ? gr.cmdb_ci.getDisplayValue() : '');
+            if (ci) { byCi[ci] = (byCi[ci] || 0) + 1; }
+            var cat = String(gr.category || '');
+            if (cat) { byCat[cat] = (byCat[cat] || 0) + 1; }
+        }
+        if (!total) return 0;
+
+        var hits = [];
+        var k;
+        for (k in byCi)  { if (byCi.hasOwnProperty(k)  && byCi[k]  >= CI_MIN)  hits.push({ what: k, n: byCi[k],  kind: 'on ' + k }); }
+        for (k in byCat) { if (byCat.hasOwnProperty(k) && byCat[k] >= CAT_MIN) hits.push({ what: k, n: byCat[k], kind: 'in the ' + k + ' category' }); }
+        if (!hits.length) return 0;
+
+        hits.sort(function (a, b) { return b.n - a.n; });
+        var top = hits[0];
+
+        // bucket the key by hour so a fresh flare-up tomorrow still speaks up
+        var bucket = new GlideDateTime().toString().substring(0, 13).replace(/[^0-9]/g, '');
+        var key = ('mic_' + top.what + '_' + bucket).substring(0, 32);
+        var msg = 'Heads up - ' + top.n + ' tickets have come in ' + top.kind +
+                  ' in the last couple of hours. That looks like one outage rather than separate issues.';
+
+        var sent = 0;
+        var prefs = new GlideRecord('x_196061_netra_v1_user_pref');
+        prefs.addQuery('active', true);
+        prefs.addQuery('watch_assignments', true);
+        prefs.query();
+        while (prefs.next()) {
+            var uid = String(prefs.user);
+            if (!uid) continue;
+            if (this._alreadyNotified(uid, key, 'major_incident')) continue;
+            this._enqueue(uid, {
+                ticket_sys_id: key,
+                ticket_number: '',
+                kind: 'major_incident',
+                message: msg
+            });
+            sent++;
+        }
+        if (sent) gs.info('[NetraScanner] major-incident cluster announced: ' + top.what + ' x' + top.n + ' -> ' + sent + ' user(s)');
+        return sent;
     },
 
     /**
