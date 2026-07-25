@@ -1,4 +1,4 @@
-# Netra on ServiceNow — Installation Guide (v2.0.0)
+# Netra on ServiceNow — Installation Guide (v5.0)
 
 **Two install paths.** Pick one.
 
@@ -97,16 +97,16 @@ Proactive scan check:
 
 ---
 
-## Path B — Update Set XML (v4.0 batch, RECOMMENDED)
+## Path B — Update Set XML (v5.0 batch, RECOMMENDED)
 
-The complete app ships as ONE file now: `update-set/Netra_v4.0_Batch.xml`
-(parent "Netra - v4.0" + six children, ~280 updates - tables, script
+The complete app ships as ONE file now: `update-set/Netra_v5.0_Batch.xml`
+(parent "Netra - v5.0" + six children, ~280 updates - tables, script
 includes, widget + page, REST API, automation, app shell, properties and
 the navigator menu).
 
 1. *System Update Sets → Retrieved Update Sets → Import Update Set from XML*
-2. Upload `Netra_v4.0_Batch.xml`
-3. Open the parent **"Netra - v4.0"**, click **Preview Update Set Batch**
+2. Upload `Netra_v5.0_Batch.xml`
+3. Open the parent **"Netra - v5.0"**, click **Preview Update Set Batch**
 4. Click **Commit Update Set Batch** - the children commit in order
 5. Set your Gemini key in the `x_196061_netra_v1.gemini_api_key` property
    (shipped blank on purpose) and open `/sp?id=netra_live`

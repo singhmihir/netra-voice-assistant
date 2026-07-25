@@ -1,6 +1,71 @@
-# Netra on ServiceNow 🎙️ v4.0
+# Netra on ServiceNow 🎙️ v5.0
 
 A voice-first, fully accessible assistant that runs **natively inside ServiceNow** as a scoped application. Zero external services, zero recurring cost. Designed for blind and visually-impaired ServiceNow users.
+
+---
+
+## v5.0 — Netra Intelligence (2026-07)
+
+Up to v4 Netra did what you asked. v5 makes her reason over your instance's
+own history and tell you things you *didn't* ask for but needed to know.
+All of it rides on the embedding cache (`gemini-embedding-001`, 768-dim,
+cosine over locally cached vectors) — no new tables, no extra services.
+
+- **Resolution memory** — describe a symptom and she searches *resolved*
+  tickets by meaning, then leads with **what actually fixed it**:
+  *"this bit us in March — INC0012345, turned out to be the DNS cache."*
+- **Predictive triage** — where tickets like this really end up. Assignment
+  group / category / priority weighted by how similar each past ticket is,
+  with the sample size and example tickets behind it.
+- **Duplicate guard** — runs automatically before every create. Stops the
+  fourth ticket for one outage from ever existing.
+- **Major-incident radar** — three tickets on one CI (or five in a category)
+  inside two hours isn't three tickets, it's an outage. Available on demand
+  *and* proactively: the 5-minute scanner announces clusters unprompted,
+  deduped per cluster per hour.
+- **Pattern analysis** — volume this period vs the one before, plus the
+  categories and groups driving the change.
+- **`install/warm-semantic-index.js`** — one-shot job that pre-embeds your
+  existing tickets so the very first question is already fast. **Run it in
+  the Netra application scope** — a global-scope run silently fails to write
+  to the scoped cache table.
+
+### Also fixed in v5.0 — a systemic latent bug
+
+The widget server is one big IIFE whose action router calls `_chat()` while
+the script is still executing top-to-bottom. Every module-level `var` declared
+*below* that router was therefore hoisted-but-unassigned — i.e. `undefined`
+on every real request. That silently broke more than it looks:
+
+| Constant | What was actually broken |
+|---|---|
+| `EMBED_MODEL` / `EMBED_CACHE_TABLE` | embed URL became `models/undefined:…` → 404 → semantic KB search quietly fell back to LIKE, and **nothing was ever cached** |
+| `SENTIMENT_CUES` | `cannot read length from undefined` on **every single turn** |
+| `MEM_CAP` | conversation memory never hit its cap |
+| `REQUIRED_FIELDS` / `FIELD_PROMPTS` | guided draft flow had no field list |
+| `UPDATE_ALLOW` / `FIELD_SYNONYM` | `update_field` rejected everything |
+| `MAND_SKIP` / `_mandCache` | mandatory-field discovery threw |
+
+All of them now live in one block above the router. Keep new constants there.
+
+### And a second one: the `-latest` alias moved under us
+
+Every ordinary turn was returning **HTTP 400 `INVALID_ARGUMENT`** from Gemini.
+Nothing in the code had changed — Google repointed the
+`gemini-flash-lite-latest` alias at a model that **rejects
+`thinkingConfig.thinkingBudget`**. Because a 400 is classified non-transient,
+the model-fallback chain gave up instead of trying the next model, so simple
+turns died outright while long/complex ones (routed to `gemini-2.5-flash`)
+still worked — which is exactly why it looked intermittent.
+
+Three-part fix:
+1. `thinkingConfig` is only sent to models that accept it (`_modelTakesThinkingConfig`).
+2. On any 400, the same model is retried **once** with the optional knobs
+   stripped — so the next alias rotation self-heals instead of breaking chat.
+3. 400s now log the request *shape* (turn roles, part kinds, sizes — never
+   content), so the next one takes minutes to diagnose instead of hours.
+
+> **If chat ever goes quiet, check `syslog` for `[NetraGemini] 400 shape:` first.**
 
 ---
 
@@ -150,7 +215,7 @@ A voice-first, fully accessible assistant that runs **natively inside ServiceNow
 
 | Path | Files | Manual steps |
 |---|---|---|
-| **A. Update Set XML (Recommended)** | `update-set/Netra_v4.0_Batch.xml` | *Retrieved Update Sets → Import Update Set from XML*, then Preview & Commit the parent **"Netra - v4.0"** — the six children commit automatically |
+| **A. Update Set XML (Recommended)** | `update-set/Netra_v5.0_Batch.xml` | *Retrieved Update Sets → Import Update Set from XML*, then Preview & Commit the parent **"Netra - v5.0"** — the six children commit automatically |
 | B. Studio app import | `app-source/` | Push this repo to your own git remote, then *Studio → Import From Source Control* — Netra installs as a real scoped application |
 | C. Background Script | `install/setup-netra.js` | Create scope (1 click), paste + Run script (1 click), drop widget on page (1 click) |
 

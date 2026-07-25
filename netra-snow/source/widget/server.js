@@ -36,6 +36,102 @@
     var SCOPE = 'x_196061_netra_v1';
     var user  = gs.getUserID();
 
+    /* ============================================================
+     *  MODULE CONSTANTS - these MUST live above the action router.
+     *
+     *  This whole file is one IIFE and the router below calls
+     *  _chat() while the script is still running top-to-bottom. A
+     *  `var` further down is hoisted but NOT yet assigned at that
+     *  moment, so it reads back as undefined on every real request.
+     *  That silently broke a lot: the embedding model name went
+     *  undefined (so semantic search 404d and quietly fell back to
+     *  LIKE, and nothing ever got cached), the sentiment cue list
+     *  blew up with "cannot read length from undefined" every turn,
+     *  memory never hit its cap, and the draft/update field maps
+     *  were empty. Same trap the tool-name maps hit earlier - see
+     *  the note on _ticketCreateTools(). Keep new constants HERE.
+     * ============================================================ */
+    var SENTIMENT_CUES = [
+        'damn', 'stupid', 'still not', 'still broken', "why isn't", "why isnt",
+        'why is it not', 'why is this not', 'this is the third', 'this is the fourth',
+        'i already', 'i told you', 'i said', 'are you kidding', 'come on',
+        'frustrating', 'annoying', 'useless', 'ridiculous', 'urgent', '!!!',
+        'urgently', 'asap', 'right now', "doesn't work", 'does not work',
+        'not working', 'wrong', "won't work", 'wont work'
+    ];
+    var REQUIRED_FIELDS = {
+        incident:        ['short_description'],
+        problem:         ['short_description'],
+        change_request:  ['short_description','type'],
+        sc_task:         ['short_description'],
+        sc_req_item:     ['short_description']
+    };
+    var FIELD_PROMPTS = {
+        short_description: 'what is the issue, in one sentence',
+        urgency:           'how urgent (1 critical, 2 high, 3 moderate, 4 low) - default 3',
+        impact:            'how big the impact (1, 2, or 3) - default 3',
+        priority:          'priority (1-4, optional)',
+        category:          'category (optional)',
+        type:              'type of change (standard, normal, emergency)'
+    };
+    var MAND_SKIP = {
+        sys_id: 1, sys_created_on: 1, sys_created_by: 1, sys_updated_on: 1,
+        sys_updated_by: 1, sys_mod_count: 1, sys_tags: 1, sys_class_name: 1,
+        sys_domain: 1, sys_domain_path: 1, number: 1, opened_at: 1, opened_by: 1,
+        active: 1, state: 1
+    };
+    var _mandCache = {};   // table -> { fields, ts }
+    var MAND_CACHE_TTL_MS = 5 * 60 * 1000;
+    var MEM_CAP = 200;   // Release X - bumped from 100; safety truncate in _ctxWriteBlob protects against oversize blobs
+    var EMBED_MODEL = 'gemini-embedding-001';
+    var EMBED_DIMS  = 768;
+    var EMBED_CACHE_TABLE = SCOPE + '_kb_embedding';
+    var INC_SIM_THRESHOLD  = 0.62;   // a bit stricter than KB (0.55): ticket text is short and noisy
+    var INC_EMBED_MAX_LIVE = 6;      // live embed calls per request, keeps the turn snappy
+    var INC_SCAN_LIMIT     = 400;    // how many tickets we will consider in one pass
+    var UPDATE_ALLOW = {
+        short_description:  true, description:        true,
+        urgency:            true, impact:             true,
+        priority:           true, category:           true,
+        subcategory:        true, state:              true,
+        assignment_group:   true, assigned_to:        true,
+        comments:           true, work_notes:         true,
+        close_notes:        true, close_code:         true,
+        cmdb_ci:            true
+    };
+    var FIELD_SYNONYM = {
+        'short description':  'short_description',
+        'title':              'short_description',
+        'summary':            'short_description',
+        'desc':               'description',
+        'details':            'description',
+        'assignment group':   'assignment_group',
+        'assigned group':     'assignment_group',
+        'group':              'assignment_group',
+        'assignee':           'assigned_to',
+        'assigned to':        'assigned_to',
+        'owner':              'assigned_to',
+        'work note':          'work_notes',
+        'work notes':         'work_notes',
+        'internal note':      'work_notes',
+        'close note':         'close_notes',
+        'close notes':        'close_notes',
+        'configuration item': 'cmdb_ci',
+        'ci':                 'cmdb_ci'
+    };
+    var SCRIPT_TABLES = [
+        { table: 'sys_script_include', nameField: 'name',         scriptField: 'script',           label: 'Script Include' },
+        { table: 'sys_script',         nameField: 'name',         scriptField: 'script',           label: 'Business Rule' },
+        { table: 'sys_ui_script',      nameField: 'script_name',  scriptField: 'script',           label: 'UI Script' },
+        { table: 'sys_script_client',  nameField: 'name',         scriptField: 'script',           label: 'Client Script' },
+        { table: 'sysauto_script',     nameField: 'name',         scriptField: 'script',           label: 'Scheduled Job' },
+        { table: 'sys_processor',      nameField: 'name',         scriptField: 'script',           label: 'Processor' },
+        { table: 'sys_ws_operation',   nameField: 'name',         scriptField: 'operation_script', label: 'Scripted REST Resource' },
+        { table: 'sys_script_email',   nameField: 'name',         scriptField: 'script',           label: 'Email Script' },
+        { table: 'sys_ui_action',      nameField: 'name',         scriptField: 'script',           label: 'UI Action' }
+    ];
+
+
     var action = (input && input.action) ? String(input.action) : null;
 
     // ---- Always-on state (cheap: needed by every action incl. the 9s poll) ----
@@ -574,14 +670,6 @@
     // Fast keyword cues that warrant a real LLM classification call. We only
     // burn a Gemini call when one of these is present — otherwise the turn
     // is treated as 'neutral' with no API cost. Keeps free-tier quota usable.
-    var SENTIMENT_CUES = [
-        'damn', 'stupid', 'still not', 'still broken', "why isn't", "why isnt",
-        'why is it not', 'why is this not', 'this is the third', 'this is the fourth',
-        'i already', 'i told you', 'i said', 'are you kidding', 'come on',
-        'frustrating', 'annoying', 'useless', 'ridiculous', 'urgent', '!!!',
-        'urgently', 'asap', 'right now', "doesn't work", 'does not work',
-        'not working', 'wrong', "won't work", 'wont work'
-    ];
 
     function _trackSentiment(userMessage) {
         if (!userMessage || userMessage.length < 3) return null;
@@ -731,6 +819,7 @@
         });
 
         var lastErr = null;
+        var omitThinkingRetry = false;   // R16 - only burn one no-thinking retry per call
         var chainStartedAt = Date.now();
         var CHAIN_DEADLINE_MS = 20000;   // R3.6 - hard cap, no matter how many models left
         // 404 on a deprecated model is NOT a real "stop the chain" signal -
@@ -762,7 +851,48 @@
                             (lastErr.indexOf('404') >= 0 && lastErr.indexOf('not found') >= 0) ||
                             (lastErr.indexOf('404') >= 0 && lastErr.indexOf('is not supported') >= 0);
             if (!transient) {
+                // R16 - SELF HEAL. A 400 on a request we know is well formed is
+                // nearly always a knob this model has stopped accepting (that
+                // is exactly how the thinkingConfig breakage arrived). Retry
+                // the same model once with the optional knobs stripped before
+                // writing the turn off.
+                if (lastErr.indexOf('400') >= 0 && !omitThinkingRetry) {
+                    omitThinkingRetry = true;
+                    gs.warn('[NetraGemini] 400 on ' + chain[i] + ' - retrying once without thinkingConfig');
+                    var retry = _callGeminiOnce(apiKey, chain[i], contents, tools, systemInstruction, true);
+                    if (!retry.error) {
+                        retry._model_used = chain[i];
+                        gs.info('[NetraGemini] recovered on ' + chain[i] + ' without thinkingConfig');
+                        return retry;
+                    }
+                    lastErr = retry.error;
+                }
                 gs.warn('[NetraGemini] non-transient error on ' + chain[i] + ': ' + lastErr.substring(0, 200));
+                // R16 - a 400 tells us nothing on its own, so dump the SHAPE of
+                // what we sent (never the content) to make these debuggable.
+                if (lastErr.indexOf('400') >= 0) {
+                    try {
+                        var _dbg = [];
+                        for (var _c = 0; _c < (contents || []).length; _c++) {
+                            var _e = contents[_c] || {};
+                            var _kinds = [];
+                            for (var _p = 0; _p < (_e.parts || []).length; _p++) {
+                                var _pt = _e.parts[_p] || {};
+                                _kinds.push(_pt.text !== undefined ? ('text:' + String(_pt.text).length)
+                                          : _pt.functionCall ? ('call:' + _pt.functionCall.name)
+                                          : _pt.functionResponse ? ('resp:' + _pt.functionResponse.name)
+                                          : _pt.inlineData ? 'inlineData' : 'EMPTY_PART');
+                            }
+                            _dbg.push((_e.role || 'NOROLE') + '[' + _kinds.join(',') + ']');
+                        }
+                        var _sysLen = -1;
+                        try { _sysLen = JSON.stringify(systemInstruction || {}).length; } catch (eS0) {}
+                        var _toolN = -1;
+                        try { _toolN = tools && tools[0] && tools[0].functionDeclarations ? tools[0].functionDeclarations.length : -1; } catch (eT0) {}
+                        gs.warn('[NetraGemini] 400 shape: sysInstr=' + _sysLen + 'B tools=' + _toolN +
+                                ' turns=' + (contents || []).length + ' -> ' + _dbg.join(' | ').substring(0, 700));
+                    } catch (eDbg) { gs.warn('[NetraGemini] 400 shape dump failed: ' + eDbg); }
+                }
                 return result;
             }
             // For 404 vs busy, log differently so debugging stays clear
@@ -775,7 +905,27 @@
         return { error: 'All fallback models exhausted. Last: ' + lastErr };
     }
 
-    function _callGeminiOnce(apiKey, model, contents, tools, systemInstruction) {
+    /**
+     * R16 - not every model accepts thinkingConfig.
+     *
+     * Learned this the hard way: 'gemini-flash-lite-latest' is an ALIAS, and
+     * Google repointed it at a model that rejects thinkingBudget outright -
+     * HTTP 400 "Request contains an invalid argument" on every single call.
+     * Since a 400 counts as non-transient, the chain gave up instead of
+     * falling back, so every ordinary turn just died. Nothing in our code
+     * changed; the alias moved under us.
+     *
+     * So: dont send it to the lite models, and if a 400 still shows up,
+     * _callGemini retries once without it. Belt and braces, because the next
+     * alias rotation will happen when we are not looking either.
+     */
+    function _modelTakesThinkingConfig(model) {
+        var m = String(model || '');
+        if (m.indexOf('lite') >= 0) return false;
+        return true;
+    }
+
+    function _callGeminiOnce(apiKey, model, contents, tools, systemInstruction, omitThinking) {
         var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
                   encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
         var body = {
@@ -791,8 +941,7 @@
                 // thinking + giving more output budget restores chat replies.
                 // Release X: 1024 -> 2048 so long briefings never truncate.
                 maxOutputTokens: 2048,
-                topP: 0.95,
-                thinkingConfig: { thinkingBudget: 0 }
+                topP: 0.95
             },
             // R2 - encourage Gemini to call multiple tools in ONE turn rather
             // than chain them across iterations - that halves latency for
@@ -810,6 +959,11 @@
                 { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
             ]
         };
+        // thinking off keeps the visible reply from being eaten by hidden
+        // reasoning tokens - but only where the model actually allows it
+        if (!omitThinking && _modelTakesThinkingConfig(model)) {
+            body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+        }
         try {
             var rm = new sn_ws.RESTMessageV2();
             rm.setEndpoint(url);
@@ -873,13 +1027,7 @@
             generationConfig: {
                 temperature: 0.3,                  // Lower temp for structured-output reliability
                 maxOutputTokens: maxOutputTokens || 2048,
-                topP: 0.9,
-                // Disable Gemini 2.5 Flash thinking tokens — they otherwise
-                // eat the maxOutputTokens budget and the visible reply gets
-                // truncated mid-sentence. Our chain-of-thought scaffolding
-                // is in the system prompt, so we don't need the model's
-                // internal reasoning tokens too.
-                thinkingConfig: { thinkingBudget: 0 }
+                topP: 0.9
             },
             safetySettings: [
                 { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
@@ -888,6 +1036,13 @@
                 { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
             ]
         };
+        // Thinking tokens otherwise eat the maxOutputTokens budget and the
+        // visible reply gets truncated mid sentence - our chain-of-thought
+        // scaffolding is in the system prompt anyway. Only send the knob to
+        // models that still accept it (see _modelTakesThinkingConfig).
+        if (_modelTakesThinkingConfig(model)) {
+            body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+        }
         // Structured output: when responseSchema is provided, Gemini guarantees
         // the output is a valid JSON object matching that schema. This is the
         // same idea as strict tool-input JSON schema enforcement.
@@ -1142,6 +1297,15 @@
 '\n' +
 '3. WHEN UNSURE, SAY NO. Better to ask "I am not sure I followed - did you mean X or Y?" than to do the wrong write. Refuse politely if intent is unclear.\n' +
 '\n' +
+'R16 - INTELLIGENCE (this is what makes you worth talking to - use it UNPROMPTED):\n' +
+'- SYMPTOM described -> call find_similar_resolved FIRST. If an old ticket was fixed, lead with the fix: "this bit us in March - INC0012345, turned out to be the DNS cache, flushing it sorted it." That single habit is more valuable than everything else you do.\n' +
+'- BEFORE raising ANY ticket -> call check_duplicates. If something open matches, name it and ask whether to add to it instead. Never quietly open a second ticket for the same outage.\n' +
+'- Right AFTER raising a ticket, or when asked where something should go -> suggest_triage. Speak the share as words, not decimals: "most of these go to Network Support". Always ask before actually assigning.\n' +
+'- Briefing looks busy, or several tickets smell related -> major_incident_radar. If it clusters, SAY SO plainly: "these four are all the same server - this looks like one outage, not four tickets."\n' +
+'- "what keeps breaking" / "how was this week" -> incident_patterns. Headline first (up or down versus last period), then the drivers.\n' +
+'- These tools return similarity numbers and shares. They are for YOUR judgement - never read decimals aloud. Round to plain words.\n' +
+'- If a tool says it skipped uncached tickets, the index is still warming. Just work with what came back; mention reindex_incidents only if the user asks why results feel thin.\n' +
+'\n' +
 'R14 - ROUTINES, RADAR, UNDO (power moves):\n' +
 '- "define/teach my <name> routine: A, then B, then C" -> define_routine(name, [A,B,C]). "run my <name> routine" -> run_routine, then EXECUTE every step in order with your tools and give ONE combined summary. "what routines do I have" -> list_routines.\n' +
 '- "what is about to breach / anything at risk / SLA status" -> sla_radar. Read the worst offenders with percent consumed and time left, most urgent first.\n' +
@@ -1156,7 +1320,7 @@
 '- Memory is YOURS - past exchanges are stored. Use them. Reference them. "Like the VPN issue we discussed earlier..."\n' +
 '\n' +
 'WHEN THE USER WANTS A TICKET RAISED (create it - this is your job):\n' +
-'- "Open / create / log / raise / file a ticket" -> get the one-line description (ask if they have not given it), OPTIONALLY run search_incidents first to flag an existing duplicate, then STOP and confirm: "Shall I raise an incident for <description>?" Do NOT call create_ticket in this turn. Only when the user answers yes in the NEXT turn do you call create_ticket, then read the new number back in short form.\n' +
+'- "Open / create / log / raise / file a ticket" -> get the one-line description (ask if they have not given it), then ALWAYS run check_duplicates first to catch an existing open ticket for the same thing, then STOP and confirm: "Shall I raise an incident for <description>?" Do NOT call create_ticket in this turn. Only when the user answers yes in the NEXT turn do you call create_ticket, then read the new number back in short form and offer the routing from suggest_triage.\n' +
 '- For "raise a problem" / "open a change" use create_problem / create_change the same way; for anything needing more fields, drive the draft flow (start_record_draft).\n' +
 '- If a duplicate exists, mention it and ask whether to update that one instead of opening a new one - then do whichever they choose.\n' +
 '- Always land on something you DID for them: a created number, an updated record, or a clear answer.\n' +
@@ -1318,6 +1482,49 @@
                         },
                         required: ['ref_number','decision']
                     }
+                },
+                {
+                    name: 'find_similar_resolved',
+                    description: 'RESOLUTION MEMORY. Searches RESOLVED/CLOSED tickets by MEANING and returns what actually fixed them (close notes). Use whenever the user describes a symptom, asks "has this happened before", "how did we fix this last time", "any idea what causes this", or is stuck on a ticket. This is usually more useful than search_incidents.',
+                    parameters: { type: 'object', properties: {
+                        query: { type: 'string', description: 'the symptom in plain words, e.g. "outlook keeps asking for password"' },
+                        limit: { type: 'number' }
+                    }, required: ['query'] }
+                },
+                {
+                    name: 'suggest_triage',
+                    description: 'PREDICTIVE TRIAGE. Given ticket wording, predicts the assignment group, category and priority based on how genuinely similar past tickets were handled, with confidence and example tickets. Use for "who should this go to", "where do I route this", "what priority should this be", or proactively right after raising a ticket.',
+                    parameters: { type: 'object', properties: {
+                        description: { type: 'string', description: 'the ticket wording to route' }
+                    }, required: ['description'] }
+                },
+                {
+                    name: 'check_duplicates',
+                    description: 'DUPLICATE GUARD. Semantically checks OPEN tickets for one that already covers this issue. ALWAYS call this before create_ticket / confirm_and_create, and whenever the user reports a new problem.',
+                    parameters: { type: 'object', properties: {
+                        description: { type: 'string', description: 'the problem in plain words' }
+                    }, required: ['description'] }
+                },
+                {
+                    name: 'major_incident_radar',
+                    description: 'Detects an outage forming: several recent tickets clustering on the same configuration item or category, or a burst of high priority. Use for "is anything major going on", "why so many tickets", "is this a wider outage", and during a briefing when things look busy.',
+                    parameters: { type: 'object', properties: {
+                        hours: { type: 'number', description: 'lookback window, default 4' }
+                    } }
+                },
+                {
+                    name: 'incident_patterns',
+                    description: 'Trend analysis: ticket volume this period versus the one before, plus the categories and groups driving it. Use for "what keeps breaking", "how was this week", "are we getting better", "what is trending".',
+                    parameters: { type: 'object', properties: {
+                        days: { type: 'number', description: 'period length in days, default 7' }
+                    } }
+                },
+                {
+                    name: 'reindex_incidents',
+                    description: 'Warms the semantic index over tickets so resolution memory and triage get better. Only call when the user explicitly asks to reindex or when another intelligence tool reports many skipped_uncached tickets.',
+                    parameters: { type: 'object', properties: {
+                        max: { type: 'number', description: 'how many to index this run, default 25' }
+                    } }
                 },
                 {
                     name: 'undo_last_action',
@@ -2058,6 +2265,19 @@
                     return _reviewDraft();
                 case 'confirm_and_create':
                     return _noteUndoCreated(_confirmAndCreate());
+                // ------- R16 intelligence layer -------
+                case 'find_similar_resolved':
+                    return _findSimilarResolved(String(args.query || ''), parseInt(args.limit, 10) || 3);
+                case 'suggest_triage':
+                    return _suggestTriage(String(args.description || ''));
+                case 'check_duplicates':
+                    return _checkDuplicates(String(args.description || ''), '');
+                case 'major_incident_radar':
+                    return _majorIncidentRadar(args.hours);
+                case 'incident_patterns':
+                    return _incidentPatterns(args.days);
+                case 'reindex_incidents':
+                    return _reindexIncidents(args.max);
                 // ------- R14 advanced layer -------
                 case 'undo_last_action':
                     return _undoLastAction();
@@ -3001,22 +3221,7 @@
      * =================================================================== */
 
     // Required fields per record_type (must be filled before create)
-    var REQUIRED_FIELDS = {
-        incident:        ['short_description'],
-        problem:         ['short_description'],
-        change_request:  ['short_description','type'],
-        sc_task:         ['short_description'],
-        sc_req_item:     ['short_description']
-    };
     // Friendly prompt text for each field
-    var FIELD_PROMPTS = {
-        short_description: 'what is the issue, in one sentence',
-        urgency:           'how urgent (1 critical, 2 high, 3 moderate, 4 low) - default 3',
-        impact:            'how big the impact (1, 2, or 3) - default 3',
-        priority:          'priority (1-4, optional)',
-        category:          'category (optional)',
-        type:              'type of change (standard, normal, emergency)'
-    };
 
     // R2.3 - Unified context blob now carries FOUR things:
     //   draft   - in-progress record draft (R1.3)
@@ -3198,14 +3403,6 @@
      *  Pattern is industry-standard "slot filling" (COLING 2025; Microsoft
      *  Copilot Studio; LangChain StructuredTool; Anthropic tool-use).
      * =================================================================== */
-    var MAND_SKIP = {
-        sys_id: 1, sys_created_on: 1, sys_created_by: 1, sys_updated_on: 1,
-        sys_updated_by: 1, sys_mod_count: 1, sys_tags: 1, sys_class_name: 1,
-        sys_domain: 1, sys_domain_path: 1, number: 1, opened_at: 1, opened_by: 1,
-        active: 1, state: 1
-    };
-    var _mandCache = {};   // table -> { fields, ts }
-    var MAND_CACHE_TTL_MS = 5 * 60 * 1000;
 
     function _mandatoryFields(table) {
         if (!table) return {};
@@ -4091,6 +4288,11 @@
                 { name: 'Knowledge', examples: [
                     'search knowledge for VPN', 'find articles about password reset'
                 ]},
+                { name: 'Intelligence', examples: [
+                    'has this happened before', 'how did we fix this last time',
+                    'who should this go to', 'is there already a ticket for this',
+                    'is anything major going on', 'what keeps breaking this week'
+                ]},
                 { name: 'Context & memory', examples: [
                     'what was I working on', 'what did we discuss earlier',
                     'remember that my favourite group is Database Admins'
@@ -4121,7 +4323,6 @@
         b.mem = arr;
         _ctxWriteBlob(b);
     }
-    var MEM_CAP = 200;   // Release X - bumped from 100; safety truncate in _ctxWriteBlob protects against oversize blobs
     function _memAppend(userMsg, netraReply) {
         if (!userMsg && !netraReply) return;
         var arr = _memRead();
@@ -4302,9 +4503,6 @@
      *  x_196061_netra_v1_kb_embedding. The query is embedded on each call.
      *  Cosine similarity selects the top-K matches.
      * =================================================================== */
-    var EMBED_MODEL = 'gemini-embedding-001';
-    var EMBED_DIMS  = 768;
-    var EMBED_CACHE_TABLE = SCOPE + '_kb_embedding';
 
     function _embedText(text, taskType) {
         var apiKey = gs.getProperty(SCOPE + '.gemini_api_key');
@@ -4483,6 +4681,376 @@
             count: top.length,
             stats: { embedded_now: embedded, cached_hits: cached, skipped_uncached: skipped, total_articles_seen: scored.length }
         };
+    }
+
+    /* ===================================================================
+     *  R16 - NETRA INTELLIGENCE
+     *
+     *  Up to now Netra did what you asked. This layer makes her reason
+     *  over the instance's OWN history and tell you things you didnt ask
+     *  for but needed to know:
+     *
+     *    - resolution memory : "this exact thing happened in March, and
+     *                          here is what actually fixed it"
+     *    - predictive triage : group / category / priority guessed from
+     *                          how similar tickets really got handled
+     *    - duplicate guard   : dont open the 4th ticket for one outage
+     *    - major-incident    : 5 tickets on the same thing in 90 min is
+     *      radar               not 5 tickets, its an outage
+     *    - patterns          : what keeps breaking, week over week
+     *
+     *  It all rides on the embedding cache we already had for the KB -
+     *  same table, same model, just source_table='incident' rows. So no
+     *  new tables, no new scope headaches at deploy time.
+     * =================================================================== */
+
+    function _incTextFor(gr) {
+        // what actually carries the meaning of a ticket: the one-liner, the
+        // detail, and the category words. keep it short - embeddings dont
+        // need the whole novel and short text scores cleaner.
+        var bits = [
+            String(gr.short_description || ''),
+            String(gr.description || '').substring(0, 900),
+            String(gr.category || ''),
+            String(gr.subcategory || '')
+        ];
+        return bits.join(' \n ').replace(/\s+/g, ' ').trim().substring(0, 2000);
+    }
+
+    function _lazyEmbedIncident(gr, cacheMap) {
+        var sysId = String(gr.sys_id);
+        var hit = cacheMap ? cacheMap[sysId] : null;
+        if (hit) {
+            try { return { ok: true, vec: JSON.parse(hit.embedding), cached: true }; } catch (eP) {}
+        }
+        var txt = _incTextFor(gr);
+        if (!txt) return { ok: false, error: 'nothing to embed' };
+        var res = _embedText(txt, 'RETRIEVAL_DOCUMENT');
+        if (res.error) return { ok: false, error: res.error };
+        try {
+            var row = new GlideRecord(EMBED_CACHE_TABLE);
+            row.initialize();
+            row.source_table  = gr.getTableName();
+            row.source_sys_id = sysId;
+            row.source_number = String(gr.number);
+            row.title         = String(gr.short_description || '').substring(0, 240);
+            row.body_digest   = txt.substring(0, 1500);
+            row.embedding     = JSON.stringify(res.values);
+            row.model         = EMBED_MODEL;
+            row.embedded_at   = new GlideDateTime().toString();
+            row.insert();
+        } catch (eW) { gs.warn('[NetraIntel] embed cache write failed: ' + (eW.message || eW)); }
+        return { ok: true, vec: res.values, cached: false };
+    }
+
+    function _loadIncidentVectors(table) {
+        var map = {};
+        try {
+            var cg = new GlideRecord(EMBED_CACHE_TABLE);
+            cg.addQuery('source_table', table || 'incident');
+            cg.addQuery('model', EMBED_MODEL);
+            cg.setLimit(5000);
+            cg.query();
+            while (cg.next()) {
+                map[String(cg.source_sys_id)] = { embedding: String(cg.embedding) };
+            }
+        } catch (e) { gs.warn('[NetraIntel] vector preload failed: ' + (e.message || e)); }
+        return map;
+    }
+
+    /**
+     * The engine behind every intelligence tool: embed the query, walk a
+     * filtered set of tickets, score by cosine, hand back the winners.
+     * opts = { resolved:bool, openOnly:bool, limit:int, threshold:float,
+     *          excludeSysId:string, table:string, days:int }
+     */
+    function _semanticIncidents(query, opts) {
+        opts = opts || {};
+        var table = opts.table || 'incident';
+        if (!query) return { ok: false, error: 'Give me something to look for.' };
+        var qRes = _embedText(query, 'RETRIEVAL_QUERY');
+        if (qRes.error) return { ok: false, error: qRes.error, embed_failed: true };
+        var qVec = qRes.values;
+
+        var cacheMap = _loadIncidentVectors(table);
+        var gr = new GlideRecord(table);
+        if (opts.resolved) {
+            // resolved or closed, and only the ones that actually say how
+            gr.addEncodedQuery('state IN 6,7');
+        } else if (opts.openOnly) {
+            gr.addActiveQuery();
+        }
+        if (opts.days) {
+            gr.addEncodedQuery('sys_created_on>=javascript:gs.daysAgoStart(' + parseInt(opts.days, 10) + ')');
+        }
+        gr.orderByDesc('sys_updated_on');
+        gr.setLimit(opts.scanLimit || INC_SCAN_LIMIT);
+        gr.query();
+
+        var scored = [], liveEmbeds = 0, cachedHits = 0, skipped = 0, seen = 0;
+        while (gr.next()) {
+            seen++;
+            var sysId = String(gr.sys_id);
+            if (opts.excludeSysId && sysId === opts.excludeSysId) continue;
+            var vec = null;
+            var hit = cacheMap[sysId];
+            if (hit) {
+                try { vec = JSON.parse(hit.embedding); cachedHits++; } catch (eP) { vec = null; }
+            }
+            if (!vec) {
+                if (liveEmbeds >= INC_EMBED_MAX_LIVE) { skipped++; continue; }
+                var er = _lazyEmbedIncident(gr, null);
+                if (!er.ok) continue;
+                vec = er.vec; liveEmbeds++;
+            }
+            scored.push({
+                sys_id:   sysId,
+                number:   String(gr.number),
+                short_description: String(gr.short_description || ''),
+                state:    String(gr.state.getDisplayValue ? gr.state.getDisplayValue() : gr.state),
+                priority: String(gr.priority),
+                category: String(gr.category || ''),
+                subcategory: String(gr.subcategory || ''),
+                assignment_group: String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : ''),
+                assigned_to: String(gr.assigned_to.getDisplayValue ? gr.assigned_to.getDisplayValue() : ''),
+                close_notes: String(gr.close_notes || '').replace(/\s+/g, ' ').substring(0, 600),
+                resolved_at: String(gr.resolved_at || gr.closed_at || ''),
+                opened: String(gr.sys_created_on || ''),
+                score: _cosineSim(qVec, vec)
+            });
+        }
+        scored.sort(function (a, b) { return b.score - a.score; });
+        var thr = (typeof opts.threshold === 'number') ? opts.threshold : INC_SIM_THRESHOLD;
+        var top = scored.filter(function (s) { return s.score >= thr; }).slice(0, opts.limit || 5);
+        return {
+            ok: true,
+            matches: top,
+            count: top.length,
+            stats: { scanned: seen, cached: cachedHits, embedded_now: liveEmbeds,
+                     skipped_uncached: skipped, best_score: scored.length ? Number(scored[0].score.toFixed(3)) : 0 }
+        };
+    }
+
+    // ---- 1. RESOLUTION MEMORY -------------------------------------------
+    // "has this happened before, and what fixed it"
+    function _findSimilarResolved(query, limit) {
+        var r = _semanticIncidents(query, { resolved: true, limit: Math.min(5, limit || 3) });
+        if (!r.ok) return r;
+        var withFix = [], noFix = [];
+        for (var i = 0; i < r.matches.length; i++) {
+            var m = r.matches[i];
+            m.similarity = Number(m.score.toFixed(3));
+            delete m.score;
+            if (m.close_notes) withFix.push(m); else noFix.push(m);
+        }
+        var all = withFix.concat(noFix);
+        if (!all.length) {
+            return { ok: true, count: 0, matches: [], stats: r.stats,
+                     message: 'Nothing in the history looks like that one. This may genuinely be new - say so, and offer to raise it.' };
+        }
+        return {
+            ok: true, count: all.length, matches: all, stats: r.stats,
+            has_fixes: withFix.length,
+            message: 'Read the closest 1-2 out loud: what the old ticket was, and CRUCIALLY what the close notes say fixed it. Mention how long ago it was. Do not read the similarity numbers aloud.'
+        };
+    }
+
+    // ---- 2. PREDICTIVE TRIAGE -------------------------------------------
+    // where do tickets like this actually end up, according to history
+    function _suggestTriage(description) {
+        if (!description) return { ok: false, error: 'I need the ticket wording to work from.' };
+        var r = _semanticIncidents(description, { limit: 12, threshold: 0.55, scanLimit: INC_SCAN_LIMIT });
+        if (!r.ok) return r;
+        if (!r.matches.length) {
+            return { ok: true, confident: false, sample_size: 0,
+                     message: 'No lookalikes in the history, so I have nothing solid to base a routing guess on. Say that honestly rather than guessing.' };
+        }
+        // weight each vote by how similar that ticket actually is
+        function tally(field) {
+            var bag = {};
+            for (var i = 0; i < r.matches.length; i++) {
+                var v = String(r.matches[i][field] || '').trim();
+                if (!v) continue;
+                bag[v] = (bag[v] || 0) + r.matches[i].score;
+            }
+            var out = [];
+            for (var k in bag) if (bag.hasOwnProperty(k)) out.push({ value: k, weight: bag[k] });
+            out.sort(function (a, b) { return b.weight - a.weight; });
+            var total = 0;
+            for (var j = 0; j < out.length; j++) total += out[j].weight;
+            return out.map(function (o) {
+                return { value: o.value, share: total ? Number((o.weight / total).toFixed(2)) : 0 };
+            }).slice(0, 3);
+        }
+        var groups = tally('assignment_group');
+        var cats   = tally('category');
+        var prios  = tally('priority');
+        var top = groups[0];
+        return {
+            ok: true,
+            confident: !!(top && top.share >= 0.5 && r.matches.length >= 3),
+            sample_size: r.matches.length,
+            assignment_group: groups,
+            category: cats,
+            priority: prios,
+            evidence: r.matches.slice(0, 3).map(function (m) {
+                return { number: m.number, short_description: m.short_description,
+                         assignment_group: m.assignment_group, priority: m.priority };
+            }),
+            stats: r.stats,
+            message: 'Say it like a colleague would: "tickets like this usually go to X" with the share as a rough word (most / about half / some), name one example ticket, then ASK before actually assigning anything.'
+        };
+    }
+
+    // ---- 3. DUPLICATE GUARD ---------------------------------------------
+    // stop the 4th ticket for one outage before it exists
+    function _checkDuplicates(description, excludeSysId) {
+        if (!description) return { ok: false, error: 'I need the wording to compare against.' };
+        var r = _semanticIncidents(description, {
+            openOnly: true, limit: 4, threshold: 0.68, excludeSysId: excludeSysId || ''
+        });
+        if (!r.ok) return r;
+        if (!r.matches.length) {
+            return { ok: true, duplicates: [], count: 0, clear: true,
+                     message: 'Nothing open looks like this - safe to raise a fresh one.' };
+        }
+        for (var i = 0; i < r.matches.length; i++) {
+            r.matches[i].similarity = Number(r.matches[i].score.toFixed(3));
+            delete r.matches[i].score;
+        }
+        return {
+            ok: true, clear: false, count: r.matches.length, duplicates: r.matches, stats: r.stats,
+            message: 'There is already an open ticket that looks like the same thing. Tell them the number and what it says, then ASK: add to that one, or still raise a new one? Do not create anything until they choose.'
+        };
+    }
+
+    // ---- 4. MAJOR-INCIDENT RADAR ----------------------------------------
+    // several tickets about one thing in a short window = an outage
+    function _majorIncidentRadar(hours) {
+        var win = Math.min(24, Math.max(1, parseInt(hours, 10) || 4));
+        var gr = new GlideRecord('incident');
+        gr.addActiveQuery();
+        gr.addEncodedQuery('sys_created_on>=javascript:gs.hoursAgoStart(' + win + ')');
+        gr.orderByDesc('sys_created_on');
+        gr.setLimit(200);
+        gr.query();
+        var byCat = {}, byCi = {}, rows = [];
+        while (gr.next()) {
+            var rec = {
+                number: String(gr.number),
+                short_description: String(gr.short_description || ''),
+                category: String(gr.category || '(none)'),
+                ci: String(gr.cmdb_ci.getDisplayValue ? gr.cmdb_ci.getDisplayValue() : ''),
+                priority: String(gr.priority),
+                opened: String(gr.sys_created_on)
+            };
+            rows.push(rec);
+            byCat[rec.category] = (byCat[rec.category] || 0);
+            byCat[rec.category]++;
+            if (rec.ci) { byCi[rec.ci] = (byCi[rec.ci] || 0); byCi[rec.ci]++; }
+        }
+        function clusters(bag, kind, minCount) {
+            var out = [];
+            for (var k in bag) {
+                if (!bag.hasOwnProperty(k)) continue;
+                if (bag[k] >= minCount && k !== '(none)') out.push({ kind: kind, value: k, count: bag[k] });
+            }
+            return out;
+        }
+        var hot = clusters(byCi, 'configuration item', 3).concat(clusters(byCat, 'category', 4));
+        hot.sort(function (a, b) { return b.count - a.count; });
+        var p1p2 = rows.filter(function (r0) { return r0.priority === '1' || r0.priority === '2'; }).length;
+        return {
+            ok: true,
+            window_hours: win,
+            new_incidents: rows.length,
+            high_priority: p1p2,
+            clusters: hot.slice(0, 5),
+            samples: rows.slice(0, 5),
+            major_incident_suspected: hot.length > 0 || p1p2 >= 3,
+            message: hot.length
+                ? 'This smells like one underlying problem, not separate tickets. Lead with the cluster ("four tickets on the same server in the last hour"), then offer to raise a problem record or escalate.'
+                : (p1p2 >= 3 ? 'A lot of high priority at once - flag that clearly.'
+                             : 'Nothing clustering. Say it is quiet, briefly.')
+        };
+    }
+
+    // ---- 5. PATTERNS ----------------------------------------------------
+    // what keeps breaking, and is it getting worse
+    function _incidentPatterns(days) {
+        var d = Math.min(90, Math.max(1, parseInt(days, 10) || 7));
+        function bucket(fromDaysAgo, toDaysAgo) {
+            var gr = new GlideRecord('incident');
+            var q = 'sys_created_on>=javascript:gs.daysAgoStart(' + fromDaysAgo + ')';
+            if (toDaysAgo !== null) q += '^sys_created_on<javascript:gs.daysAgoStart(' + toDaysAgo + ')';
+            gr.addEncodedQuery(q);
+            gr.setLimit(1000);
+            gr.query();
+            var cats = {}, groups = {}, total = 0;
+            while (gr.next()) {
+                total++;
+                var c = String(gr.category || '(uncategorised)');
+                cats[c] = (cats[c] || 0) + 1;
+                var g = String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : '');
+                if (g) groups[g] = (groups[g] || 0) + 1;
+            }
+            return { cats: cats, groups: groups, total: total };
+        }
+        var now  = bucket(d, null);
+        var prev = bucket(d * 2, d);
+        function top(bag, prevBag) {
+            var out = [];
+            for (var k in bag) {
+                if (!bag.hasOwnProperty(k)) continue;
+                var before = prevBag[k] || 0;
+                out.push({ value: k, count: bag[k], previous: before,
+                           change: before ? Number((((bag[k] - before) / before) * 100).toFixed(0)) : null });
+            }
+            out.sort(function (a, b) { return b.count - a.count; });
+            return out.slice(0, 5);
+        }
+        var deltaPct = prev.total ? Number((((now.total - prev.total) / prev.total) * 100).toFixed(0)) : null;
+        // percentages get silly at the edges - "down one hundred percent"
+        // is a daft way to say "nothing came in", so tell her plainly
+        var hint;
+        if (now.total === 0) {
+            hint = prev.total
+                ? 'Nothing came in at all this period (last period had ' + prev.total + '). Just say it was completely quiet - do NOT say "down a hundred percent", it sounds ridiculous.'
+                : 'Nothing this period or the one before. Say it has been quiet, in one line.';
+        } else if (!prev.total) {
+            hint = 'Nothing to compare against - the previous period was empty. Give the count and the top category, skip the trend talk.';
+        } else {
+            hint = 'Headline first (volume up or down versus the period before), then the one or two categories driving it. Round the numbers, under four sentences.';
+        }
+        return {
+            ok: true,
+            window_days: d,
+            total_this_period: now.total,
+            total_previous_period: prev.total,
+            change_percent: deltaPct,
+            top_categories: top(now.cats, prev.cats),
+            top_groups: top(now.groups, prev.groups),
+            message: hint
+        };
+    }
+
+    // ---- 6. BACKFILL ----------------------------------------------------
+    // warm the vector cache so the first real question is already fast
+    function _reindexIncidents(max) {
+        var budget = Math.min(40, Math.max(1, parseInt(max, 10) || 25));
+        var cacheMap = _loadIncidentVectors('incident');
+        var gr = new GlideRecord('incident');
+        gr.orderByDesc('sys_updated_on');
+        gr.setLimit(INC_SCAN_LIMIT);
+        gr.query();
+        var done = 0, already = 0, failed = 0;
+        while (gr.next() && done < budget) {
+            if (cacheMap[String(gr.sys_id)]) { already++; continue; }
+            var r = _lazyEmbedIncident(gr, null);
+            if (r.ok) done++; else failed++;
+        }
+        return { ok: true, embedded_now: done, already_cached: already, failed: failed,
+                 message: 'Indexed ' + done + ' more ticket' + (done === 1 ? '' : 's') + '. Run it again to keep going if there are more.' };
     }
 
     /* ===================================================================
@@ -4728,37 +5296,7 @@
      *  Safer than letting Gemini grab gr.setValue() through update_ticket
      *  because we allow-list the fields it can touch.
      * =================================================================== */
-    var UPDATE_ALLOW = {
-        short_description:  true, description:        true,
-        urgency:            true, impact:             true,
-        priority:           true, category:           true,
-        subcategory:        true, state:              true,
-        assignment_group:   true, assigned_to:        true,
-        comments:           true, work_notes:         true,
-        close_notes:        true, close_code:         true,
-        cmdb_ci:            true
-    };
     // Map common synonyms the user might say to actual ServiceNow fields
-    var FIELD_SYNONYM = {
-        'short description':  'short_description',
-        'title':              'short_description',
-        'summary':            'short_description',
-        'desc':               'description',
-        'details':            'description',
-        'assignment group':   'assignment_group',
-        'assigned group':     'assignment_group',
-        'group':              'assignment_group',
-        'assignee':           'assigned_to',
-        'assigned to':        'assigned_to',
-        'owner':              'assigned_to',
-        'work note':          'work_notes',
-        'work notes':         'work_notes',
-        'internal note':      'work_notes',
-        'close note':         'close_notes',
-        'close notes':        'close_notes',
-        'configuration item': 'cmdb_ci',
-        'ci':                 'cmdb_ci'
-    };
     function _updateField(num, field, value) {
         if (!num || !field || value === undefined || value === null || value === '') {
             return { ok: false, error: 'ticket number, field, and value all required' };
@@ -4870,17 +5408,6 @@
      *  R2.6 - read_script + list_scripts (any ServiceNow code file)
      *  Tries each script table in order. Returns source + metadata.
      * =================================================================== */
-    var SCRIPT_TABLES = [
-        { table: 'sys_script_include', nameField: 'name',         scriptField: 'script',           label: 'Script Include' },
-        { table: 'sys_script',         nameField: 'name',         scriptField: 'script',           label: 'Business Rule' },
-        { table: 'sys_ui_script',      nameField: 'script_name',  scriptField: 'script',           label: 'UI Script' },
-        { table: 'sys_script_client',  nameField: 'name',         scriptField: 'script',           label: 'Client Script' },
-        { table: 'sysauto_script',     nameField: 'name',         scriptField: 'script',           label: 'Scheduled Job' },
-        { table: 'sys_processor',      nameField: 'name',         scriptField: 'script',           label: 'Processor' },
-        { table: 'sys_ws_operation',   nameField: 'name',         scriptField: 'operation_script', label: 'Scripted REST Resource' },
-        { table: 'sys_script_email',   nameField: 'name',         scriptField: 'script',           label: 'Email Script' },
-        { table: 'sys_ui_action',      nameField: 'name',         scriptField: 'script',           label: 'UI Action' }
-    ];
 
     function _readScript(query) {
         try {
