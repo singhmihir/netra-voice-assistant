@@ -73,7 +73,9 @@ T.test('recent Netra errors are reported', function () {
 T.test('a log it cannot read is not reported as "no errors"', function () {
     healthy();
     g.P.STORE.syslog = {};
-    T.match(check().say, /I can not read the system log, so I can not tell you about recent errors/);
+    var r = check();
+    T.match(r.say, /^Self-check done: all 9 checks are fine\..* One note: I can not see the system log on this instance, so errors there are not part of this check\.$/);
+    T.notMatch(r.say, /no Netra errors/, 'never claims no errors when it could not look');
 });
 
 T.run(__filename);

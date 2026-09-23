@@ -36,7 +36,11 @@ NetraSelfCheck.prototype = {
                 var r = self[list[i]]();
                 if (r) checks = checks.concat(r);
             } catch (e) {
-                checks.push({ key: list[i].substring(1), level: 'warning', say: 'my ' + list[i].substring(1) + ' check itself failed (' + String(e.message || e).substring(0, 80) + ')', fix: '' });
+                // scope fencing exceptions refuse even e.message in a scoped app
+                var why = '';
+                try { why = String(e); } catch (e2) { why = 'access denied'; }
+                if (/ScopeAccessNotGranted|not granted/i.test(why)) why = 'Netra is not allowed to read what it needs';
+                checks.push({ key: list[i].substring(1), level: 'warning', say: 'my ' + list[i].substring(1).replace(/_/g, ' ') + ' check could not run: ' + why.substring(0, 90), fix: 'running Netra Install again restores the permissions' });
             }
         }
         var problems = 0, warnings = 0, fine = 0;
@@ -50,19 +54,22 @@ NetraSelfCheck.prototype = {
 
     /** one spoken paragraph: problems first, then warnings, never a wall of text */
     sentence: function (res) {
-        var bad = [], warn = [];
+        var bad = [], warn = [], notes = [];
         for (var i = 0; i < res.checks.length; i++) {
             var c = res.checks[i];
             var line = c.say + (c.fix ? ' - ' + c.fix : '');
             if (c.level === 'problem') bad.push(line);
             else if (c.level === 'warning') warn.push(line);
+            else if (c.level === 'note') notes.push(c.say);
         }
         var total = res.checks.length;
-        if (!bad.length && !warn.length) return 'Self-check done: all ' + total + ' checks are fine. My tools, my background work and my memory are all in order.';
+        var noteLine = notes.length ? ' One note: ' + notes.join('; ') + '.' : '';
+        if (!bad.length && !warn.length) return 'Self-check done: all ' + total + ' checks are fine. My tools, my background work and my memory are all in order.' + noteLine;
         var out = 'Self-check done: ' + res.fine + ' of ' + total + ' checks are fine. ';
         if (bad.length) out += (bad.length === 1 ? 'One problem: ' : bad.length + ' problems. ') + bad.slice(0, 3).join('. ') + '. ';
         if (warn.length) out += (warn.length === 1 ? 'One thing to watch: ' : warn.length + ' things to watch: ') + warn.slice(0, 3).join('. ') + '.';
         if (bad.length > 3 || warn.length > 3) out += ' The Lab panel has the full list.';
+        out += noteLine;
         return out.replace(/\.\./g, '.').replace(/\s+$/, '');
     },
 
@@ -225,12 +232,16 @@ NetraSelfCheck.prototype = {
     _errors: function () {
         var log = new GlideRecord('syslog');
         // a log I cannot read must not be reported as "no errors"
-        var probe = new GlideRecord('syslog');
-        var readable = probe.isValid();
-        if (readable) { probe.setLimit(1); probe.query(); readable = probe.next(); }
+        var readable = false;
+        try {
+            var probe = new GlideRecord('syslog');
+            readable = probe.isValid();
+            if (readable) { probe.setLimit(1); probe.query(); readable = probe.next(); }
+        } catch (eP) { readable = false; }   // cross-scope read not granted throws
         if (!readable) {
-            return [{ key: 'errors', level: 'warning', say: 'I can not read the system log, so I can not tell you about recent errors',
-                      fix: 'a cross-scope read privilege on syslog for Netra restores that - running Netra Install again adds it' }];
+            // a limitation, not a fault: many instances fence syslog off from
+            // scoped apps regardless of privileges - say so once, calmly
+            return [{ key: 'errors', level: 'note', say: 'I can not see the system log on this instance, so errors there are not part of this check' }];
         }
         log.addQuery('level', '2');   // error
         log.addQuery('message', 'STARTSWITH', '[Netra');
