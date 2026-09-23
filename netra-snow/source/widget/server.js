@@ -1298,20 +1298,25 @@
                bits.join('. ') + '.' + (undoable ? ' Say undo and the number if I got any of it wrong.' : '');
     }
 
+    // "INC0010020" -> "incident ending 0 2 0" inside a sentence built from tool messages
+    function _spokenRefs(text) {
+        return String(text || '').replace(/\b(INC|CHG|PRB|RITM|REQ|SCTASK)\d{7}\b/g, function (n) { return _spkNum(n); });
+    }
+
     function _sayPlanHop(out) {
         if (!out) return 'Something went wrong running the plan.';
-        var did = (out.done_this_round || []).length ? out.done_this_round.join('; ') + '. ' : '';
+        var did = (out.done_this_round || []).length ? _spokenRefs(out.done_this_round.join('; ')) + '. ' : '';
         var undoLine = out.undoable ? ' Say "undo the plan" to put the changes back' + (out.one_way ? ' - comments and messages can not be taken back.' : '.') : '';
         if (out.ok === false && out.halted_at_step) {
-            return did + 'The plan stopped at step ' + out.halted_at_step + ': ' + out.step_error + '. ' +
-                   out.completed + ' of ' + out.total + ' steps are done.' + undoLine;
+            return (did + 'The plan stopped at step ' + out.halted_at_step + ': ' + out.step_error + '. ' +
+                    out.completed + ' of ' + out.total + ' steps are done.' + undoLine).replace(/\s{2,}/g, ' ');
         }
         if (out.needs_confirmation && out.read_back) {
             _brainTurn.draftHeard = true;
             return 'That plan was read back a while ago, so here it is again: ' + out.read_back.join('; ') + '. Shall I run it?';
         }
         if (out.ok === false) return String(out.error || 'I could not run the plan.');
-        if (out.done) return 'Plan complete. ' + did + undoLine;
+        if (out.done) return ('Plan complete. ' + did + undoLine).replace(/\s{2,}/g, ' ');
         var left = out.total - out.completed;
         return did + left + ' to go.';
     }
@@ -1484,8 +1489,8 @@
             undo_plan: function () {
                 var u = _undoPlan();
                 if (!u || !u.ok) return { text: 'I could not undo the plan: ' + String((u && u.error) || 'no detail') + '.', tool: 'undo_plan', extra: { undo: u } };
-                var t = (u.restored || []).length ? 'Reversed and read back: ' + u.restored.join('; ') + '.' : 'Nothing was reversed.';
-                if ((u.problems || []).length) t += ' Not reversed: ' + u.problems.join('; ') + '.';
+                var t = (u.restored || []).length ? 'Reversed and read back: ' + _spokenRefs(u.restored.join('; ')) + '.' : 'Nothing was reversed.';
+                if ((u.problems || []).length) t += ' Not reversed: ' + _spokenRefs(u.problems.join('; ')) + '.';
                 if (u.one_way) t += ' ' + u.one_way + ' step' + (u.one_way === 1 ? ' was a comment, note or message' : 's were comments, notes or messages') + ', which I can not take back.';
                 return { text: t, tool: 'undo_plan', extra: { undo: u } };
             },
@@ -7702,7 +7707,7 @@
             plan.results.push({ step: plan.cursor + 1, ok: true, one_way: !!ONE_WAY[tool] });
             // speak what the tool REPORTS it did (the group it actually found,
             // the priority it read back) rather than what was planned
-            done.push((plan.cursor + 1) + '. ' + String((res && res.message) || _planStepText(st)).replace(/\s+/g, ' ').substring(0, 140));
+            done.push((plan.cursor + 1) + '. ' + String((res && res.message) || _planStepText(st)).replace(/\s+/g, ' ').replace(/[.\s]+$/, '').substring(0, 140));
             plan.cursor++;
         }
 
@@ -7749,7 +7754,12 @@
                     var gr = new GlideRecord(u.table);
                     if (!gr.get(u.sys_id)) { problems.push(u.number + ' is gone'); continue; }
                     var names = [];
-                    for (var fk in before) { if (before.hasOwnProperty(fk)) { gr.setValue(fk, before[fk]); names.push(fk.replace(/_/g, ' ')); } }
+                    for (var fk in before) {
+                        if (!before.hasOwnProperty(fk)) continue;
+                        gr.setValue(fk, before[fk]);
+                        // impact/urgency ride along with a priority restore; say "priority"
+                        if (!(before.hasOwnProperty('priority') && (fk === 'impact' || fk === 'urgency'))) names.push(fk.replace(/_/g, ' '));
+                    }
                     gr.work_notes = 'Plan step undone via Netra: ' + names.join(', ') + ' restored.';
                     gr.update();
                     // read it back - a business rule can quietly refuse the restore
