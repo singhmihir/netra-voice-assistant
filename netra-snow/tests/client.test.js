@@ -31,7 +31,18 @@ T.test('only whole-utterance matches are answered locally', function () {
 T.test('the auto flag rides only with its own utterance', function () {
     var src = require('fs').readFileSync(require('path').join(N.SRC, 'widget', 'client.js'), 'utf8');
     T.match(src, /c\.data\.auto = !!c\._nextTurnAuto && c\._nextTurnAuto === transcript;/);
-    T.match(src, /awaitingAnswer = c\._awaitingConfirm \|\|/);
+    T.match(src, /awaitingAnswer = _stillAwaiting\(\);/);
+    T.match(src, /c\.data\.drop_unheard = !!c\._lastReplyUnheard;/);
+});
+
+T.test('the auto briefing waits for an owed answer - but not forever', function () {
+    var now = Date.now();
+    c._awaitingConfirm = true; c._awaitingConfirmAt = now; c.lastAnswer = 'Done.'; c.lastAnswerAt = now;
+    T.ok(f._stillAwaiting(), 'read-back parked just now');
+    c._awaitingConfirmAt = now - 11 * 60000;
+    T.ok(!f._stillAwaiting(), 'the server dropped it after 10 minutes, so should the page');
+    c._awaitingConfirm = false; c.lastAnswer = 'Shall I read the rest?'; c.lastAnswerAt = now - 2 * 60000;
+    T.ok(!f._stillAwaiting(), 'an unanswered plain question stops blocking after a minute');
 });
 
 T.run(__filename);

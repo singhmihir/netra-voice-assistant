@@ -213,4 +213,12 @@ T.test('update_field plan steps use the spoken field name for their undo', funct
     T.eq(s.inc('INC0010016').assigned_to || '', '');
 });
 
+T.test('a read-back the page never spoke (the user barged in) can not be confirmed', function () {
+    var s = new S.Session(); withLastAction(s);
+    s.say('undo that');                                  // reply arrives stale, never spoken
+    var r = s.say('okay', { drop_unheard: true });
+    T.notMatch(r.message, /Undone/);
+    T.eq(s.inc('INC0010013').priority, '1', 'nothing undone');
+});
+
 T.run(__filename);

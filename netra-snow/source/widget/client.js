@@ -321,6 +321,13 @@ api.controller = function ($scope, $timeout, $window) {
         var d = new Date();
         return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
     }
+    // is an answer still owed? a parked read-back for up to the server's 10
+    // minutes, a plain question for a minute - never "for the whole visit"
+    function _stillAwaiting() {
+        var now = Date.now();
+        if (c._awaitingConfirm && now - (c._awaitingConfirmAt || 0) < 10 * 60000) return true;
+        return /\?\s*["']?\s*$/.test(String(c.lastAnswer || '')) && now - (c.lastAnswerAt || 0) < 60000;
+    }
     function _maybeAutoBrief(tries) {
         if (!c.liveMode || !c.prefBrief) return;
         var last = '';
@@ -329,7 +336,7 @@ api.controller = function ($scope, $timeout, $window) {
         var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
         // never talk over a question the user has not answered yet, and never
         // squeeze in while a user turn is on the wire or queued behind one
-        var awaitingAnswer = c._awaitingConfirm || /\?\s*["']?\s*$/.test(String(c.lastAnswer || ''));
+        var awaitingAnswer = _stillAwaiting();
         if (calibBusy || awaitingAnswer || _chatInFlight || _queuedUtterance || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
             if (tries < 12) $timeout(function () { _maybeAutoBrief(tries + 1); }, 12000);
             return;
@@ -347,7 +354,7 @@ api.controller = function ($scope, $timeout, $window) {
     function _maybeAwayDebrief(tries) {
         if (!c.liveMode || !(c.data && c.data.away_pending > 0)) return;
         var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
-        var awaitingAnswer = c._awaitingConfirm || /\?\s*["']?\s*$/.test(String(c.lastAnswer || ''));
+        var awaitingAnswer = _stillAwaiting();
         if (calibBusy || awaitingAnswer || _chatInFlight || _queuedUtterance || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
             if (tries < 12) $timeout(function () { _maybeAwayDebrief(tries + 1); }, 12000);
             return;
@@ -3318,7 +3325,7 @@ api.controller = function ($scope, $timeout, $window) {
                 } catch (eR) { logEvent('warn', 'rewind_mem server call failed: ' + eR.message); }
             }
             try { _convoPush('you', text); _convoPush('netra', local.reply); } catch (eCv) {}
-            if (local.intent !== 'repeat') c.lastAnswer = String(local.reply || '');
+            if (local.intent !== 'repeat') { c.lastAnswer = String(local.reply || ''); c.lastAnswerAt = Date.now(); }
             setState('speaking');
             speak(local.reply, function () {
                 if (c.alert) {
@@ -3377,6 +3384,8 @@ api.controller = function ($scope, $timeout, $window) {
         // turn, or a read-back waiting for "yes" goes stale underneath them
         c.data.auto = !!c._nextTurnAuto && c._nextTurnAuto === transcript;
         c._nextTurnAuto = false;
+        c.data.drop_unheard = !!c._lastReplyUnheard;
+        c._lastReplyUnheard = false;
         // R8.2 - live-stage flag (server strips navigation tools) + prosody
         c.data.live_mode = !!c.liveMode;
         var prosOut = null;
@@ -3539,7 +3548,6 @@ api.controller = function ($scope, $timeout, $window) {
                 // every reply, failed ones included - a failed turn still spent quota
                 if (r.agency) c.agency = r.agency;   // R17 - AGENCY card refresh
                 if (r.brain) c.brain = r.brain;      // R18 - BRAIN card refresh
-                c._awaitingConfirm = !!r.awaiting_confirm;
                 if (Array.isArray(r.history)) {
                     geminiHistory = r.history;
                     _memPersist();   // R11 - survive refreshes
@@ -3552,12 +3560,19 @@ api.controller = function ($scope, $timeout, $window) {
                 if (stale) {
                     logEvent('barge', 'reply arrived after barge-in - kept in history, not spoken');
                     lastReply = r.message || lastReply;
+                    // a read-back the user never heard must not be confirmable:
+                    // tell the server on the next turn so it drops that draft
+                    c._awaitingConfirm = false;
+                    if (r.awaiting_confirm) c._lastReplyUnheard = true;
                     _drainQueuedUtterance();
                     return;
                 }
+                c._awaitingConfirm = !!r.awaiting_confirm;
+                c._awaitingConfirmAt = Date.now();
                 if (r.ok) {
                     lastReply = r.message || '';
                     c.lastAnswer = String(r.message || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*_`#>]/g, '').trim();
+                    c.lastAnswerAt = Date.now();
                     logEvent('srv', 'reply ok (' + lastReply.length + ' chars, ' + elapsed + ' ms)' + (r.model_used ? ' via ' + r.model_used : ''));
                     _convoPush('netra', r.message);   // R7 - chat tab
                     setState('speaking');
@@ -3572,6 +3587,9 @@ api.controller = function ($scope, $timeout, $window) {
                     });
                 } else {
                     logEvent('err', 'server says: ' + (r.message || 'unknown error'));
+                    // "repeat" must replay THIS answer, not an older read-back
+                    c.lastAnswer = String(r.message || 'Sorry, something went wrong.').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*_`#>]/g, '').trim();
+                    c.lastAnswerAt = Date.now();
                     c.stats.errors++;
                     setState('error');
                     cue('error');
@@ -3589,6 +3607,8 @@ api.controller = function ($scope, $timeout, $window) {
                 setState('error');
                 cue('error');
                 logEvent('err', 'transport error: ' + (err && (err.message || err.status) || err));
+                c.lastAnswer = 'Sorry, I could not reach the server.';
+                c.lastAnswerAt = Date.now();
                 stopFillerChain();
                 speak('Sorry, I could not reach the server.', function () {
                     if (c.alert) setState('idle');

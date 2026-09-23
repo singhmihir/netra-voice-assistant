@@ -54,7 +54,7 @@ Session.prototype.model = function () {           // queue what the model will r
 };
 Session.prototype.say = function (text, opts) {
     opts = opts || {};
-    var data = N.request({ action: 'chat', message: text, history: this.history, auto: !!opts.auto, live_mode: true });
+    var data = N.request({ action: 'chat', message: text, history: this.history, auto: !!opts.auto, live_mode: true, drop_unheard: !!opts.drop_unheard });
     var r = data.response || {};
     if (Array.isArray(r.history)) this.history = r.history;
     this.last = r;

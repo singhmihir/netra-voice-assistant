@@ -385,6 +385,9 @@
         // auto turns (debrief/briefing) are Netra talking, not the user
         // answering - they must not age a draft that is waiting for a yes
         try { tb = _ctxReadBlob(); if (!(input && input.auto)) tb.turn = (tb.turn || 0) + 1; } catch (eT) {}
+        // the page never spoke the last reply (the user barged in): whatever it
+        // parked was never heard, so it can not be confirmed by this turn
+        try { if (tb && input && input.drop_unheard) _dropDraftsOfTurn(tb, (tb.turn || 0) - 1); } catch (eD) {}
         var out;
         try {
             out = _chatCore(userMessage, history, liveMode, prosody);
@@ -408,6 +411,12 @@
      * or failed reply may never have spoken the read-back at all - in both
      * cases drop what this turn parked, and say so.
      */
+    function _dropDraftsOfTurn(b, turn) {
+        if (b.flDraft && b.flDraft.turn === turn) delete b.flDraft;
+        if (b.pendingOrder && b.pendingOrder.turn === turn) delete b.pendingOrder;
+        if (b.plan && !b.plan.confirmed && b.plan.turn === turn) delete b.plan;
+    }
+
     function _draftWaiting() {
         var b = _ctxReadBlob(), cur = _curTurn(), now = new GlideDateTime().getNumericValue();
         function w(d) { return !!d && typeof d.turn === 'number' && d.turn === cur && (now - (d.at || 0)) < 10 * 60000; }
@@ -1627,6 +1636,10 @@
                     var itemMode = !/^undo (?:task|order|standing order) /.test(lc) && am &&
                                    (new GlideDateTime().getNumericValue() - (am.at || 0)) < 30 * 60000 && am.items[String(n)];
                     if (itemMode) nt = am.items[String(n)];
+                    if (!itemMode && /^undo item /.test(lc)) {
+                        return _flReply(am ? 'That debrief is too old, or has no item ' + n + ' - say "debrief me" to hear it again, or "undo task" and its number.'
+                                           : 'I have no debrief to number from - say "undo task" and its number.', contents, 'undo_task');
+                    }
                     _parkDraft('undo_task', { nt: nt });
                     var tnum = parseInt(nt.replace(/\D/g, ''), 10);
                     return _flReply(itemMode
@@ -1638,6 +1651,7 @@
                     if (!a) return _flReply('There is nothing on record for me to undo.', contents, 'undo_last_action');
                     var what = a.kind === 'created' ? ('delete ' + _spkNum(a.number) + ' that I just created')
                              : a.kind === 'resolved' ? ('reopen ' + _spkNum(a.number))
+                             : a.kind === 'fields' ? ('put ' + _spkNum(a.number) + ' back to ' + (a.old_display || 'its earlier values'))
                              : ('put ' + String(a.field || 'the field').replace(/_/g, ' ') + ' back on ' + _spkNum(a.number));
                     _parkDraft('undo_last', {});
                     return _flReply('That would ' + what + '. Shall I?', contents, 'undo_last_draft');
@@ -1684,7 +1698,7 @@
     // one would cancel or apply a mission they did not mean
     function _missionPick(said) {
         var raw = String(said || '').replace(/^\s+|\s+$/g, '');
-        if (!raw || /^(now|please|then|again|too)$/i.test(raw)) return { nt: _liveMissionNt(), named: false };
+        if (!raw || /^(now|please|then|again|too|it|this|current|latest|active|running|the (current|latest|active|running) (one|mission)|this (one|mission)|unassigned queue)$/i.test(raw)) return { nt: _liveMissionNt(), named: false };
         var d = _missionDigits(raw);
         return d ? { nt: d, named: true } : { nt: '', named: true, bad: raw };
     }
@@ -2002,8 +2016,13 @@
     // cannot check and a model is most tempted to round or invent
     function _invFigures(text) {
         var out = [], s = String(text || '').toLowerCase();
-        var clock = s.match(/\b\d{1,2}:\d{2}\b/g) || [];
-        for (var i = 0; i < clock.length; i++) out.push('t' + clock[i].replace(/^0(\d)/, '$1'));
+        // "2:20 PM" and "14:20" are the same time
+        var clk = /\b(\d{1,2}):(\d{2})\b\s*(a\.?m\.?|p\.?m\.?)?/g, cm;
+        while ((cm = clk.exec(s))) {
+            var hh = parseInt(cm[1], 10);
+            if (cm[3]) { hh = hh % 12; if (cm[3].charAt(0) === 'p') hh += 12; }
+            out.push('t' + hh + ':' + cm[2]);
+        }
         var re = /\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|seconds?|secs?)\b/g, m;
         while ((m = re.exec(s))) out.push(m[1] + m[2].charAt(0));
         return out;
@@ -2117,7 +2136,10 @@
                        (because.length ? ' Evidence: ' + because.join('; ') + '.' : ''));
         }
         if (res.hypotheses[0].confirm_by) parts.push('To confirm the first: ' + res.hypotheses[0].confirm_by);
-        if (res.mode === 'rules' && String(gs.getProperty(SCOPE + '.investigate_llm', 'true')) !== 'false') parts.push('My reasoning model was not available, so these come from rules over the evidence.');
+        if (res.mode === 'rules' && String(gs.getProperty(SCOPE + '.investigate_llm', 'true')) !== 'false') {
+            parts.push(res.llm_rejected ? 'My reasoning model\'s theories did not hold up against the evidence, so these come from rules over it.'
+                                        : 'My reasoning model was not available, so these come from rules over the evidence.');
+        }
         else if (res.mode === 'rules') parts.push('These come from rules over the evidence, no model involved.');
         parts.push(_invSourcesLine(dossier));
         parts.push('Say "evidence for one" to hear why, or "write it up" to put this in a work note.');
@@ -2225,11 +2247,12 @@
                     }
                 }
             }
+            var llmRejected = !!(useLlm && rr && rr.ok && rr.json && !res);
             if (!res) {
                 var ruleText = [];
                 for (var rt = 0; rt < rules.length; rt++) ruleText.push(rules[rt].statement);
                 var vr = thin ? { hypotheses: [], dropped: 0 } : _invValidate(rules, dossier, ruleText.join(' '));
-                res = { mode: thin ? 'thin' : 'rules', model: null, headline: '', hypotheses: vr.hypotheses, dropped: vr.dropped, unknowns: [] };
+                res = { mode: thin ? 'thin' : 'rules', model: null, headline: '', hypotheses: vr.hypotheses, dropped: vr.dropped, unknowns: [], llm_rejected: llmRejected };
             }
         }
         var speech = _invCompose(res, dossier);
@@ -2514,7 +2537,10 @@
                 if (nums.length > 1) return null;
                 if (nums.length === 1) target = nums[0];
                 // pronouns mean the ticket in front of them now, not an older investigation
-                if (!target) target = again ? (fi.anchor.number || fi.anchor.ci_name) : (_focusNumber() || (fi && (fi.anchor.number || fi.anchor.ci_name)) || '');
+                // "it" right after an investigation means that thing (a server has
+                // no focus ticket); otherwise it means the ticket in focus
+                var adjInv = fi && typeof fi.spoken_turn === 'number' && fi.spoken_turn === _curTurn() - 1;
+                if (!target) target = (again || adjInv) ? (fi.anchor.number || fi.anchor.ci_name) : (_focusNumber() || (fi && (fi.anchor.number || fi.anchor.ci_name)) || '');
                 if (!target) return verb ? _flReply('Which ticket or server should I look into?', contents, 'investigate') : null;
                 if (/^VIT/i.test(target)) return null;   // vulnerability items belong to the VR tools
                 // not a ticket and not a known CI ("what's wrong with my laptop"):

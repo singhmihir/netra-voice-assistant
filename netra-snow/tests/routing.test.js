@@ -104,4 +104,24 @@ T.test('no API key: the free answers still work (never goes dark)', function () 
     T.eq(s.gemini.generate.length, 0);
 });
 
+T.test('"undo item two" with no debrief says so instead of undoing task two', function () {
+    var s = new S.Session();
+    var r = fast(s, 'undo item two');
+    T.match(r.text, /I have no debrief to number from - say "undo task" and its number/);
+    T.ok(!s.blob().flDraft, 'nothing parked');
+});
+
+T.test('undo read-back for a priority set through impact and urgency', function () {
+    var s = new S.Session();
+    s.setBlob({ last_action: { kind: 'fields', number: 'INC0010013', table: 'incident', fields: { impact: '2', urgency: '2' }, old_display: 'priority 3' } });
+    T.match(fast(s, 'undo that').text, /That would put \*\*incident ending 0 1 3\*\* back to priority 3\. Shall I\?/);
+});
+
+T.test('"current mission" means the live one; an unknown name never does', function () {
+    var f = require('./lib/netra').loadServer({ input: { action: 'chat' } }).fn;
+    ['current', 'the current mission', 'latest', 'now', ''].forEach(function (x) { T.eq(f._missionPick(x).named, false, x); });
+    T.eq(f._missionPick('eleven').nt, '11');
+    T.ok(f._missionPick('banana').bad, 'unknown names are refused, not guessed');
+});
+
 T.run(__filename);

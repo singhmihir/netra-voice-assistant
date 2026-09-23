@@ -124,4 +124,18 @@ T.test('pronoun targets', function () {
     T.eq(f._invTarget('INC0010013'), 'INC0010013');
 });
 
+T.test('a 12-hour time in a theory matches the 24-hour evidence time', function () {
+    T.eq(f._invFigures('the 2:20 PM patch'), f._invFigures('work finished at 14:20'));
+    T.eq(f._invFigures('at 12:05 am'), ['t0:05']);
+});
+
+T.test('"why is it down" right after investigating a server means that server', function () {
+    var s = outage(false);
+    s.say('status of INC0010013');            // an unrelated focus ticket
+    s.say('investigate netra-lab-web01');
+    var r = s.say('why is it down');
+    T.match(r.message, /netra-lab-web01/);
+    T.notMatch(r.message, /incident ending 0 1 3/);
+});
+
 T.run(__filename);
