@@ -16,6 +16,7 @@ function quota429(kind) {
         { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '30s' }] } });
 }
 
+var TOPICS = ['vpn', 'printer', 'outlook', 'password', 'laptop', 'monitor', 'web01'];
 function unitVec(seed) {
     var v = [], s = 0;
     for (var i = 0; i < 768; i++) { var x = Math.sin((i + 1) * (seed + 1)); v.push(x); s += x * x; }
@@ -36,8 +37,10 @@ function install(P, queue) {
             log.embed++;
             var body = {};
             try { body = JSON.parse(req.body || '{}'); } catch (e) {}
-            var t = JSON.stringify(body).length;
-            return http(200, { embedding: { values: unitVec(t % 7) } });
+            // meaning by keyword: tickets about the same thing embed alike
+            var txt = JSON.stringify(body).toLowerCase(), seed = 99;
+            for (var k = 0; k < TOPICS.length; k++) if (txt.indexOf(TOPICS[k]) >= 0) { seed = k; break; }
+            return http(200, { embedding: { values: unitVec(seed) } });
         }
         var reqBody = JSON.parse(req.body || '{}');
         log.generate.push(reqBody);
