@@ -380,7 +380,7 @@
     function _chat(userMessage, history, liveMode, prosody) {
         _brainTurn.calls = 0; _brainTurn.attempts = []; _brainTurn.skipped = 0;
         _brainTurn.mode = 'full'; _brainTurn.blobWritten = false;
-        _brainTurn.parked = []; _brainTurn.draftHeard = false; _brainTurn.investigated = false;
+        _brainTurn.parked = []; _brainTurn.draftHeard = false; _brainTurn.investigated = false; _brainTurn.noKey = false;
         var tb = null;
         // auto turns (debrief/briefing) are Netra talking, not the user
         // answering - they must not age a draft that is waiting for a yes
@@ -448,13 +448,9 @@
                 (prosody.variance ? (', dynamics ' + prosody.variance) : '') + ']';
         }
         var apiKey = gs.getProperty(SCOPE + '.gemini_api_key');
-        if (!apiKey) {
-            return {
-                ok: false,
-                message: 'My AI key has not been configured yet. Kindly set the system property ' +
-                         SCOPE + '.gemini_api_key with your Gemini API key from Google AI Studio.'
-            };
-        }
+        // no key is not a reason to go dark: the fast lane and basic mode need
+        // no model, so they still answer (see below); only reasoning waits
+        _brainTurn.noKey = !apiKey;
         // R4.7 - PERF: default to gemini-flash-lite-latest (~1.0s) instead of
         // gemini-2.5-flash (~2-4s with thinking-token overhead). The tool-use
         // loop can fire this model up to 5 times per turn, so the primary model
@@ -605,6 +601,7 @@
         // R18 - zero-call fast lane first; forced basic mode for testing
         var fast = _fastLane(userMessage, contents);
         if (fast) return fast;
+        if (!apiKey) return _offlineAnswer(userMessage, contents, { why: 'no_key' });
         if (_brainOfflineForced()) return _offlineAnswer(userMessage, contents, { why: 'forced' });
 
         var systemInstruction = _systemPrompt(liveMode);
@@ -1818,6 +1815,7 @@
 
     // ---- offline brain ----------------------------------------------------
     function _offlineWhen(restingUntilMs) {
+        if (_brainTurn.noKey) return 'My full reasoning switches on once an admin sets the ' + SCOPE + '.gemini_api_key property.';
         var ms = restingUntilMs || _brainTelemetry().next_revival_ms;
         return ms ? ('My reasoning should be back ' + _until(ms) + ', around ' + _clockAt(ms) + '.') : 'My reasoning should be back shortly.';
     }
@@ -1832,6 +1830,7 @@
         var notice = '';
         if (first) {
             notice = (why && why.why === 'budget') ? 'I have used this turn\'s thinking budget, so I will answer the simple way. '
+                   : (why && why.why === 'no_key') ? 'Heads up: my Gemini key is not set up yet, so I am in basic mode. '
                    : 'Heads up: my reasoning models are unavailable right now, so I am in basic mode. ';
             b.offlineNoticeAt = new GlideDateTime().getNumericValue();
             _ctxWriteBlob(b);
@@ -7648,13 +7647,15 @@
         if (!plan.confirmed) {
             // same structural gate as standing orders: consent must come
             // from a DIFFERENT user turn than the one that filed the plan
-            if (plan.msg === _currentUserMsg) {
-                return { ok: false, error: 'The user has not confirmed this plan yet - it was filed THIS turn. Read it back, wait for their yes, then call execute_plan in that next turn.' };
+            // the turn number is the proof; message text alone is not (two
+            // different turns can both be just "yes")
+            if ((typeof plan.turn === 'number' && plan.turn === _curTurn()) || plan.msg === _currentUserMsg && typeof plan.turn !== 'number') {
+                return { ok: false, error: 'The user has not confirmed this plan yet - it was filed or read back THIS turn. Read it back, wait for their yes, then call execute_plan in that next turn.' };
             }
             // a yes only counts in the turn straight after the read-back and
             // within ten minutes - an older plan gets read back again first
             if (!_draftFresh(plan)) {
-                plan.turn = _curTurn(); plan.at = new GlideDateTime().getNumericValue(); plan.msg = _currentUserMsg;
+                plan.turn = _curTurn(); plan.at = new GlideDateTime().getNumericValue();
                 b.plan = plan;
                 _ctxWriteBlob(b);
                 if (_brainTurn.parked) _brainTurn.parked.push('plan');

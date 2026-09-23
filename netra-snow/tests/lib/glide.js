@@ -1,0 +1,433 @@
+/*
+ * In-memory stand-in for the ServiceNow server APIs Netra uses, so the real
+ * widget server script and script includes can run under plain node.
+ *
+ * It is deliberately small and strict: records live in STORE[table][sys_id],
+ * queries support the operators Netra actually uses, and anything the shim
+ * does not understand is recorded in UNSUPPORTED rather than silently
+ * matching everything - a test that relies on an unsupported query fails
+ * loudly instead of passing by accident.
+ */
+'use strict';
+
+var P = {
+    STORE: {},          // table -> sys_id -> record (plain object of strings)
+    PROPS: {},          // system properties
+    DISPLAY: {},        // sys_id -> display value for reference fields
+    CHOICES: {},        // 'table.field' -> { value: label } choice labels
+    INVALID_FIELDS: {}, // table -> { field: true } fields that do not exist
+    UNSUPPORTED: [],    // encoded-query terms the shim could not evaluate
+    LOG: [],            // gs.info/warn/error lines
+    HTTP: null,         // function (req) -> { status, body } for sn_ws
+    now: Date.UTC(2026, 8, 23, 20, 0, 0),
+    user: { sys_id: 'u_admin', name: 'System Administrator', user_name: 'admin' },
+    guid: 0,
+    tzOffsetMs: 0       // user timezone offset for display values (ms east of UTC)
+};
+
+function newId() {
+    P.guid++;
+    var s = String(P.guid);
+    while (s.length < 32) s = '0' + s;
+    return s;
+}
+
+function pad(n) { return (n < 10 ? '0' : '') + n; }
+function fmtUtc(ms) {
+    var d = new Date(ms);
+    return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) + ' ' +
+           pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+}
+function parseUtc(s) {
+    if (s === null || s === undefined || s === '') return NaN;
+    return Date.parse(String(s).replace(' ', 'T') + 'Z');
+}
+
+/* ---------------- GlideDateTime ---------------- */
+function GlideDateTime(v) {
+    this._ms = (v === undefined || v === null) ? P.now : parseUtc(v);
+    if (v instanceof GlideDateTime) this._ms = v._ms;
+}
+GlideDateTime.prototype.getNumericValue = function () { return this._ms; };
+GlideDateTime.prototype.setNumericValue = function (ms) { this._ms = Number(ms); };
+GlideDateTime.prototype.setValue = function (s) { this._ms = parseUtc(s); };
+GlideDateTime.prototype.getValue = function () { return fmtUtc(this._ms); };
+GlideDateTime.prototype.toString = function () { return fmtUtc(this._ms); };
+GlideDateTime.prototype.getDisplayValueInternal = function () { return fmtUtc(this._ms + P.tzOffsetMs); };
+// the user-format display value: 12-hour clock, like a real profile can have
+GlideDateTime.prototype.getDisplayValue = function () {
+    var d = new Date(this._ms + P.tzOffsetMs);
+    var h = d.getUTCHours(), ap = h >= 12 ? 'PM' : 'AM';
+    var h12 = h % 12; if (h12 === 0) h12 = 12;
+    return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) + ' ' +
+           pad(h12) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + ' ' + ap;
+};
+GlideDateTime.prototype.addSeconds = function (s) { this._ms += s * 1000; };
+GlideDateTime.prototype.before = function (o) { return this._ms < o._ms; };
+GlideDateTime.prototype.after = function (o) { return this._ms > o._ms; };
+GlideDateTime.prototype.compareTo = function (o) { return this._ms < o._ms ? -1 : (this._ms > o._ms ? 1 : 0); };
+
+/* ---------------- query evaluation ---------------- */
+function cmp(recVal, op, want) {
+    var v = recVal === undefined || recVal === null ? '' : String(recVal);
+    var w = want === undefined || want === null ? '' : String(want);
+    switch (op) {
+        case '=': return v === w;
+        case '!=': return v !== w;
+        case 'IN': return w.split(',').indexOf(v) >= 0;
+        case 'NOT IN': return w.split(',').indexOf(v) < 0;
+        case 'LIKE': case 'CONTAINS': return v.toLowerCase().indexOf(w.toLowerCase()) >= 0;
+        case 'NOT LIKE': case 'DOES NOT CONTAIN': return v.toLowerCase().indexOf(w.toLowerCase()) < 0;
+        case 'STARTSWITH': return v.toLowerCase().indexOf(w.toLowerCase()) === 0;
+        case 'ENDSWITH': return v.toLowerCase().slice(-w.length) === w.toLowerCase();
+        case 'ISEMPTY': return v === '';
+        case 'ISNOTEMPTY': return v !== '';
+        case '>': case '>=': case '<': case '<=': {
+            var a = parseUtc(v), b = parseUtc(w);
+            if (isNaN(a) || isNaN(b)) { a = parseFloat(v); b = parseFloat(w); }
+            if (op === '>') return a > b;
+            if (op === '>=') return a >= b;
+            if (op === '<') return a < b;
+            return a <= b;
+        }
+    }
+    P.UNSUPPORTED.push('operator ' + op);
+    return false;
+}
+
+// "a=1^b!=2^ORc=3^ORDERBYx" -> groups of OR-terms; each group ANDed
+var ENC_OPS = ['NOT IN', 'NOT LIKE', 'ISNOTEMPTY', 'ISEMPTY', 'STARTSWITH', 'ENDSWITH', 'LIKE', 'IN', '!=', '>=', '<=', '=', '>', '<'];
+function parseEncoded(q) {
+    var out = { groups: [], order: [] };
+    String(q || '').split('^').forEach(function (term, i, all) {
+        if (!term) return;
+        var isOr = term.indexOf('OR') === 0 && i > 0 && !/^ORDERBY/.test(term);
+        if (isOr) term = term.substring(2);
+        if (/^ORDERBYDESC/.test(term)) { out.order.push({ f: term.substring(11), desc: true }); return; }
+        if (/^ORDERBY/.test(term)) { out.order.push({ f: term.substring(7), desc: false }); return; }
+        if (/javascript:/.test(term)) { P.UNSUPPORTED.push('javascript term: ' + term); return; }
+        var hit = null;
+        for (var k = 0; k < ENC_OPS.length && !hit; k++) {
+            var op = ENC_OPS[k], at = term.indexOf(op);
+            if (at > 0) hit = { f: term.substring(0, at), op: op, v: term.substring(at + op.length) };
+        }
+        if (!hit) { P.UNSUPPORTED.push('term: ' + term); return; }
+        if (isOr && out.groups.length) out.groups[out.groups.length - 1].push(hit);
+        else out.groups.push([hit]);
+    });
+    return out;
+}
+
+/* ---------------- table hierarchy ---------------- */
+// querying a parent table returns its children's rows, like the platform
+var PARENT = { incident: 'task', problem: 'task', change_request: 'task', change_task: 'task', sc_task: 'task',
+               sc_req_item: 'task', sc_request: 'task', problem_task: 'task', sn_vul_vulnerable_item: 'task',
+               cmdb_ci_linux_server: 'cmdb_ci_server', cmdb_ci_win_server: 'cmdb_ci_server', cmdb_ci_server: 'cmdb_ci_computer',
+               cmdb_ci_computer: 'cmdb_ci_hardware', cmdb_ci_hardware: 'cmdb_ci', cmdb_ci_appl: 'cmdb_ci', cmdb_ci_service: 'cmdb_ci' };
+function isA(child, ancestor) {
+    for (var t = child; t; t = PARENT[t]) if (t === ancestor) return true;
+    return false;
+}
+function tablesFor(table) {
+    var out = [];
+    for (var t in P.STORE) if (P.STORE.hasOwnProperty(t) && isA(t, table)) out.push(t);
+    return out;
+}
+function allRows(table) {
+    var rows = [];
+    tablesFor(table).forEach(function (t) { var st = P.STORE[t]; for (var k in st) rows.push({ t: t, r: st[k] }); });
+    return rows;
+}
+
+/* ---------------- GlideRecord ---------------- */
+function label(table, field, str) {
+    var ch = P.CHOICES[table + '.' + field] || P.CHOICES['*.' + field];
+    if (ch && ch.hasOwnProperty(str)) return ch[str];
+    return P.DISPLAY.hasOwnProperty(str) ? P.DISPLAY[str] : str;
+}
+function makeElement(self, field) {
+    var v = self._rec ? self._rec[field] : undefined;
+    var str = (v === undefined || v === null) ? '' : String(v);
+    return {
+        toString: function () { return str; },
+        valueOf: function () { return str; },
+        getDisplayValue: function () { return label(self.table || '', field, str); },
+        getLabel: function () { return field.replace(/_/g, ' '); },
+        nil: function () { return str === ''; },
+        getRefRecord: function () { var g = new GlideRecord('sys_user'); g.get(str); return g; },
+        setDateNumericValue: function (ms) { self._rec[field] = fmtUtc(ms); },
+        getGlideObject: function () { return new GlideDateTime(str); },
+        changes: function () { return false; }
+    };
+}
+
+function GlideRecord(table) {
+    var self = { table: table, rec: null, q: [], encoded: [], order: [], limit: 1e9, rows: null, i: -1 };
+    var api = {
+        _self: self,
+        initialize: function () { self.rec = { sys_mod_count: '0' }; self._rec = self.rec; },
+        newRecord: function () { this.initialize(); },
+        isValid: function () { return true; },
+        isValidRecord: function () { return !!(self.rec && self.rec.sys_id && P.STORE[table] && P.STORE[table][self.rec.sys_id]); },
+        isNewRecord: function () { return !(self.rec && self.rec.sys_id); },
+        isValidField: function (f) { return !(P.INVALID_FIELDS[table] && P.INVALID_FIELDS[table][f]); },
+        canRead: function () { return true; }, canWrite: function () { return true; }, canCreate: function () { return true; },
+        getTableName: function () { return self.recTable || table; },
+        getRecordClassName: function () { return self.recTable || table; },
+        getUniqueValue: function () { return self.rec ? self.rec.sys_id : null; },
+        getValue: function (f) {
+            if (!self.rec) return null;
+            var v = self.rec[f];
+            return (v === undefined || v === null || v === '') ? null : String(v);
+        },
+        getDisplayValue: function (f) {
+            if (f === undefined) return self.rec ? String(self.rec.number || self.rec.name || '') : '';
+            var v = self.rec ? self.rec[f] : '';
+            v = v === undefined || v === null ? '' : String(v);
+            return label(table, f, v);
+        },
+        getElement: function (f) { self._rec = self.rec; return makeElement({ _rec: self.rec, table: table }, f); },
+        setValue: function (f, v) { self.rec[f] = v === null || v === undefined ? '' : String(v); },
+        get: function (a, b) {
+            var found = null, rows = allRows(table);
+            for (var i = 0; i < rows.length && !found; i++) {
+                var r = rows[i].r;
+                if (b === undefined ? r.sys_id === String(a) : String(r[a]) === String(b)) { found = rows[i]; }
+            }
+            self.rec = found ? JSON.parse(JSON.stringify(found.r)) : null;
+            self.recTable = found ? found.t : table;
+            self._rec = self.rec;
+            return !!found;
+        },
+        addQuery: function (f, op, v) {
+            if (v === undefined) { v = op; op = '='; }
+            if (f && f.indexOf('^') >= 0 && op === '=' && v === undefined) { self.encoded.push(parseEncoded(f)); return; }
+            self.q.push([f, String(op).toUpperCase(), v]);
+            return { addOrCondition: function (f2, op2, v2) { if (v2 === undefined) { v2 = op2; op2 = '='; } self.q[self.q.length - 1].or = (self.q[self.q.length - 1].or || []).concat([[f2, String(op2).toUpperCase(), v2]]); } };
+        },
+        addEncodedQuery: function (q) { var e = parseEncoded(q); self.encoded.push(e); self.order = self.order.concat(e.order); },
+        addActiveQuery: function () { self.q.push(['active', '=', 'true']); },
+        addNullQuery: function (f) { self.q.push([f, 'ISEMPTY', '']); },
+        addNotNullQuery: function (f) { self.q.push([f, 'ISNOTEMPTY', '']); },
+        orderBy: function (f) { self.order.push({ f: f, desc: false }); },
+        orderByDesc: function (f) { self.order.push({ f: f, desc: true }); },
+        setLimit: function (n) { self.limit = n; },
+        setWorkflow: function () {}, autoSysFields: function () {},
+        query: function () {
+            var all = allRows(table), rows = [];
+            for (var ai = 0; ai < all.length; ai++) {
+                var r = all[ai].r, ok = true;
+                for (var i = 0; i < self.q.length && ok; i++) {
+                    var c = self.q[i];
+                    var any = cmp(r[c[0]], c[1], c[2]);
+                    (c.or || []).forEach(function (o) { if (cmp(r[o[0]], o[1], o[2])) any = true; });
+                    ok = any;
+                }
+                for (var e = 0; e < self.encoded.length && ok; e++) {
+                    var groups = self.encoded[e].groups;
+                    for (var g = 0; g < groups.length && ok; g++) {
+                        var anyG = false;
+                        for (var h = 0; h < groups[g].length; h++) if (cmp(r[groups[g][h].f], groups[g][h].op, groups[g][h].v)) anyG = true;
+                        ok = anyG;
+                    }
+                }
+                if (ok) rows.push(all[ai]);
+            }
+            var order = self.order;
+            if (order.length) {
+                rows.sort(function (a, b) {
+                    for (var i = 0; i < order.length; i++) {
+                        var x = String(a.r[order[i].f] || ''), y = String(b.r[order[i].f] || '');
+                        if (x !== y) return (x < y ? -1 : 1) * (order[i].desc ? -1 : 1);
+                    }
+                    return 0;
+                });
+            }
+            self.rows = rows.slice(0, self.limit);
+            self.i = -1;
+        },
+        hasNext: function () { return self.rows && self.i + 1 < self.rows.length; },
+        next: function () {
+            self.i++;
+            if (self.rows && self.i < self.rows.length) { self.rec = JSON.parse(JSON.stringify(self.rows[self.i].r)); self.recTable = self.rows[self.i].t; self._rec = self.rec; return true; }
+            return false;
+        },
+        getRowCount: function () { return self.rows ? self.rows.length : 0; },
+        insert: function () {
+            var sid = self.rec.sys_id || newId();
+            self.rec.sys_id = sid;
+            if (!self.rec.sys_created_on) self.rec.sys_created_on = fmtUtc(P.now);
+            self.rec.sys_updated_on = fmtUtc(P.now);
+            if (self.rec.work_notes) { self.rec._work_notes = [self.rec.work_notes]; self.rec.work_notes = ''; }
+            if (self.rec.comments) { self.rec._comments = [self.rec.comments]; self.rec.comments = ''; }
+            if (!self.rec.sys_class_name) self.rec.sys_class_name = table;
+            P.STORE[table] = P.STORE[table] || {};
+            P.STORE[table][sid] = JSON.parse(JSON.stringify(self.rec));
+            self.recTable = table;
+            if (GlideRecord.onInsert[table]) GlideRecord.onInsert[table](P.STORE[table][sid]);
+            return sid;
+        },
+        update: function () {
+            if (!self.rec || !self.rec.sys_id) return this.insert();
+            var rt = self.recTable || table;
+            var t = P.STORE[rt] = P.STORE[rt] || {};
+            var old = t[self.rec.sys_id] || {};
+            self.rec.sys_mod_count = String((parseInt(old.sys_mod_count, 10) || 0) + 1);
+            self.rec.sys_updated_on = fmtUtc(P.now);
+            if (self.rec.work_notes) { self.rec._work_notes = (old._work_notes || []).concat([self.rec.work_notes]); self.rec.work_notes = ''; }
+            if (self.rec.comments) { self.rec._comments = (old._comments || []).concat([self.rec.comments]); self.rec.comments = ''; }
+            var next = JSON.parse(JSON.stringify(self.rec));
+            if (GlideRecord.onUpdate[rt]) GlideRecord.onUpdate[rt](next, old);
+            t[self.rec.sys_id] = next;
+            self.rec = JSON.parse(JSON.stringify(next)); self._rec = self.rec;
+            return next.sys_id;
+        },
+        deleteRecord: function () {
+            var dt = self.recTable || table;
+            if (GlideRecord.refuseDelete[dt]) return false;
+            if (self.rec && P.STORE[dt]) delete P.STORE[dt][self.rec.sys_id];
+            return true;
+        },
+        deleteMultiple: function () { this.query(); var s = this; while (s.next()) s.deleteRecord(); }
+    };
+    return new Proxy(api, {
+        get: function (o, p) {
+            if (p in o) return o[p];
+            if (typeof p !== 'string') return undefined;
+            return makeElement({ _rec: self.rec, table: table }, p);
+        },
+        set: function (o, p, v) {
+            if (!self.rec) self.rec = { sys_mod_count: '0' };
+            self.rec[p] = (v === null || v === undefined) ? '' : String(v);
+            self._rec = self.rec;
+            return true;
+        }
+    });
+}
+GlideRecord.onUpdate = {};     // table -> fn(next, old): simulate business rules
+GlideRecord.onInsert = {};
+GlideRecord.refuseDelete = {}; // table -> true: simulate cross-scope delete refusal
+var GlideRecordSecure = GlideRecord;
+
+/* ---------------- GlideAggregate ---------------- */
+function GlideAggregate(table) {
+    var gr = GlideRecord(table);
+    var groupBy = null, groups = null, gi = -1, all = null;
+    return {
+        addQuery: function (f, op, v) { gr.addQuery(f, op, v); },
+        addEncodedQuery: function (q) { gr.addEncodedQuery(q); },
+        addActiveQuery: function () { gr.addActiveQuery(); },
+        addAggregate: function () {},
+        groupBy: function (f) { groupBy = f; },
+        orderBy: function () {}, orderByAggregate: function () {}, setLimit: function () {},
+        query: function () {
+            gr.query();
+            all = [];
+            while (gr.next()) all.push(JSON.parse(JSON.stringify(gr._self.rec)));
+            if (groupBy) {
+                var m = {};
+                all.forEach(function (r) { var k = String(r[groupBy] || ''); (m[k] = m[k] || []).push(r); });
+                groups = Object.keys(m).map(function (k) { return { key: k, rows: m[k] }; });
+            } else groups = [{ key: '', rows: all }];
+            gi = -1;
+        },
+        next: function () { gi++; return gi < groups.length; },
+        getAggregate: function () { return String(groups[gi].rows.length); },
+        getValue: function (f) { return f === groupBy ? groups[gi].key : null; },
+        getDisplayValue: function (f) { return f === groupBy ? groups[gi].key : ''; }
+    };
+}
+
+/* ---------------- gs, Class, sn_ws ---------------- */
+var gs = {
+    getProperty: function (k, d) { return P.PROPS.hasOwnProperty(k) ? P.PROPS[k] : d; },
+    setProperty: function (k, v) { P.PROPS[k] = v; },
+    getUserID: function () { return P.user.sys_id; },
+    getUserName: function () { return P.user.user_name; },
+    getUserDisplayName: function () { return P.user.name; },
+    hasRole: function () { return true; },
+    info: function (m) { P.LOG.push('info ' + m); },
+    warn: function (m) { P.LOG.push('warn ' + m); },
+    error: function (m) { P.LOG.push('error ' + m); },
+    debug: function () {},
+    nowDateTime: function () { return fmtUtc(P.now); },
+    nowNoTZ: function () { return fmtUtc(P.now); },
+    now: function () { return fmtUtc(P.now).substring(0, 10); },
+    generateGUID: function () { return newId(); },
+    getMessage: function (m) { return m; },
+    eventQueue: function () {},
+    getSession: function () { return { getTimeZoneName: function () { return 'UTC'; } }; },
+    daysAgoStart: function (n) { return fmtUtc(P.now - n * 86400000); },
+    include: function () {}
+};
+
+var Class = { create: function () { return function () { if (this.initialize) this.initialize.apply(this, arguments); }; } };
+
+var sn_ws = {
+    RESTMessageV2: function () {
+        var req = { headers: {}, body: null, endpoint: '', method: 'get' };
+        return {
+            setEndpoint: function (u) { req.endpoint = u; }, setHttpMethod: function (m) { req.method = m; },
+            setRequestHeader: function (k, v) { req.headers[k] = v; }, setRequestBody: function (b) { req.body = b; },
+            setHttpTimeout: function () {}, setEccParameter: function () {},
+            execute: function () {
+                var r = P.HTTP ? P.HTTP(req) : { status: 0, body: '' };
+                return { getStatusCode: function () { return r.status; }, getBody: function () { return r.body; },
+                         haveError: function () { return r.status === 0; }, getErrorMessage: function () { return r.status ? '' : 'no network in tests'; } };
+            },
+            executeAsync: function () { return this.execute(); }
+        };
+    }
+};
+
+var DEFAULT_CHOICES = {
+    '*.state': { '1': 'New', '2': 'In Progress', '3': 'On Hold', '6': 'Resolved', '7': 'Closed', '8': 'Canceled' },
+    '*.priority': { '1': '1 - Critical', '2': '2 - High', '3': '3 - Moderate', '4': '4 - Low', '5': '5 - Planning' },
+    '*.impact': { '1': '1 - High', '2': '2 - Medium', '3': '3 - Low' },
+    '*.urgency': { '1': '1 - High', '2': '2 - Medium', '3': '3 - Low' },
+    '*.operational_status': { '1': 'Operational', '2': 'Non-Operational', '3': 'Repair in Progress', '6': 'Retired' },
+    '*.install_status': { '1': 'Installed', '3': 'In Maintenance', '6': 'In Stock', '7': 'Retired' },
+    'change_request.risk': { '1': 'Very High', '2': 'High', '3': 'Moderate', '4': 'Low' },
+    'change_request.type': { normal: 'Normal', standard: 'Standard', emergency: 'Emergency' },
+    'change_request.close_code': { successful: 'Successful', successful_issues: 'Successful with issues', unsuccessful: 'Unsuccessful' },
+    'sysapproval_approver.state': { requested: 'Requested', approved: 'Approved', rejected: 'Rejected' }
+};
+function reset() {
+    P.STORE = {}; P.PROPS = {}; P.DISPLAY = {}; P.CHOICES = JSON.parse(JSON.stringify(DEFAULT_CHOICES)); P.INVALID_FIELDS = {}; P.UNSUPPORTED = []; P.LOG = [];
+    P.HTTP = null; P.now = Date.UTC(2026, 8, 23, 20, 0, 0); P.guid = 0; P.tzOffsetMs = 0;
+    P.user = { sys_id: 'u_admin', name: 'System Administrator', user_name: 'admin' };
+    GlideRecord.onUpdate = {}; GlideRecord.onInsert = {}; GlideRecord.refuseDelete = {};
+}
+
+// put a record in the store (returns its sys_id)
+function put(table, rec) {
+    P.STORE[table] = P.STORE[table] || {};
+    var r = {};
+    for (var k in rec) if (rec.hasOwnProperty(k)) r[k] = rec[k] === null || rec[k] === undefined ? '' : String(rec[k]);
+    if (!r.sys_id) r.sys_id = newId();
+    if (!r.sys_class_name) r.sys_class_name = table;
+    if (!r.sys_mod_count) r.sys_mod_count = '0';
+    if (!r.sys_created_on) r.sys_created_on = fmtUtc(P.now);
+    if (!r.sys_updated_on) r.sys_updated_on = r.sys_created_on;
+    P.STORE[table][r.sys_id] = r;
+    return r.sys_id;
+}
+function rec(table, sysId) { var rows = allRows(table); for (var i = 0; i < rows.length; i++) if (rows[i].r.sys_id === sysId) return rows[i].r; return null; }
+function find(table, field, value) {
+    var rows = allRows(table);
+    for (var i = 0; i < rows.length; i++) if (String(rows[i].r[field]) === String(value)) return rows[i].r;
+    return null;
+}
+
+function install(target) {
+    target.GlideRecord = GlideRecord;
+    target.GlideRecordSecure = GlideRecordSecure;
+    target.GlideAggregate = GlideAggregate;
+    target.GlideDateTime = GlideDateTime;
+    target.gs = gs;
+    target.Class = Class;
+    target.sn_ws = sn_ws;
+}
+
+module.exports = { P: P, reset: reset, put: put, rec: rec, find: find, install: install, fmtUtc: fmtUtc, parseUtc: parseUtc,
+                   GlideRecord: GlideRecord, GlideAggregate: GlideAggregate, GlideDateTime: GlideDateTime, gs: gs };
