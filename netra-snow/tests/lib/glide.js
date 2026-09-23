@@ -197,6 +197,7 @@ function GlideRecord(table) {
             self.rec = found ? JSON.parse(JSON.stringify(found.r)) : null;
             self.recTable = found ? found.t : table;
             self._rec = self.rec;
+            self.base = found ? JSON.parse(JSON.stringify(found.r)) : null;
             return !!found;
         },
         addQuery: function (f, op, v) {
@@ -249,7 +250,11 @@ function GlideRecord(table) {
         hasNext: function () { return self.rows && self.i + 1 < self.rows.length; },
         next: function () {
             self.i++;
-            if (self.rows && self.i < self.rows.length) { self.rec = JSON.parse(JSON.stringify(self.rows[self.i].r)); self.recTable = self.rows[self.i].t; self._rec = self.rec; return true; }
+            if (self.rows && self.i < self.rows.length) {
+                self.rec = JSON.parse(JSON.stringify(self.rows[self.i].r)); self.recTable = self.rows[self.i].t; self._rec = self.rec;
+                self.base = JSON.parse(JSON.stringify(self.rows[self.i].r));
+                return true;
+            }
             return false;
         },
         getRowCount: function () { return self.rows ? self.rows.length : 0; },
@@ -264,6 +269,7 @@ function GlideRecord(table) {
             P.STORE[table] = P.STORE[table] || {};
             P.STORE[table][sid] = JSON.parse(JSON.stringify(self.rec));
             self.recTable = table;
+            self.base = JSON.parse(JSON.stringify(self.rec));
             if (GlideRecord.onInsert[table]) GlideRecord.onInsert[table](P.STORE[table][sid]);
             return sid;
         },
@@ -271,15 +277,22 @@ function GlideRecord(table) {
             if (!self.rec || !self.rec.sys_id) return this.insert();
             var rt = self.recTable || table;
             var t = P.STORE[rt] = P.STORE[rt] || {};
-            var old = t[self.rec.sys_id] || {};
-            self.rec.sys_mod_count = String((parseInt(old.sys_mod_count, 10) || 0) + 1);
-            self.rec.sys_updated_on = fmtUtc(P.now);
-            if (self.rec.work_notes) { self.rec._work_notes = (old._work_notes || []).concat([self.rec.work_notes]); self.rec.work_notes = ''; }
-            if (self.rec.comments) { self.rec._comments = (old._comments || []).concat([self.rec.comments]); self.rec.comments = ''; }
-            var next = JSON.parse(JSON.stringify(self.rec));
-            if (GlideRecord.onUpdate[rt]) GlideRecord.onUpdate[rt](next, old);
+            var stored = t[self.rec.sys_id] || {};
+            // like the platform: only fields changed on THIS object are written,
+            // so a stale object cannot put back values someone else changed
+            var base = self.base || {}, next = JSON.parse(JSON.stringify(stored));
+            for (var f in self.rec) {
+                if (!self.rec.hasOwnProperty(f) || f === 'sys_mod_count' || f === 'sys_updated_on' || f.charAt(0) === '_') continue;
+                if (String(self.rec[f]) !== String(base[f] === undefined ? '' : base[f])) next[f] = self.rec[f];
+            }
+            next.sys_mod_count = String((parseInt(stored.sys_mod_count, 10) || 0) + 1);
+            next.sys_updated_on = fmtUtc(P.now);
+            if (next.work_notes) { next._work_notes = (stored._work_notes || []).concat([next.work_notes]); next.work_notes = ''; }
+            if (next.comments) { next._comments = (stored._comments || []).concat([next.comments]); next.comments = ''; }
+            if (GlideRecord.onUpdate[rt]) GlideRecord.onUpdate[rt](next, stored);
             t[self.rec.sys_id] = next;
             self.rec = JSON.parse(JSON.stringify(next)); self._rec = self.rec;
+            self.base = JSON.parse(JSON.stringify(next));
             return next.sys_id;
         },
         deleteRecord: function () {
