@@ -158,6 +158,11 @@ api.controller = function ($scope, $timeout, $window) {
     c.lastTrace = [];   // [{name, ts}, ...]
     c.agency = (c.data && c.data.agency) || { orders: [], corrections: 0, facts: 0, addendum: '', plan: null };   // R17
     c.brain = (c.data && c.data.brain) || { models: [], calls: 0, mode: 'full', alive: 0 };   // R18
+    // the last thing Netra ANSWERED (server or local reply) - unlike
+    // c.lastSpoken, reprompt nudges and notifications never overwrite it,
+    // so "is she waiting on an answer" and "repeat" stay about the reply
+    c.lastAnswer = '';
+    c._awaitingConfirm = false;   // server: a read-back is parked, waiting for yes
     c.brainUntil = function (ms) {
         if (!ms) return '';
         var mins = Math.round((ms - Date.now()) / 60000);
@@ -322,15 +327,16 @@ api.controller = function ($scope, $timeout, $window) {
         try { last = localStorage.getItem('netra_brief_last') || ''; } catch (eB2) {}
         if (last === _todayKey()) return;   // already briefed today
         var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
-        // never talk over a question the user has not answered yet
-        var awaitingAnswer = /\?\s*["']?\s*$/.test(String(c.lastSpoken || ''));
-        if (calibBusy || awaitingAnswer || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
+        // never talk over a question the user has not answered yet, and never
+        // squeeze in while a user turn is on the wire or queued behind one
+        var awaitingAnswer = c._awaitingConfirm || /\?\s*["']?\s*$/.test(String(c.lastAnswer || ''));
+        if (calibBusy || awaitingAnswer || _chatInFlight || _queuedUtterance || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
             if (tries < 12) $timeout(function () { _maybeAutoBrief(tries + 1); }, 12000);
             return;
         }
         try { localStorage.setItem('netra_brief_last', _todayKey()); } catch (eB3) {}
         logEvent('boot', 'first visit today - reading the morning briefing');
-        c._nextTurnAuto = true;
+        c._nextTurnAuto = 'give me my daily briefing';   // the flag rides with THIS text only
         processCommand('give me my daily briefing', 1.0);   // fast-lane phrasing: zero model calls
     }
     if (c.liveMode) $timeout(function () { _maybeAutoBrief(0); }, 14000);
@@ -341,14 +347,14 @@ api.controller = function ($scope, $timeout, $window) {
     function _maybeAwayDebrief(tries) {
         if (!c.liveMode || !(c.data && c.data.away_pending > 0)) return;
         var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
-        var awaitingAnswer = /\?\s*["']?\s*$/.test(String(c.lastSpoken || ''));
-        if (calibBusy || awaitingAnswer || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
+        var awaitingAnswer = c._awaitingConfirm || /\?\s*["']?\s*$/.test(String(c.lastAnswer || ''));
+        if (calibBusy || awaitingAnswer || _chatInFlight || _queuedUtterance || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
             if (tries < 12) $timeout(function () { _maybeAwayDebrief(tries + 1); }, 12000);
             return;
         }
         c.data.away_pending = 0;   // once per boot
         logEvent('boot', 'standing orders acted while away - auto debrief');
-        c._nextTurnAuto = true;
+        c._nextTurnAuto = 'what did you do while i was away';
         processCommand('what did you do while i was away', 1.0);   // fast-lane phrasing: zero model calls
     }
     if (c.liveMode) $timeout(function () { _maybeAwayDebrief(0); }, 9000);
@@ -1522,7 +1528,7 @@ api.controller = function ($scope, $timeout, $window) {
         // swallow a yes/no/ok - the old ack rule ate the bare "yes" that
         // confirms a ticket, so the ticket never got raised.
         var bare = lc.replace(/[!.,?]+$/g, '').replace(/^(hey |ok |okay )?netra[,!.]*\s*/, '').trim();
-        var expecting = /\?\s*["']?\s*$/.test(String(c.lastSpoken || ''));
+        var expecting = c._awaitingConfirm || /\?\s*["']?\s*$/.test(String(c.lastAnswer || ''));
 
         // greetings (English + Indian) - only when that is ALL they said
         if (/^(hi|hello|hey|hiya|namaste|namaskar|salaam|salam|good\s*(morning|afternoon|evening|day)|shubh\s*prabhat|shubh\s*ratri)( there)?( netra)?$/.test(lc.replace(/[!.,]+/g, '').trim())) {
@@ -1580,7 +1586,7 @@ api.controller = function ($scope, $timeout, $window) {
         }
         // R2.9.1 - repeat / say again
         if (/^(repeat|repeat that|say (it|that) again|come again|once more|kya bola)$/i.test(bare)) {
-            return { intent: 'repeat', reply: c.lastSpoken || 'I have not said anything yet.' };
+            return { intent: 'repeat', reply: c.lastAnswer || 'I have not said anything yet.' };
         }
         // R2.9.1 - "where am I" - return current Service Portal route
         if (/^(where am i|which page( is this| am i on)?|what page( is this| am i on)?|current page|kahaan hoon)$/.test(bare)) {
@@ -3312,6 +3318,7 @@ api.controller = function ($scope, $timeout, $window) {
                 } catch (eR) { logEvent('warn', 'rewind_mem server call failed: ' + eR.message); }
             }
             try { _convoPush('you', text); _convoPush('netra', local.reply); } catch (eCv) {}
+            if (local.intent !== 'repeat') c.lastAnswer = String(local.reply || '');
             setState('speaking');
             speak(local.reply, function () {
                 if (c.alert) {
@@ -3368,7 +3375,7 @@ api.controller = function ($scope, $timeout, $window) {
         c.data.history = geminiHistory;
         // R18 - auto turns (debrief, briefing) must not count as the user's
         // turn, or a read-back waiting for "yes" goes stale underneath them
-        c.data.auto = !!c._nextTurnAuto;
+        c.data.auto = !!c._nextTurnAuto && c._nextTurnAuto === transcript;
         c._nextTurnAuto = false;
         // R8.2 - live-stage flag (server strips navigation tools) + prosody
         c.data.live_mode = !!c.liveMode;
@@ -3529,11 +3536,13 @@ api.controller = function ($scope, $timeout, $window) {
                     });
                     return;
                 }
+                // every reply, failed ones included - a failed turn still spent quota
+                if (r.agency) c.agency = r.agency;   // R17 - AGENCY card refresh
+                if (r.brain) c.brain = r.brain;      // R18 - BRAIN card refresh
+                c._awaitingConfirm = !!r.awaiting_confirm;
                 if (Array.isArray(r.history)) {
                     geminiHistory = r.history;
                     _memPersist();   // R11 - survive refreshes
-                    if (r.agency) c.agency = r.agency;   // R17 - AGENCY card refresh
-                    if (r.brain) c.brain = r.brain;      // R18 - BRAIN card refresh
                     if (r.memory) {
                         logEvent('mem', 'memory: ' + (r.memory.prompts || 0) + '/50 prompts in the live window, ' +
                             c.mem.entries + ' turns, ~' + c.mem.kb + 'KB' +
@@ -3548,6 +3557,7 @@ api.controller = function ($scope, $timeout, $window) {
                 }
                 if (r.ok) {
                     lastReply = r.message || '';
+                    c.lastAnswer = String(r.message || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*_`#>]/g, '').trim();
                     logEvent('srv', 'reply ok (' + lastReply.length + ' chars, ' + elapsed + ' ms)' + (r.model_used ? ' via ' + r.model_used : ''));
                     _convoPush('netra', r.message);   // R7 - chat tab
                     setState('speaking');

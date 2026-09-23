@@ -65,11 +65,18 @@ NetraBrain.parse429 = function (bodyStr) {
         var d = details[i] || {};
         var t = String(d['@type'] || '');
         if (t.indexOf('QuotaFailure') >= 0 && d.violations && d.violations.length) {
-            var v = d.violations[0] || {};
-            out.quota_id = String(v.quotaId || '');
-            out.limit = parseInt(v.quotaValue, 10) || 0;
-            if (/PerDay/i.test(out.quota_id)) out.kind = 'per_day';
-            else if (/PerMinute/i.test(out.quota_id)) out.kind = 'per_minute';
+            // several quotas can trip at once; the daily one decides how long
+            // to rest, so it wins over a per-minute one listed first
+            for (var vi = 0; vi < d.violations.length; vi++) {
+                var v = d.violations[vi] || {};
+                var qid = String(v.quotaId || '');
+                var kind = /PerDay/i.test(qid) ? 'per_day' : (/PerMinute/i.test(qid) ? 'per_minute' : 'unknown');
+                if (out.kind === 'per_day') break;
+                if (kind === 'unknown' && out.kind !== 'unknown') continue;
+                out.kind = kind;
+                out.quota_id = qid;
+                out.limit = parseInt(v.quotaValue, 10) || 0;
+            }
         }
         if (t.indexOf('RetryInfo') >= 0 && d.retryDelay) {
             var s = parseFloat(String(d.retryDelay).replace(/[^0-9.]/g, ''));
@@ -181,7 +188,9 @@ NetraBrain.prototype = {
         var rest = 0, reason = '';
         if (code === 429) {
             var q = NetraBrain.parse429(body);
-            if (q.limit) r.quota_limit = q.limit;
+            // only a DAILY quota value is a daily cap; a per-minute value
+            // stored here would bench the model after 5 calls every day
+            if (q.kind === 'per_day' && q.limit) r.quota_limit = q.limit;
             if (q.kind === 'per_day') {
                 reason = 'per_day';
                 rest = NetraBrain.nextPtMidnightMs(nowMs) - nowMs;

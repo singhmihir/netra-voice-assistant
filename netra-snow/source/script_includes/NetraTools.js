@@ -69,7 +69,24 @@ NetraTools.prototype = {
         gr.query();
         var out = [];
         while (gr.next()) out.push(this._shape(gr));
-        return { ok: true, tickets: out };
+        // the list is capped; the spoken count must not be - and resolved
+        // tickets are not "open"
+        var total = out.length, resolved = 0;
+        try {
+            var ga = new GlideAggregate('incident');
+            ga.addQuery('caller_id', this.userSysId);
+            ga.addQuery('state', 'NOT IN', this.STATE.CLOSED + ',' + this.STATE.CANCELLED);
+            ga.addAggregate('COUNT');
+            ga.groupBy('state');
+            ga.query();
+            total = 0;
+            while (ga.next()) {
+                var c = parseInt(ga.getAggregate('COUNT'), 10) || 0;
+                total += c;
+                if (String(ga.getValue('state')) === this.STATE.RESOLVED) resolved += c;
+            }
+        } catch (eA) {}
+        return { ok: true, tickets: out, total: total, open_total: total - resolved, resolved_total: resolved };
     },
 
     resolveTicket: function (number, closeNotes) {
@@ -163,7 +180,16 @@ NetraTools.prototype = {
                 created: String(gr.sys_created_on)
             });
         }
-        return { ok: true, approvals: out };
+        var total = out.length;
+        try {
+            var ga = new GlideAggregate('sysapproval_approver');
+            ga.addQuery('approver', this.userSysId);
+            ga.addQuery('state', 'requested');
+            ga.addAggregate('COUNT');
+            ga.query();
+            if (ga.next()) total = parseInt(ga.getAggregate('COUNT'), 10) || total;
+        } catch (eA) {}
+        return { ok: true, approvals: out, total: total };
     },
 
     decideApproval: function (refNumber, approve) {

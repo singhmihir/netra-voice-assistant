@@ -380,6 +380,7 @@
     function _chat(userMessage, history, liveMode, prosody) {
         _brainTurn.calls = 0; _brainTurn.attempts = []; _brainTurn.skipped = 0;
         _brainTurn.mode = 'full'; _brainTurn.blobWritten = false;
+        _brainTurn.parked = []; _brainTurn.draftHeard = false; _brainTurn.investigated = false;
         var tb = null;
         // auto turns (debrief/briefing) are Netra talking, not the user
         // answering - they must not age a draft that is waiting for a yes
@@ -392,9 +393,46 @@
             try { if (tb && !_brainTurn.blobWritten) _ctxWriteBlob(tb); } catch (eW) {}
         }
         if (out && typeof out === 'object') {
+            try { _dropUnheardDrafts(out); } catch (eU) { gs.warn('[Netra] draft guard: ' + (eU.message || eU)); }
+            // tells the page a read-back is waiting for a yes, so it holds the
+            // automatic briefing/debrief instead of talking over the question
+            try { out.awaiting_confirm = _draftWaiting(); } catch (eW2) {}
             try { out.brain = _brainTelemetry(); } catch (eB) {}
         }
         return out;
+    }
+
+    /**
+     * A "yes" may only ever run something the user HEARD read back. Two
+     * drafts parked in one turn overwrite each other's slot, and a partial
+     * or failed reply may never have spoken the read-back at all - in both
+     * cases drop what this turn parked, and say so.
+     */
+    function _draftWaiting() {
+        var b = _ctxReadBlob(), cur = _curTurn(), now = new GlideDateTime().getNumericValue();
+        function w(d) { return !!d && typeof d.turn === 'number' && d.turn === cur && (now - (d.at || 0)) < 10 * 60000; }
+        return w(b.flDraft) || w(b.pendingOrder) || !!(b.plan && !b.plan.confirmed && !b.plan.finished && w(b.plan));
+    }
+
+    function _dropUnheardDrafts(out) {
+        var parked = _brainTurn.parked || [];
+        if (!parked.length) return;
+        var many = parked.length > 1;
+        var unheard = (out.route_reason === 'partial' && !_brainTurn.draftHeard) || out.ok === false;
+        if (!many && !unheard) return;
+        var b = _ctxReadBlob(), cur = _curTurn(), dropped = 0;
+        if (b.flDraft && b.flDraft.turn === cur) { delete b.flDraft; dropped++; }
+        if (b.plan && !b.plan.confirmed && b.plan.turn === cur) { delete b.plan; dropped++; }
+        if (b.pendingOrder && b.pendingOrder.turn === cur) { delete b.pendingOrder; dropped++; }
+        if (!dropped) return;
+        _ctxWriteBlob(b);
+        var say = many ? 'I lined up more than one change at once, so to be safe I have not kept any of them waiting - ask me for them one at a time.'
+                       : 'Nothing is waiting for a yes from that - ask me again when you want it.';
+        out.message = String(out.message || '').replace(/\s*Shall I (run it|arm it)\?/g, '') + ' ' + say;
+        var h = out.history;
+        if (h && h.length && h[h.length - 1] && h[h.length - 1].role === 'model' && h[h.length - 1].parts && h[h.length - 1].parts[0]) {
+            h[h.length - 1].parts[0].text = out.message;
+        }
     }
 
     function _chatCore(userMessage, history, liveMode, prosody) {
@@ -628,14 +666,19 @@
                         continue;
                     }
                     friendly = 'My memory got a bit too heavy, so I compressed the older half. Could you say that again?';
+                    // tools already ran this turn: say what they did, or a
+                    // "try again" repeats their writes
+                    if (toolLog.length) { var pr4 = _partialReport(toolLog, contents, 'brain'); pr4.trim_history_half = true; return pr4; }
                     return { ok: false, message: friendly, error_detail: err, trim_history_half: true };
                 }
+                if (toolLog.length) return _partialReport(toolLog, contents, 'brain');
                 return { ok: false, message: friendly, error_detail: err };
             }
 
             var candidate = (resp.candidates && resp.candidates[0]) || null;
             if (!candidate || !candidate.content || !candidate.content.parts) {
-                return { ok: false, message: 'I got an empty response. Kindly try again.' };
+                if (toolLog.length) return _partialReport(toolLog, contents, 'empty');
+                return { ok: false, message: 'I did not get an answer back. Could you say that again?' };
             }
 
             var parts = candidate.content.parts;
@@ -696,7 +739,9 @@
                 // R18 - terminal tools (the investigator) already composed a
                 // verified spoken answer; another model round would only
                 // paraphrase it - and could drift from the evidence
-                if (finalSpeech) {
+                // only when it was the round's ONLY call: otherwise the other
+                // tools' writes, failures and drafts would go unspoken
+                if (finalSpeech && functionCalls.length === 1) {
                     var fr = _flReply(finalSpeech, contents, null, 'tool_final', { tools_called: toolsCalled });
                     fr.model_used = modelUsed;
                     if (clientDirectives && (clientDirectives.navigate_url || clientDirectives.open_url)) fr.directives = clientDirectives;
@@ -705,8 +750,13 @@
                 continue;
             }
 
-            // Final natural-language reply
-            var finalText = textChunks.join(' ').trim() || 'Done.';
+            // Final natural-language reply - never a bare "Done." when the
+            // model said nothing: read back what actually ran instead
+            var finalText = textChunks.join(' ').trim();
+            if (!finalText) {
+                if (toolLog.length) return _partialReport(toolLog, contents, 'empty');
+                finalText = 'I did not get an answer back. Could you say that again?';
+            }
             try { finalText = _fixSpokenRefs(finalText, toolLog); } catch (eRef) {}
 
             // Persist last spoken utterance into the context table (best-effort)
@@ -1165,7 +1215,9 @@
         try {
             var g = new GlideDateTime();
             g.setNumericValue(ms);
-            var dv = String(g.getDisplayValue());   // e.g. 2026-09-24 00:30:00
+            // internal format in the user's timezone - the plain display value
+            // follows their format preference ("03:05:00 PM" broke the parse)
+            var dv = String(g.getDisplayValueInternal());   // e.g. 2026-09-24 00:30:00
             var hm = dv.split(' ')[1] || '';
             var hh = parseInt(hm.split(':')[0], 10), mm = hm.split(':')[1] || '00';
             var ap = hh >= 12 ? 'PM' : 'AM';
@@ -1191,9 +1243,13 @@
             bits.push(_spkNum(t[i].number) + ', ' + String(t[i].short_description || '').substring(0, 70) +
                       (t[i].state ? ' - ' + t[i].state : ''));
         }
-        return 'You have ' + t.length + ' open ticket' + (t.length === 1 ? '' : 's') + '. ' +
-               (t.length > 3 ? 'The newest three: ' : '') + bits.join('; ') + '.' +
-               (t.length > 3 ? ' Shall I read the rest?' : '');
+        // counts come from an aggregate, not the capped list
+        var open = typeof res.open_total === 'number' ? res.open_total : t.length;
+        var resolved = res.resolved_total || 0, total = typeof res.total === 'number' ? res.total : t.length;
+        return 'You have ' + open + ' open ticket' + (open === 1 ? '' : 's') +
+               (resolved ? ' and ' + resolved + ' resolved, waiting to close' : '') + '. ' +
+               (total > 3 ? 'The newest three: ' : '') + bits.join('; ') + '.' +
+               (total > 3 ? ' Shall I read the rest?' : '');
     }
 
     function _sayApprovals(res) {
@@ -1205,8 +1261,9 @@
             var num = a[i].ref_number || '';
             bits.push(num ? (_spkNum(num) + ', ' + subj.replace(num + ' - ', '').substring(0, 70)) : subj.substring(0, 80));
         }
-        return a.length + ' approval' + (a.length === 1 ? ' is' : 's are') + ' waiting on you: ' + bits.join('; ') + '.' +
-               (a.length > 3 ? ' There are more - shall I go on?' : '');
+        var total = typeof res.total === 'number' && res.total >= a.length ? res.total : a.length;
+        return total + ' approval' + (total === 1 ? ' is' : 's are') + ' waiting on you' + (total > 3 ? ' - the newest three' : '') + ': ' + bits.join('; ') + '.' +
+               (total > 3 ? ' Shall I go on?' : '');
     }
 
     function _saySummary(res) {
@@ -1243,14 +1300,20 @@
 
     function _sayPlanHop(out) {
         if (!out) return 'Something went wrong running the plan.';
+        var did = (out.done_this_round || []).length ? out.done_this_round.join('; ') + '. ' : '';
+        var undoLine = out.undoable ? ' Say "undo the plan" to put the changes back' + (out.one_way ? ' - comments and messages can not be taken back.' : '.') : '';
         if (out.ok === false && out.halted_at_step) {
-            return 'The plan stopped at step ' + out.halted_at_step + ': ' + out.step_error + '. ' +
-                   out.completed + ' of ' + out.total + ' steps are done. Say "undo the plan" if you want those reversed.';
+            return did + 'The plan stopped at step ' + out.halted_at_step + ': ' + out.step_error + '. ' +
+                   out.completed + ' of ' + out.total + ' steps are done.' + undoLine;
+        }
+        if (out.needs_confirmation && out.read_back) {
+            _brainTurn.draftHeard = true;
+            return 'That plan was read back a while ago, so here it is again: ' + out.read_back.join('; ') + '. Shall I run it?';
         }
         if (out.ok === false) return String(out.error || 'I could not run the plan.');
-        if (out.done) return 'Plan complete - all ' + out.total + ' steps ran and checked out. Say "undo the plan" if anything looks wrong.';
+        if (out.done) return 'Plan complete. ' + did + undoLine;
         var left = out.total - out.completed;
-        return out.completed + ' done, ' + left + ' to go.';
+        return did + left + ' to go.';
     }
 
     function _sayQuota() {
@@ -1420,7 +1483,11 @@
             },
             undo_plan: function () {
                 var u = _undoPlan();
-                return { text: u && u.ok ? ('Reversed ' + (u.restored || []).length + ' plan step' + ((u.restored || []).length === 1 ? '' : 's') + ((u.problems || []).length ? ', but ' + u.problems.length + ' could not be reversed' : '') + '.') : ('I could not undo the plan: ' + String((u && u.error) || 'no detail') + '.'), tool: 'undo_plan', extra: { undo: u } };
+                if (!u || !u.ok) return { text: 'I could not undo the plan: ' + String((u && u.error) || 'no detail') + '.', tool: 'undo_plan', extra: { undo: u } };
+                var t = (u.restored || []).length ? 'Reversed and read back: ' + u.restored.join('; ') + '.' : 'Nothing was reversed.';
+                if ((u.problems || []).length) t += ' Not reversed: ' + u.problems.join('; ') + '.';
+                if (u.one_way) t += ' ' + u.one_way + ' step' + (u.one_way === 1 ? ' was a comment, note or message' : 's were comments, notes or messages') + ', which I can not take back.';
+                return { text: t, tool: 'undo_plan', extra: { undo: u } };
             },
             undo_task: function (a) {
                 var u = _undoTaskAction(String(a.nt || ''));
@@ -1441,6 +1508,14 @@
             if (!so.ok) return _flReply('I could not arm it: ' + (so.error || so.message || 'unknown problem') + '.', contents, 'create_standing_order');
             var n = parseInt(String(so.nt_number).replace(/\D/g, ''), 10);
             return _flReply('Done - task ' + n + ' is armed. I check it every five minutes and I will tell you what I did when you are back.', contents, 'create_standing_order', 'fast_lane', { nt_number: so.nt_number });
+        }
+        // "no" / "stop" while a confirmed plan is between hops stops it
+        if (yn === 'no' && b.plan && b.plan.confirmed && !b.plan.finished && !b.plan.halted &&
+            (new GlideDateTime().getNumericValue() - (b.plan.hop_at || 0)) < 5 * 60000) {
+            b.plan.halted = true;
+            _ctxWriteBlob(b);
+            return _flReply('Stopped the plan - ' + b.plan.cursor + ' of ' + b.plan.steps.length + ' steps were done.' +
+                            (b.plan.undo && b.plan.undo.length ? ' Say "undo the plan" to put those changes back.' : ''), contents, 'plan_stop');
         }
         // plan filed in the previous turn
         if (b.plan && !b.plan.confirmed && !b.plan.finished && _draftFresh(b.plan)) {
@@ -1466,6 +1541,7 @@
         var b = _ctxReadBlob();
         b.flDraft = { kind: kind, args: args, turn: _curTurn(), at: new GlideDateTime().getNumericValue() };
         _ctxWriteBlob(b);
+        if (_brainTurn.parked) _brainTurn.parked.push('flDraft:' + kind);
     }
 
     /**
@@ -1497,7 +1573,9 @@
             },
             // away debrief
             function (lc, norm, contents) {
-                if (!/^(what did you do|what happened|what have you done)( while i was (away|gone|out)| overnight| since i left)?$|^debrief( me)?$|^(any news|give me the debrief|what did i miss)$/.test(lc)) return null;
+                // the bare "what happened" / "what did you do" usually asks about
+                // the LAST turn - only the qualified forms mean the debrief
+                if (!/^(what did you do|what happened|what have you done)( while i was (away|gone|out)| overnight| since i left)$|^debrief( me)?$|^(any news|give me the debrief|what did i miss)$/.test(lc)) return null;
                 var ar = _awayReport(true);
                 return _flReply(_sayAway(ar), contents, 'away_report');
             },
@@ -1522,18 +1600,29 @@
                 if (/^undo (the |that |my )?plan$|^undo all (of )?(that|those)$|^reverse the plan$/.test(lc)) {
                     if (!b.plan || !b.plan.undo || !b.plan.undo.length) return _flReply('There is no plan on record that I can reverse.', contents, 'undo_plan');
                     _parkDraft('undo_plan', {});
-                    return _flReply('That would reverse ' + b.plan.undo.length + ' change' + (b.plan.undo.length === 1 ? '' : 's') + ' from the last plan, newest first. Shall I?', contents, 'undo_plan_draft');
+                    var owN = 0;
+                    for (var owi = 0; owi < (b.plan.results || []).length; owi++) if (b.plan.results[owi].one_way) owN++;
+                    return _flReply('That would put back ' + b.plan.undo.length + ' change' + (b.plan.undo.length === 1 ? '' : 's') + ' from the last plan, newest first' +
+                                    (owN ? ' - the ' + owN + ' comment' + (owN === 1 ? '' : 's') + ' or message' + (owN === 1 ? '' : 's') + ' can not be taken back' : '') + '. Shall I?', contents, 'undo_plan_draft');
                 }
-                var tm = lc.match(/^undo (?:task|order|standing order|number) (\w+)$/) || lc.match(/^undo (one|two|three|four|five|six|seven|eight|\d+)$/);
+                var tm = lc.match(/^undo (?:task|order|standing order) (\w+)$/) || lc.match(/^undo (?:number |item )?(one|two|three|four|five|six|seven|eight|\d+)$/);
                 if (tm) {
                     var WN = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
                     var n = WN[tm[1]] || parseInt(tm[1], 10);
                     if (!n) return null;
                     var nt = 'NT' + ('0000' + n).slice(-4);
-                    // "undo two" right after a debrief means debrief item two
-                    if (/^undo (one|two|three|four|five|six|seven|eight|\d+)$/.test(lc) && b.awayMap && b.awayMap[String(n)]) nt = b.awayMap[String(n)];
+                    // "undo two" / "undo number two" means debrief item two while
+                    // the debrief is fresh (the debrief never speaks task numbers);
+                    // "undo task two" always means task two
+                    var am = b.awayMap && b.awayMap.items ? b.awayMap : null;
+                    var itemMode = !/^undo (?:task|order|standing order) /.test(lc) && am &&
+                                   (new GlideDateTime().getNumericValue() - (am.at || 0)) < 30 * 60000 && am.items[String(n)];
+                    if (itemMode) nt = am.items[String(n)];
                     _parkDraft('undo_task', { nt: nt });
-                    return _flReply('That would reverse what task ' + parseInt(nt.replace(/\D/g, ''), 10) + ' changed. Shall I?', contents, 'undo_task_draft');
+                    var tnum = parseInt(nt.replace(/\D/g, ''), 10);
+                    return _flReply(itemMode
+                        ? 'That would reverse item ' + n + (am.what[String(n)] ? ' - ' + am.what[String(n)] : '') + ' - which was task ' + tnum + '. Shall I?'
+                        : 'That would reverse what task ' + tnum + ' changed. Shall I?', contents, 'undo_task_draft');
                 }
                 if (/^undo( that| it| the last (thing|action|one|change)| what you (just )?did)?$/.test(lc)) {
                     var a = b.last_action;
@@ -1574,9 +1663,21 @@
      *  since the review, verifies by re-reading, and can be undone.
      * =================================================================== */
     function _missionDigits(s) {
-        var W = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+        var W = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+                  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+                  eighteen: 18, nineteen: 19, twenty: 20 };
         if (!s) return '';
-        return W[s] ? String(W[s]) : String(s).replace(/\D/g, '');
+        var k = String(s).toLowerCase().replace(/^\s*(mission|number|task)\s+/, '').replace(/^\s+|\s+$/g, '');
+        return W[k] ? String(W[k]) : k.replace(/\D/g, '');
+    }
+
+    // a mission the user NAMED must resolve exactly - falling back to the live
+    // one would cancel or apply a mission they did not mean
+    function _missionPick(said) {
+        var raw = String(said || '').replace(/^\s+|\s+$/g, '');
+        if (!raw || /^(now|please|then|again|too)$/i.test(raw)) return { nt: _liveMissionNt(), named: false };
+        var d = _missionDigits(raw);
+        return d ? { nt: d, named: true } : { nt: '', named: true, bad: raw };
     }
 
     // "NT0005", "5", "mission 5" -> 5 ; the one place mission numbers are compared
@@ -1616,9 +1717,11 @@
                     return _flReply('I have no mission ' + want + '.', contents, 'mission_board');
                 }
                 // pause / resume / cancel
-                var cm = lc.match(/^(pause|resume|cancel|stop) (?:the )?mission(?: (\w+))?$/);
+                var cm = lc.match(/^(pause|resume|cancel|stop) (?:the )?mission(?: (\w+))?(?: now| please)?$/);
                 if (cm) {
-                    var nt = cm[2] ? _missionDigits(cm[2]) : _liveMissionNt();
+                    var pk = _missionPick(cm[2]);
+                    if (pk.bad) return _flReply('I did not catch which mission - say its number, like "' + cm[1] + ' mission 3".', contents, 'mission_control');
+                    var nt = pk.nt;
                     if (!nt) return _flReply('There is no mission to ' + cm[1] + '.', contents, 'mission_control');
                     var r = new NetraMissionRunner().control(nt, user, cm[1] === 'stop' ? 'cancel' : cm[1]);
                     return _flReply(String(r.message || r.error), contents, 'mission_control');
@@ -1627,7 +1730,9 @@
                 var rm = lc.match(/^(?:read|give me|read me|what'?s in) (?:the )?mission report(?: (\w+))?$|^mission report(?: (\w+))?$/);
                 var bl = _ctxReadBlob();
                 if (rm || (/^(next|next page|more|go on|read more)$/.test(lc) && bl.missionReport && _draftFresh(bl.missionReport))) {
-                    var ntr = rm ? (_missionDigits(rm[1] || rm[2]) || _liveMissionNt()) : bl.missionReport.nt;
+                    var rpk = rm ? _missionPick(rm[1] || rm[2]) : null;
+                    if (rpk && rpk.bad) return _flReply('I did not catch which mission - say its number.', contents, 'mission_report');
+                    var ntr = rm ? rpk.nt : bl.missionReport.nt;
                     var page = rm ? 1 : bl.missionReport.page + 1;
                     var rep = new NetraMissionRunner().report(ntr, user, page);
                     if (rep.ok && rep.page < rep.pages) { bl.missionReport = { nt: ntr, page: rep.page, turn: _curTurn(), at: new GlideDateTime().getNumericValue() }; _ctxWriteBlob(bl); }
@@ -1636,7 +1741,9 @@
                 // apply the confident ones (read-back first)
                 var am = lc.match(/^apply (?:the )?(?:confident ones|confident routings|confident|them|mission(?: (\w+))?)$/);
                 if (am) {
-                    var nta = _missionDigits(am[1]) || _liveMissionNt();
+                    var apk = _missionPick(am[1]);
+                    if (apk.bad) return _flReply('I did not catch which mission - say its number.', contents, 'mission_apply');
+                    var nta = apk.nt;
                     if (!nta) return _flReply('There is no mission to apply.', contents, 'mission_apply');
                     var bdd = new NetraMissionRunner().board(user), cc = null;
                     for (var k = 0; k < bdd.length; k++) if (_ntNum(bdd[k].nt_number) === _ntNum(nta)) cc = bdd[k];
@@ -1650,7 +1757,9 @@
                 // undo a mission (read-back first)
                 var um = lc.match(/^undo (?:the )?mission(?: (\w+))?$/);
                 if (um) {
-                    var ntu = _missionDigits(um[1]) || _liveMissionNt();
+                    var upk = _missionPick(um[1]);
+                    if (upk.bad) return _flReply('I did not catch which mission - say its number.', contents, 'mission_undo');
+                    var ntu = upk.nt;
                     if (!ntu) return _flReply('There is no mission to undo.', contents, 'mission_undo');
                     _parkDraft('mission_undo', { nt: ntu });
                     return _flReply('I will put back every ticket mission ' + _ntNum(ntu) + ' changed - except any that someone has changed since, which I will leave alone. Shall I?', contents, 'mission_undo_draft');
@@ -1669,6 +1778,10 @@
         var lc = norm.replace(/[.!?]+$/, '').replace(/^(hey |ok |okay |hi )?netra[,!.]*\s+/, '').replace(/^\s+|\s+$/g, '');
         // plan hops: already decided, already confirmed - never spend a call
         if (lc === '[continue plan]') {
+            // the page's auto-resubmit may only CONTINUE a plan the user
+            // already said yes to - it can never be the yes itself
+            var bp = _ctxReadBlob().plan;
+            if (!bp || !bp.confirmed || bp.finished || bp.halted) return _flReply('No plan is running.', contents, 'execute_plan');
             var out = _executePlan();
             return _flReply(_sayPlanHop(out), contents, 'execute_plan', 'fast_lane', { plan: out });
         }
@@ -1676,11 +1789,15 @@
         if (yn) {
             var c = _flConfirm(yn, contents);
             if (c) return c;
-            // nothing parked: if Netra's last line asked a question, the
-            // brain needs the context to know what this answers
-            var prevText = _lastModelText(contents.slice(0, contents.length - 1));
-            if (/\?\s*["']?\s*$/.test(prevText)) return null;
-            return _flReply(yn === 'yes' ? 'Anything else I can do?' : 'Okay.', contents, 'ack');
+            // "apply them" with nothing parked is a command (the mission
+            // apply intent reads it back), not an answer
+            if (lc !== 'apply them') {
+                // nothing parked: if Netra's last line asked a question, the
+                // brain needs the context to know what this answers
+                var prevText = _lastModelText(contents.slice(0, contents.length - 1));
+                if (/\?\s*["']?\s*$/.test(prevText)) return null;
+                return _flReply(yn === 'yes' ? 'Anything else I can do?' : 'Okay.', contents, 'ack');
+            }
         }
         var intents = _allFastIntents();
         for (var i = 0; i < intents.length; i++) {
@@ -1764,6 +1881,18 @@
     // ---- honest partial answer when the brain stops mid-turn ---------------
     function _sayToolResult(name, res) {
         if (!res) return '';
+        // drafts parked this turn: read them back so a "yes" is informed
+        if (name === 'make_plan' && res.ok && res.read_back && res.read_back.length) {
+            _brainTurn.draftHeard = true;
+            return 'I drafted a plan: ' + res.read_back.join('; ') + '. Shall I run it?';
+        }
+        if (res.needs_confirmation && res.read_back && res.read_back.action) {
+            _brainTurn.draftHeard = true;
+            var rb = res.read_back;
+            return 'I drafted a standing order to ' + String(rb.action).replace(/_/g, ' ') + ' on ' +
+                   (/^[A-Z]+\d+$/.test(String(rb.target)) ? _spkNum(rb.target) : String(rb.target)) + '. Shall I arm it?';
+        }
+        if (name === 'execute_plan') return _sayPlanHop(res);
         if (res.ok === false) return 'my ' + name.replace(/_/g, ' ') + ' step failed (' + String(res.error || 'no detail').substring(0, 80) + ')';
         if (name === 'list_tickets') return _sayTicketList(res);
         if (name === 'list_approvals') return _sayApprovals(res);
@@ -1772,7 +1901,12 @@
         if (name === 'find_similar_resolved' && res.count) return _spkNum(res.matches[0].number) + ' looked similar' + (res.matches[0].close_notes ? ', fixed with "' + String(res.matches[0].close_notes).substring(0, 100) + '"' : '');
         if (name === 'away_report') return _sayAway(res);
         if (name === 'suspect_changes' && res.suspects && res.suspects.length) return res.suspects[0].sentence;
-        if (res.message && name !== 'execute_plan') return String(res.message).substring(0, 160);
+        // many tools put instructions for the MODEL in message ("read the
+        // closest one out loud...") - never speak those to the user
+        if (res.message && name !== 'execute_plan' &&
+            !/\b(the user|read (it|them|the|back|out)|call [a-z_]+|do not|say so|say that|ask "|shall i|mention)\b/i.test(String(res.message))) {
+            return String(res.message).substring(0, 160);
+        }
         return 'I ran ' + name.replace(/_/g, ' ');
     }
 
@@ -1785,8 +1919,10 @@
         }
         var lead = why === 'budget' ? 'I hit my thinking budget for this turn before I could put it all together, so here is what I found. '
                  : why === 'loop_cap' ? 'That took more steps than I allow myself in one go, so here is where I got to. '
+                 : why === 'empty' ? 'Here is what I did. '
                  : 'My reasoning model stopped before I could put this together, so here is what I found. ';
-        var text = lead + (bits.length ? bits.join('. ') + '.' : 'Nothing useful came back yet.') + ' Ask me again and I will pick up from here.';
+        var text = lead + (bits.length ? bits.join('. ') + '.' : 'Nothing useful came back yet.') +
+                   (why === 'empty' ? '' : ' Ask me again and I will pick up from here.');
         return _flReply(text, contents, toolLog.length ? toolLog[toolLog.length - 1].name : 'partial', 'partial',
                         { tools_called: (function () { var n = []; for (var j = 0; j < toolLog.length; j++) n.push(toolLog[j].name); return n; })() });
     }
@@ -1844,10 +1980,36 @@
         };
     }
 
-    function _invValidate(hyps, dossier) {
-        var ids = {}, weight = {}, refs = {};
+    // clock times and "N minutes/hours/days" - the figures a listener
+    // cannot check and a model is most tempted to round or invent
+    function _invFigures(text) {
+        var out = [], s = String(text || '').toLowerCase();
+        var clock = s.match(/\b\d{1,2}:\d{2}\b/g) || [];
+        for (var i = 0; i < clock.length; i++) out.push('t' + clock[i].replace(/^0(\d)/, '$1'));
+        var re = /\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|seconds?|secs?)\b/g, m;
+        while ((m = re.exec(s))) out.push(m[1] + m[2].charAt(0));
+        return out;
+    }
+
+    // record numbers must be in the evidence, figures must be ones the
+    // evidence (or the code-computed rule statements) actually contain
+    function _invTextOk(text, v) {
+        var t = String(text || '').replace(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK|CTASK|PTASK)\s+(\d{5,})\b/gi, '$1$2');
+        var named = t.match(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK|CTASK|PTASK)\d{5,}\b/gi) || [];
+        for (var n = 0; n < named.length; n++) if (!v.refs[named[n].toUpperCase()]) return false;
+        var figs = _invFigures(t);
+        for (var f = 0; f < figs.length; f++) if (!v.allowed[figs[f]]) return false;
+        return true;
+    }
+
+    function _invValidate(hyps, dossier, trusted) {
+        var ids = {}, weight = {}, refs = {}, allowed = {};
+        var tf = _invFigures(trusted || '');
+        for (var t0 = 0; t0 < tf.length; t0++) allowed[tf[t0]] = true;
         for (var i = 0; i < dossier.items.length; i++) {
             var it = dossier.items[i];
+            var itf = _invFigures(it.text);
+            for (var f0 = 0; f0 < itf.length; f0++) allowed[itf[f0]] = true;
             ids[it.id] = true;
             weight[it.id] = it.weight;
             if (it.ref) refs[String(it.ref).toUpperCase()] = true;
@@ -1871,6 +2033,9 @@
             var named = said.replace(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK|CTASK|PTASK)\s+(\d{5,})\b/gi, '$1$2')
                             .match(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK|CTASK|PTASK)\d{5,}\b/gi) || [];
             for (var n = 0; n < named.length && ok; n++) if (!refs[named[n].toUpperCase()]) ok = false;
+            // a theory that states a time or a duration the evidence does not
+            // contain would be read out as fact - drop it
+            if (ok && !_invTextOk(hy.statement, { refs: refs, allowed: allowed })) ok = false;
             if (ok) {
                 var onlyAnchor = true;
                 for (var oa = 0; oa < cites.length; oa++) {
@@ -1899,7 +2064,7 @@
                         rule_out_by: String(hy.rule_out_by || '').substring(0, 240),
                         signal: { type: sig.type || 'none', ref: sig.ref || '', keywords: (sig.keywords || []).slice(0, 4) } });
         }
-        return { hypotheses: kept, dropped: dropped };
+        return { hypotheses: kept, dropped: dropped, refs: refs, allowed: allowed };
     }
 
     function _invItem(dossier, id) {
@@ -1959,7 +2124,7 @@
         var callsBefore = _brainTurn.calls;
         var inv = new NetraInvestigator();
         var tgt = String(target || '').replace(/^\s+|\s+$/g, '');
-        if (!tgt || /^(this|it|that|this one|this ticket|that ticket|this incident)$/i.test(tgt)) tgt = _focusNumber();
+        if (!tgt || !_invTarget(tgt)) tgt = _focusNumber();
         if (!tgt) return { ok: false, error: 'Which ticket or server should I look into?', final_speech: 'Which ticket or server should I look into?' };
         var anchor = inv.resolveAnchor(_normSpoken(tgt).toUpperCase().match(/\b(INC|CHG|PRB|RITM|REQ|SCTASK)\d{7}\b/) ? _findNums(_normSpoken(tgt))[0] : tgt);
         if (!anchor || !anchor.ok) {
@@ -2031,22 +2196,28 @@
                     }
                 }
                 if (rr && rr.ok && rr.json) {
-                    var v = _invValidate(rr.json.hypotheses, dossier);
+                    var trusted = [];
+                    for (var tr = 0; tr < rules.length; tr++) trusted.push(rules[tr].statement);
+                    var v = _invValidate(rr.json.hypotheses, dossier, trusted.join(' '));
                     if (v.hypotheses.length) {
-                        res = { mode: 'llm', model: rr.model, headline: String(rr.json.headline || '').substring(0, 240),
+                        var headline = String(rr.json.headline || '').substring(0, 240);
+                        if (!_invTextOk(headline, v)) headline = '';   // spoken first - it must not drift either
+                        res = { mode: 'llm', model: rr.model, headline: headline,
                                 hypotheses: v.hypotheses, dropped: v.dropped, unknowns: (rr.json.unknowns || []).slice(0, 3) };
                     }
                 }
             }
             if (!res) {
-                var vr = thin ? { hypotheses: [], dropped: 0 } : _invValidate(rules, dossier);
+                var ruleText = [];
+                for (var rt = 0; rt < rules.length; rt++) ruleText.push(rules[rt].statement);
+                var vr = thin ? { hypotheses: [], dropped: 0 } : _invValidate(rules, dossier, ruleText.join(' '));
                 res = { mode: thin ? 'thin' : 'rules', model: null, headline: '', hypotheses: vr.hypotheses, dropped: vr.dropped, unknowns: [] };
             }
         }
         var speech = _invCompose(res, dossier);
         // keep a slim dossier for "evidence for two", write-ups and watches
         b.investigation = {
-            anchor_key: anchorKey, fingerprint: dossier.fingerprint, at: new GlideDateTime().getNumericValue(),
+            anchor_key: anchorKey, fingerprint: dossier.fingerprint, at: new GlideDateTime().getNumericValue(), spoken_turn: _curTurn(),
             anchor: { number: anchor.number || '', table: anchor.table || '', sys_id: anchor.sys_id || '', ci_sys_id: anchor.ci_sys_id || '', ci_name: anchor.ci_name || '', kind: anchor.kind },
             result: res, items: dossier.items, sources: dossier.sources,
             suspects: (dossier.suspects || []).slice(0, 5)
@@ -2065,7 +2236,7 @@
     function _suspectChangesFor(target, hours) {
         var inv = new NetraInvestigator();
         var tgt = String(target || '').replace(/^\s+|\s+$/g, '');
-        if (!tgt || /^(this|it|that)$/i.test(tgt)) tgt = _focusNumber();
+        if (!tgt || !_invTarget(tgt)) tgt = _focusNumber();
         var nums = _findNums(_normSpoken(tgt));
         var anchor = inv.resolveAnchor(nums.length ? nums[0] : tgt);
         if (!anchor || !anchor.ok) return { ok: false, error: 'No ticket or configuration item matches "' + tgt + '".' };
@@ -2110,8 +2281,13 @@
                 }
             }
         }
-        return 'Theory ' + n + ' rests on: ' + lines.join('; ') + '. ' + (h.rule_out_by ? 'It would be ruled out if ' + h.rule_out_by.replace(/^(if|by)\s+/i, '') + '. ' : '') +
+        return 'Theory ' + n + ' on ' + _invName(inv) + ' rests on: ' + lines.join('; ') + '. ' + (h.rule_out_by ? 'It would be ruled out if ' + h.rule_out_by.replace(/^(if|by)\s+/i, '') + '. ' : '') +
                'That is as of ' + _ago(inv.at) + ' - say "investigate again" to refresh.';
+    }
+
+    // which investigation an answer is about - said out loud, never assumed
+    function _invName(inv) {
+        return inv.anchor.number ? _spkNum(inv.anchor.number) : (inv.anchor.ci_name || 'that configuration item');
     }
 
     function _invChecked() {
@@ -2126,7 +2302,7 @@
                 : sr.status === 'skipped' ? ' (skipped' + (sr.note ? ', ' + String(sr.note).substring(0, 40) : '') + ')'
                 : ' (could not read)'));
         }
-        return 'I checked: ' + bits.join(', ') + '. As of ' + _ago(inv.at) + '.';
+        return 'For ' + _invName(inv) + ', I checked: ' + bits.join(', ') + '. As of ' + _ago(inv.at) + '.';
     }
 
     function _invNoteText(inv) {
@@ -2154,7 +2330,8 @@
 
     function _invWriteNoteConfirmed() {
         var inv = _invFresh();
-        if (!inv || !inv.anchor.sys_id) return { text: 'The investigation has gone stale, so I will not write it up - say "investigate" again first.' };
+        if (!inv) return { text: 'The investigation has gone stale, so I will not write it up - say "investigate" again first.' };
+        if (!_invIsTicket(inv)) return { text: 'That investigation was on a configuration item, not a ticket, so there is nothing to write the note on.' };
         if (!_ticketWritesEnabled()) return { text: 'Ticket writes are switched off by the admin, so I can not add the note. The theories are still here if you want them read out.' };
         var gr = new GlideRecord(inv.anchor.table || 'incident');
         if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone.' };
@@ -2177,19 +2354,32 @@
     function _invLinkChangeConfirmed(a) {
         var inv = _invFresh();
         if (!inv) return { text: 'The investigation has gone stale - say "investigate" again first.' };
+        if (!_invIsTicket(inv)) return { text: 'That investigation was on a configuration item, not a ticket, so there is nothing to link the change to.' };
         if (!_ticketWritesEnabled()) return { text: 'Ticket writes are switched off by the admin, so I can not link it.' };
         var chg = null;
         for (var i = 0; i < inv.suspects.length; i++) if (inv.suspects[i].number === a.number) chg = inv.suspects[i];
         if (!chg) return { text: String(a.number) + ' was not one of the suspect changes, so I will not link it.' };
         var gr = new GlideRecord(inv.anchor.table || 'incident');
         if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone.' };
-        var linkField = gr.isValidField('caused_by') ? 'caused_by' : (gr.isValidField('rfc') ? 'rfc' : '');
+        // caused_by only: on problem, rfc means the change raised to FIX it
+        var linkField = gr.isValidField('caused_by') ? 'caused_by' : '';
         if (!linkField) {
             // no field to link through on this instance - cross-reference both
             // records with work notes instead, so the trail still exists
             var who = gs.getUserDisplayName();
+            var noteStart = new GlideDateTime().getNumericValue() - 2000;
             gr.work_notes = 'Suspected related change: ' + chg.number + ' (' + chg.sentence + '). Linked by ' + who + ' via Netra - correlation, not proof.';
             gr.update();
+            var jn = new GlideRecord('sys_journal_field');
+            jn.addQuery('element_id', inv.anchor.sys_id);
+            jn.addQuery('element', 'work_notes');
+            jn.addQuery('value', 'CONTAINS', chg.number);
+            jn.orderByDesc('sys_created_on');
+            jn.setLimit(1);
+            jn.query();
+            var noteOk = jn.next() && new GlideDateTime(jn.getValue('sys_created_on')).getNumericValue() >= noteStart;
+            if (!noteOk) return { text: 'I tried to note the change on ' + _spkNum(inv.anchor.number) + ' but could not read the note back - worth a glance before I try again.',
+                                  tool: 'link_change', extra: { verified: false, via: 'work_notes' } };
             var cr = new GlideRecord('change_request');
             var chgNoted = false;
             if (cr.get(chg.sys_id) && cr.isValidField('work_notes')) {
@@ -2199,7 +2389,7 @@
             }
             return { text: 'This instance has no "caused by" field, so I cross-referenced them instead: a work note on ' + _spkNum(inv.anchor.number) +
                            (chgNoted ? ' and one on ' + _spkNum(chg.number) : '') + ' pointing at each other. Notes can not be deleted, so if that was wrong just tell me and I will add a correction.',
-                     tool: 'link_change', extra: { verified: true, via: 'work_notes' } };
+                     tool: 'link_change', extra: { verified: noteOk, via: 'work_notes' } };
         }
         var old = String(gr.getValue(linkField) || '');
         var oldDisp = old ? String(gr[linkField].getDisplayValue()) : 'empty';
@@ -2218,7 +2408,8 @@
     // R18 - "keep digging on this while I'm away" -> investigate_watch order
     function _invWatchConfirmed() {
         var inv = _invFresh();
-        if (!inv || !inv.anchor.sys_id) return { text: 'The investigation has gone stale - say "investigate" again first.' };
+        if (!inv) return { text: 'The investigation has gone stale - say "investigate" again first.' };
+        if (!_invIsTicket(inv)) return { text: 'I can only keep digging on a ticket - that investigation was on a configuration item.' };
         var engine = new NetraInvestigator();
         var hs = inv.result.hypotheses;
         var numbered = [];
@@ -2264,22 +2455,55 @@
                  tool: 'investigate_watch', extra: { nt_number: String(row.nt_number) } };
     }
 
+    // ticket-only actions (write-up, link, watch) need a TICKET anchor; a CI
+    // investigation carries the CI's own sys_id, so sys_id alone proves nothing
+    function _invIsTicket(inv) {
+        return !!(inv && inv.anchor && inv.anchor.kind === 'ticket' && inv.anchor.number && inv.anchor.sys_id);
+    }
+
+    // "that incident", "the ticket", "this broke" -> '' (use the focus);
+    // anything else is returned as a candidate ticket or CI name
+    function _invTarget(t) {
+        var x = String(t || '').replace(/[?.!,]+$/, '').replace(/^\s+|\s+$/g, '');
+        x = x.replace(/\s+(broke|happened|started|began|failed|went down|is happening|kicked off)$/, '');
+        if (/^((it|this|that|this one|that one|ticket|incident)|((the|this|that|my) (one|ticket|incident|problem|change|request|issue|outage|server|box|machine|thing)))$/.test(x)) return '';
+        return x;
+    }
+
+    // mark the investigation as the thing Netra just talked about, so bare
+    // follow-ups ("why?") only bind to it in the very next turn
+    function _invTouch() {
+        try { var b = _ctxReadBlob(); if (b.investigation) { b.investigation.spoken_turn = _curTurn(); _ctxWriteBlob(b); } } catch (eT) {}
+    }
+
     function _investigationIntents() {
         return [
             // investigate
             function (lc, norm, contents) {
-                var again = /^(?:investigate|check|dig|look) (?:it |this |that )?again$|^refresh (?:the )?investigation$/.test(lc);
+                var again = /^(?:investigate|dig) (?:it |this |that )?again$|^refresh (?:the )?investigation$/.test(lc);
+                var fi = _invFresh();
+                if (again && !fi) return null;   // nothing to redo - let the brain work out what they mean
+                var verb = null;
                 var m = again ? ['', ''] :
-                        (lc.match(/^(?:please )?(?:investigate|diagnose|troubleshoot|root cause|look into|dig into|debug)(?: the)?(?: ticket| incident| server)? (.+)$/) ||
+                        ((verb = lc.match(/^(?:please )?(?:investigate|diagnose|troubleshoot|root cause|look into|dig into|debug)(?: the)?(?: ticket| incident| server)? (.+)$/)) ||
                          lc.match(/^why is (.+?) (?:happening|broken|failing|down|slow|not working)$/) ||
                          lc.match(/^what'?s (?:going on|happening|wrong) with (.+)$/));
                 if (!m) return null;
-                var target = m[1];
-                if (/^(it|this|that|this one)$/.test(target)) target = '';
-                if (!target) { var fi = _invFresh(); target = (fi && (fi.anchor.number || fi.anchor.ci_name)) || _focusNumber(); }
+                // compound instructions belong to the brain, which can do both halves
+                if (/\b(and|then|also|plus|after that|assign|reassign|resolve|close|set|update|route|send|escalate|notify|email)\b/.test(m[1])) return null;
+                var target = again ? '' : _invTarget(m[1]);
                 var nums = _findNums(norm);
+                if (nums.length > 1) return null;
                 if (nums.length === 1) target = nums[0];
+                // pronouns mean the ticket in front of them now, not an older investigation
+                if (!target) target = again ? (fi.anchor.number || fi.anchor.ci_name) : (_focusNumber() || (fi && (fi.anchor.number || fi.anchor.ci_name)) || '');
+                if (!target) return verb ? _flReply('Which ticket or server should I look into?', contents, 'investigate') : null;
                 if (/^VIT/i.test(target)) return null;   // vulnerability items belong to the VR tools
+                // not a ticket and not a known CI ("what's wrong with my laptop"):
+                // that is a help request for the brain, not a dead end
+                if (!/^[A-Z]+\d+$/.test(target)) {
+                    try { var pre = new NetraInvestigator().resolveAnchor(target); if (!pre || !pre.ok) return null; } catch (ePre) { return null; }
+                }
                 var r = _investigate(target);
                 return _flReply(r.final_speech || r.error || 'I could not investigate that.', contents, 'investigate', 'investigate', { investigation: r.investigation || null });
             },
@@ -2289,44 +2513,56 @@
                         lc.match(/^(?:any|were there any) changes (?:on|before|to) (.+?)(?: before (?:these|this|the|those) (?:tickets?|incidents?))?$/);
                 if (!m) return null;
                 var nums = _findNums(norm);
-                var r = _suspectChangesFor(nums.length === 1 ? nums[0] : m[1], 72);
+                if (nums.length > 1) return null;
+                var tgt = nums.length === 1 ? nums[0] : _invTarget(m[1]);
+                if (!tgt) tgt = _focusNumber();
+                if (!tgt) return null;
+                if (!/^[A-Z]+\d+$/.test(tgt)) {
+                    try { var pre2 = new NetraInvestigator().resolveAnchor(tgt); if (!pre2 || !pre2.ok) return null; } catch (ePre2) { return null; }
+                }
+                var r = _suspectChangesFor(tgt, 72);
                 return _flReply(r.final_speech || r.error || 'I could not check the changes.', contents, 'suspect_changes', 'fast_lane');
             },
             // show your work
             function (lc, norm, contents) {
-                if (!_invFresh()) return null;
+                var fresh = _invFresh();
+                if (!fresh) return null;
+                // bare "why?" is only about the investigation if Netra JUST spoke it
+                var adjacent = typeof fresh.spoken_turn === 'number' && fresh.spoken_turn === _curTurn() - 1;
                 var W = { one: 1, two: 2, three: 3, first: 1, second: 2, third: 3, '1': 1, '2': 2, '3': 3 };
                 var m = lc.match(/^(?:what'?s the )?evidence (?:for )?(?:theory |number |the )?(one|two|three|first|second|third|1|2|3)(?: one| theory)?$/);
-                if (m) return _flReply(_invEvidenceFor(W[m[1]]), contents, 'investigation_evidence');
-                if (/^(why do you think (that|so)|how do you know( that)?|show (me )?your work|why( though)?)$/.test(lc)) return _flReply(_invEvidenceFor(1), contents, 'investigation_evidence');
-                if (/^(what did you check|what sources did you (check|use)|what did you look at)$/.test(lc)) return _flReply(_invChecked(), contents, 'investigation_checked');
+                if (m) { _invTouch(); return _flReply(_invEvidenceFor(W[m[1]]), contents, 'investigation_evidence'); }
+                if (adjacent && /^(why do you think (that|so)|how do you know( that)?|show (me )?your work|why( though)?)$/.test(lc)) { _invTouch(); return _flReply(_invEvidenceFor(1), contents, 'investigation_evidence'); }
+                if (/^(what did you check|what sources did you (check|use)|what did you look at)$/.test(lc)) { _invTouch(); return _flReply(_invChecked(), contents, 'investigation_checked'); }
                 if (/^how (would|can|do) (i|we) (confirm|verify|check|rule (it|that) out)( (it|that|this))?$/.test(lc)) {
-                    var inv = _invFresh(), h = inv.result.hypotheses[0];
+                    var inv = fresh, h = inv.result.hypotheses[0];
+                    _invTouch();
                     return _flReply(h ? ('To confirm theory one: ' + h.confirm_by + '. To rule it out: ' + h.rule_out_by + '.') : 'I did not have a theory to confirm.', contents, 'investigation_confirm_how');
                 }
-                if (/^(write (it|that|this) up|add (it|that|this) to the ticket|put (it|that|this) in a work note|log (it|that|this)|note (it|that) on the ticket)$/.test(lc)) {
-                    var inv2 = _invFresh();
-                    if (!inv2.anchor.sys_id) return _flReply('That investigation was on a configuration item, not a ticket - tell me which ticket to note it on.', contents, 'investigation_write_up');
+                if (/^(write (it|that|this) up|add (it|that|this) to the ticket|put (it|that|this) in a work note|note (it|that) on the ticket)$/.test(lc)) {
+                    var inv2 = fresh;
+                    if (!_invIsTicket(inv2)) return _flReply('That investigation was on a configuration item, not a ticket - tell me which ticket to note it on.', contents, 'investigation_write_up');
                     var note = _invNoteText(inv2);
                     _parkDraft('inv_note', {});
                     return _flReply('I will add a work note to ' + _spkNum(inv2.anchor.number) + ' with the top theory, ' + inv2.result.hypotheses.length + ' theor' + (inv2.result.hypotheses.length === 1 ? 'y' : 'ies') +
                                     ' with their evidence numbers, how to confirm, and what I could not check - about ' + note.split('\n').length + ' lines. Shall I?', contents, 'investigation_write_up_draft');
                 }
                 if (/^(keep digging|keep investigating|keep an eye on (it|this|that))( on (it|this|that))?( while i'?m (away|gone|out))?( for me)?$/.test(lc)) {
-                    var inv4 = _invFresh();
-                    if (!inv4.anchor.sys_id) return _flReply('I can only keep digging on a ticket - that investigation was on a configuration item.', contents, 'investigate_watch');
+                    var inv4 = fresh;
+                    if (!_invIsTicket(inv4)) return _flReply('I can only keep digging on a ticket - that investigation was on a configuration item.', contents, 'investigate_watch');
                     _parkDraft('inv_watch', {});
                     return _flReply('I will keep digging on ' + _spkNum(inv4.anchor.number) + ' for the next 24 hours - checking every half hour, telling you only what is new, and grading my ' +
                                     inv4.result.hypotheses.length + ' theor' + (inv4.result.hypotheses.length === 1 ? 'y' : 'ies') + ' when it resolves. No changes to the ticket. Shall I?', contents, 'investigate_watch_draft');
                 }
                 var lm = lc.match(/^link (?:that|the|this) change$/) || norm.match(/^link (CHG\d{7})(?: to (?:it|this|the ticket))?$/i);
                 if (lm) {
-                    var inv3 = _invFresh();
+                    var inv3 = fresh;
+                    if (!_invIsTicket(inv3)) return _flReply('That investigation was on a configuration item, not a ticket - investigate the ticket first and I can link the change to it.', contents, 'link_change');
                     var num = lm[1] ? String(lm[1]).toUpperCase() : (inv3.suspects[0] && inv3.suspects[0].number);
                     if (!num) return _flReply('There was no suspect change in that investigation to link.', contents, 'link_change');
                     _parkDraft('link_change', { number: num });
                     var lf = new GlideRecord(inv3.anchor.table || 'incident');
-                    var hasField = lf.isValidField('caused_by') || lf.isValidField('rfc');
+                    var hasField = lf.isValidField('caused_by');
                     return _flReply((hasField ? 'I will set "caused by" on ' + _spkNum(inv3.anchor.number) + ' to ' + _spkNum(num)
                                               : 'This instance has no "caused by" field, so I will cross-reference ' + _spkNum(inv3.anchor.number) + ' and ' + _spkNum(num) + ' with a work note on each') +
                                     ' - remember that is correlation, not proof. Shall I?', contents, 'link_change_draft');
@@ -2484,6 +2720,11 @@
     function _reason(systemText, userPayload, responseSchema, maxOutputTokens, preferredModel, timeoutMs) {
         var apiKey = gs.getProperty(SCOPE + '.gemini_api_key');
         if (!apiKey) return { error: 'no_gemini_key' };
+        // basic mode and the per-turn budget bind reasoning calls too - the
+        // fast lane and multi-tool rounds reach here without passing the
+        // chat loop's checks; every caller already falls back on rr.error
+        if (_brainOfflineForced()) return { error: 'offline', offline: true };
+        if (_brainTurn.calls >= _turnBudget()) return { error: 'budget', budget: true };
         // R18 - reasoning calls used to be pinned to _defaultModel() with no
         // fallback, so the day that model ran out of quota, approval triage,
         // script narration, query building and button explanations all died
@@ -3874,32 +4115,54 @@
                     return _noteUndoCreated(_confirmAndCreate());
                 // ------- R18 investigation -------
                 case 'investigate':
-                    return _investigate(String(args.target || ''));
+                    // one per turn: each call overwrites the stored investigation,
+                    // so a second would make "evidence for one" describe the wrong ticket
+                    if (_brainTurn.investigated) return { ok: false, skipped: 'one investigation per turn - tell the user you will look at the next one when they ask' };
+                    _brainTurn.investigated = true;
+                    return _investigate(_invTarget(String(args.target || '')));
                 case 'suspect_changes':
-                    return _suspectChangesFor(String(args.target || ''), parseInt(args.hours, 10) || 72);
+                    return _suspectChangesFor(_invTarget(String(args.target || '')), parseInt(args.hours, 10) || 72);
                 case 'investigation_followup': {
                     var act = String(args.action || '');
                     if (!_invFresh()) return { ok: false, error: 'No investigation in the last two hours - run investigate first.' };
                     if (act === 'evidence') return { ok: true, final_speech: _invEvidenceFor(parseInt(args.n, 10) || 1) };
                     if (act === 'checked') return { ok: true, final_speech: _invChecked() };
                     if (act === 'confirm_how') { var h1 = _invFresh().result.hypotheses[0]; return { ok: true, final_speech: h1 ? ('To confirm theory one: ' + h1.confirm_by + '. To rule it out: ' + h1.rule_out_by + '.') : 'There was no theory to confirm.' }; }
+                    if ((act === 'write_up' || act === 'link_change') && !_invIsTicket(_invFresh())) return { ok: false, error: 'That investigation was on a configuration item, not a ticket.' };
                     if (act === 'write_up') { _parkDraft('inv_note', {}); return { ok: true, final_speech: 'I will add the investigation as a work note on ' + _spkNum(_invFresh().anchor.number) + '. Shall I?' }; }
                     if (act === 'link_change') {
                         var cn = String(args.change_number || '').toUpperCase() || (_invFresh().suspects[0] && _invFresh().suspects[0].number);
                         if (!cn) return { ok: false, error: 'No suspect change to link.' };
                         _parkDraft('link_change', { number: cn });
-                        return { ok: true, final_speech: 'I will set "caused by" to ' + _spkNum(cn) + ' - correlation, not proof. Shall I?' };
+                        var lf2 = new GlideRecord(_invFresh().anchor.table || 'incident');
+                        return { ok: true, final_speech: (lf2.isValidField('caused_by') ? 'I will set "caused by" on ' + _spkNum(_invFresh().anchor.number) + ' to ' + _spkNum(cn)
+                                                                                         : 'I will cross-reference ' + _spkNum(_invFresh().anchor.number) + ' and ' + _spkNum(cn) + ' with a work note on each') +
+                                                         ' - correlation, not proof. Shall I?' };
                     }
                     return { ok: false, error: 'Unknown follow-up.' };
                 }
                 case 'mission': {
-                    var mact = String(args.action || ''), mnt = _missionDigits(String(args.nt_number || '')) || _liveMissionNt();
+                    var mact = String(args.action || '');
+                    var mpk = _missionPick(String(args.nt_number || ''));
+                    if (mpk.bad) return { ok: false, error: 'I could not tell which mission "' + mpk.bad + '" is - ask for its number.' };
+                    var mnt = mpk.nt;
                     var runner = new NetraMissionRunner();
                     if (mact === 'preview') { var pv2 = runner.preview(user); if (pv2.ok && pv2.count) _parkDraft('mission_launch', {}); return { ok: pv2.ok, final_speech: String(pv2.message) }; }
-                    if (mact === 'board') { var bd2 = runner.board(user); return { ok: true, final_speech: bd2.length ? bd2[0].sentence : 'No missions yet.' }; }
+                    if (mact === 'board') {
+                        var bd2 = runner.board(user);
+                        if (!bd2.length) return { ok: true, final_speech: 'No missions yet.' };
+                        if (!mpk.named) return { ok: true, final_speech: bd2[0].sentence };
+                        for (var bi = 0; bi < bd2.length; bi++) if (_ntNum(bd2[bi].nt_number) === _ntNum(mnt)) return { ok: true, final_speech: bd2[bi].sentence };
+                        return { ok: false, error: 'I have no mission ' + _ntNum(mnt) + '.' };
+                    }
                     if (!mnt) return { ok: false, error: 'There is no mission.' };
                     if (mact === 'pause' || mact === 'resume' || mact === 'cancel') { var c2 = runner.control(mnt, user, mact); return { ok: c2.ok, final_speech: String(c2.message || c2.error) }; }
-                    if (mact === 'report') { var r2 = runner.report(mnt, user, parseInt(args.page, 10) || 1); return { ok: r2.ok, final_speech: String(r2.message || r2.error) }; }
+                    if (mact === 'report') {
+                        var r2 = runner.report(mnt, user, parseInt(args.page, 10) || 1);
+                        // park the page so "next" is answered by the fast lane, free
+                        if (r2.ok && r2.page < r2.pages) { var bl2 = _ctxReadBlob(); bl2.missionReport = { nt: mnt, page: r2.page, turn: _curTurn(), at: new GlideDateTime().getNumericValue() }; _ctxWriteBlob(bl2); }
+                        return { ok: r2.ok, final_speech: String(r2.message || r2.error) };
+                    }
                     if (mact === 'apply_request') { _parkDraft('mission_apply', { nt: mnt }); return { ok: true, final_speech: 'I will apply the confident routings from mission ' + _ntNum(mnt) + ', re-reading each one and skipping anything someone touched since. Shall I?' }; }
                     if (mact === 'undo_request') { _parkDraft('mission_undo', { nt: mnt }); return { ok: true, final_speech: 'I will put back every ticket mission ' + _ntNum(mnt) + ' changed, except ones someone changed since. Shall I?' }; }
                     return { ok: false, error: 'Unknown mission action.' };
@@ -4079,11 +4342,20 @@
     function _changePriority(num, p) {
         var gr = _getIncident(num);
         if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
-        var oldP = String(gr.priority);
-        gr.priority = p;
-        gr.update();
-        _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: 'priority', old: oldP, old_display: 'priority ' + oldP });
-        return { ok: true, message: 'Priority of ' + num + ' changed to ' + p + '.' };
+        p = String(p || '').replace(/[^1-5]/g, '').substring(0, 1);
+        if (!p) return { ok: false, error: 'Priority must be 1 to 5.' };
+        var oldP = String(gr.priority), oldI = String(gr.impact), oldU = String(gr.urgency);
+        // priority is usually derived from impact x urgency: a plain write
+        // "succeeds" and changes nothing, so write, read back, and fall back
+        // to the matrix the same way standing orders do
+        var pr = new NetraTaskRunner().setPriority(gr, p);
+        if (!pr.ok) return { ok: false, error: 'Priority did not change - ' + pr.why + '.' };
+        if (pr.via === 'matrix') {
+            _noteUndo({ kind: 'fields', number: num, table: gr.getTableName(), fields: { impact: oldI, urgency: oldU }, old_display: 'priority ' + oldP });
+        } else {
+            _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: 'priority', old: oldP, old_display: 'priority ' + oldP });
+        }
+        return { ok: true, verified: true, message: 'Priority of ' + num + ' is now ' + p + ' - I read it back' + (pr.via === 'matrix' ? ' (set through impact and urgency)' : '') + '.' };
     }
 
     function _escalateTicket(num) {
@@ -4098,16 +4370,39 @@
         return { ok: true, message: 'Escalated ' + num + ' from priority ' + cur + ' to ' + (cur - 1) + '.', from: cur, to: cur - 1 };
     }
 
+    /**
+     * Resolve a spoken name to ONE active record: an exact name wins, a
+     * single partial match is fine, several partial matches are a question
+     * for the user - never a silent guess (a blind user can not see that
+     * "Network" landed on "Network CAB Managers").
+     */
+    function _pickByName(table, name, likeQuery) {
+        var ex = new GlideRecord(table);
+        ex.addQuery('active', true);
+        ex.addQuery('name', name);
+        ex.setLimit(1);
+        ex.query();
+        if (ex.next()) return { gr: ex };
+        var gl = new GlideRecord(table);
+        gl.addQuery('active', true);
+        gl.addEncodedQuery(likeQuery);
+        gl.orderBy('name');
+        gl.setLimit(4);
+        gl.query();
+        var hits = [], first = null;
+        while (gl.next()) { if (!first) { first = new GlideRecord(table); first.get(String(gl.sys_id)); } hits.push(String(gl.name)); }
+        if (!hits.length) return { error: 'No ' + (table === 'sys_user' ? 'user' : 'group') + ' matching "' + name + '"' };
+        if (hits.length > 1) return { error: '"' + name + '" matches more than one ' + (table === 'sys_user' ? 'person' : 'group') + ': ' + hits.slice(0, 3).join(', ') + (hits.length > 3 ? ' and more' : '') + ' - which one?', ambiguous: true };
+        return { gr: first };
+    }
+
     function _assignToGroup(num, groupName) {
         if (!groupName) return { ok: false, error: 'Group name is required' };
         var gr = _getIncident(num);
         if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
-        var gg = new GlideRecord('sys_user_group');
-        gg.addQuery('active', true);
-        gg.addEncodedQuery('nameLIKE' + groupName);
-        gg.setLimit(1);
-        gg.query();
-        if (!gg.next()) return { ok: false, error: 'No group matching "' + groupName + '"' };
+        var pg = _pickByName('sys_user_group', groupName, 'nameLIKE' + groupName);
+        if (pg.error) return { ok: false, error: pg.error, ambiguous: !!pg.ambiguous };
+        var gg = pg.gr;
         var oldGrp = String(gr.assignment_group);
         var oldGrpName = String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : '') || 'unassigned';
         gr.assignment_group = String(gg.sys_id);
@@ -4121,12 +4416,9 @@
         if (!userName) return { ok: false, error: 'User name is required' };
         var gr = _getIncident(num);
         if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
-        var u = new GlideRecord('sys_user');
-        u.addQuery('active', true);
-        u.addEncodedQuery('nameLIKE' + userName + '^ORuser_nameLIKE' + userName + '^ORemailLIKE' + userName);
-        u.setLimit(1);
-        u.query();
-        if (!u.next()) return { ok: false, error: 'No user matching "' + userName + '"' };
+        var pu = _pickByName('sys_user', userName, 'nameLIKE' + userName + '^ORuser_nameLIKE' + userName + '^ORemailLIKE' + userName);
+        if (pu.error) return { ok: false, error: pu.error, ambiguous: !!pu.ambiguous };
+        var u = pu.gr;
         var oldWho = String(gr.assigned_to);
         var oldWhoName = String(gr.assigned_to.getDisplayValue ? gr.assigned_to.getDisplayValue() : '') || 'unassigned';
         gr.assigned_to = String(u.sys_id);
@@ -4291,12 +4583,9 @@
 
     function _sendMessage(recipient, message) {
         if (!recipient || !message) return { ok: false, error: 'Both recipient and message are required' };
-        var u = new GlideRecord('sys_user');
-        u.addQuery('active', true);
-        u.addEncodedQuery('nameLIKE' + recipient + '^ORuser_nameLIKE' + recipient + '^ORemailLIKE' + recipient);
-        u.setLimit(1);
-        u.query();
-        if (!u.next()) return { ok: false, error: 'No user matching "' + recipient + '"' };
+        var pr = _pickByName('sys_user', recipient, 'nameLIKE' + recipient + '^ORuser_nameLIKE' + recipient + '^ORemailLIKE' + recipient);
+        if (pr.error) return { ok: false, error: pr.error, ambiguous: !!pr.ambiguous };
+        var u = pr.gr;
         var inc = new GlideRecord('incident');
         inc.initialize();
         inc.short_description = '[Netra message] ' + message.substring(0, 100);
@@ -4741,6 +5030,19 @@
             gr.update();
             b.last_action = null; _ctxWriteBlob(b);
             return { ok: true, message: 'Undone - ' + a.field + ' on ' + a.number + ' is back to ' + (a.old_display || a.old) + '.' };
+        }
+        if (a.kind === 'fields' && a.fields) {
+            table = a.table || _tableForNumber(a.number);
+            gr = new GlideRecord(table);
+            if (!gr.get('number', a.number)) return { ok: false, error: 'Ticket not found: ' + a.number };
+            for (var fk in a.fields) { if (a.fields.hasOwnProperty(fk)) gr.setValue(fk, a.fields[fk]); }
+            gr.work_notes = '[Netra] Undo by voice: restored to ' + (a.old_display || 'the earlier values') + '.';
+            gr.update();
+            var rb = new GlideRecord(table), same = rb.get('number', a.number);
+            for (var fk2 in a.fields) { if (a.fields.hasOwnProperty(fk2) && same && String(rb.getValue(fk2) || '') !== String(a.fields[fk2])) same = false; }
+            b.last_action = null; _ctxWriteBlob(b);
+            return same ? { ok: true, message: 'Undone - ' + a.number + ' is back to ' + (a.old_display || 'what it was') + '. I read it back.' }
+                        : { ok: false, error: 'I put the old values back on ' + a.number + ' but they did not stick when I read it back.' };
         }
         if (a.kind === 'resolved') {
             table = a.table || _tableForNumber(a.number);
@@ -5425,7 +5727,7 @@
                 var rr = _reasonText(
                     'You explain ServiceNow UI Action buttons to a blind IT analyst in 2-3 plain spoken sentences: what clicking it changes on the record, any prompts or redirects, any side effects (emails, child records). No code talk.',
                     'Button "' + String(ua.name) + '" on table ' + ctxRec.table + '. Condition: ' + String(ua.condition || 'none') + '. Script:\n' + script.substring(0, 5000));
-                explanation = String(rr || '').substring(0, 700);
+                explanation = (rr && rr.ok && rr.text) ? String(rr.text).substring(0, 700) : '';
             } catch (eRs) {}
         }
         return {
@@ -6848,6 +7150,7 @@
             for (var ak in args) { if (args.hasOwnProperty(ak) && ak !== 'confirm') keepArgs[ak] = args[ak]; }
             b.pendingOrder = { key: draftKey, msg: _currentUserMsg, at: now, turn: _curTurn(), args: keepArgs };
             _ctxWriteBlob(b);
+            if (_brainTurn.parked) _brainTurn.parked.push('order');
             return {
                 ok: false, needs_confirmation: true,
                 read_back: { kind: kind, target: String(args.ticket_number || 'my pending approvals'), action: action,
@@ -7047,11 +7350,13 @@
             pref.update();
         }
 
-        var map = {};
-        for (var j = 0; j < items.length; j++) map[String(j + 1)] = items[j].nt;
+        var map = {}, whats = {};
+        for (var j = 0; j < items.length; j++) { map[String(j + 1)] = items[j].nt; whats[String(j + 1)] = String(items[j].what || '').substring(0, 160); }
         try {
             var b = _ctxReadBlob();
-            b.awayMap = map;
+            // stamped, so "undo two" means debrief item two only while the
+            // debrief is the thing just said
+            b.awayMap = { items: map, what: whats, turn: _curTurn(), at: new GlideDateTime().getNumericValue() };
             _ctxWriteBlob(b);
         } catch (eB) {}
 
@@ -7253,12 +7558,49 @@
 
     function _planToolAlias(step) {
         var t = String(step.tool || '');
-        var a = step.args || {};
-        if (t === 'add_comment') return 'update_ticket';
-        if (t === 'set_priority') return 'change_priority';
-        if (t === 'send_message') return 'send_message_to_user';
-        if (t === 'reassign_ticket') return (a.user || a.user_name || a.assignee) ? 'assign_ticket_to_user' : 'assign_ticket_to_group';
+        var a = step.args || (step.args = {});
+        if (t === 'add_comment') t = 'update_ticket';
+        else if (t === 'set_priority') t = 'change_priority';
+        else if (t === 'send_message') t = 'send_message_to_user';
+        else if (t === 'reassign_ticket') t = (a.user || a.user_name || a.assignee || a.assigned_to) ? 'assign_ticket_to_user' : 'assign_ticket_to_group';
+        // the alias must carry the ARGUMENTS over too, or the renamed step
+        // fails mid-plan after earlier steps already wrote
+        function mv(from, to) { if (a[from] !== undefined && a[from] !== '' && (a[to] === undefined || a[to] === '')) a[to] = a[from]; }
+        mv('number', 'ticket_number'); mv('ticket', 'ticket_number');
+        if (t === 'assign_ticket_to_user') { mv('user', 'user_name'); mv('assignee', 'user_name'); mv('assigned_to', 'user_name'); }
+        if (t === 'assign_ticket_to_group') { mv('group', 'group_name'); mv('assignment_group', 'group_name'); mv('team', 'group_name'); }
+        if (t === 'update_ticket') { mv('text', 'comment'); mv('note', 'comment'); mv('comments', 'comment'); }
+        if (t === 'add_work_note') { mv('text', 'note'); mv('comment', 'note'); mv('work_note', 'note'); }
+        if (t === 'send_message_to_user') { mv('recipient', 'recipient_name'); mv('to', 'recipient_name'); mv('user', 'recipient_name'); mv('text', 'message'); mv('body', 'message'); }
+        if (t === 'change_priority') { mv('value', 'priority'); mv('p', 'priority'); }
+        if (t === 'resolve_ticket') { mv('notes', 'close_notes'); mv('resolution', 'close_notes'); mv('note', 'close_notes'); }
         return t;
+    }
+
+    function _planRequired() { return {
+        update_field: ['ticket_number', 'field', 'value'], create_ticket: ['short_description'],
+        update_ticket: ['ticket_number', 'comment'], add_work_note: ['ticket_number', 'note'],
+        resolve_ticket: ['ticket_number'], assign_ticket_to_group: ['ticket_number', 'group_name'],
+        assign_ticket_to_user: ['ticket_number', 'user_name'], change_priority: ['ticket_number', 'priority'],
+        send_message_to_user: ['recipient_name', 'message']
+    }; }
+
+    // what the step will REALLY do, from its arguments - the read-back must
+    // describe the write, not the model's summary of it
+    function _planStepText(st) {
+        var a = st.args || {}, n = a.ticket_number ? _spkNum(String(a.ticket_number).toUpperCase()) : '';
+        switch (String(st.tool)) {
+            case 'update_field': return 'set ' + String(a.field).replace(/_/g, ' ') + ' on ' + n + ' to "' + a.value + '"';
+            case 'create_ticket': return 'raise a ticket: "' + String(a.short_description).substring(0, 80) + '"';
+            case 'update_ticket': return 'add a comment on ' + n;
+            case 'add_work_note': return 'add a work note on ' + n;
+            case 'resolve_ticket': return 'resolve ' + n;
+            case 'assign_ticket_to_group': return 'assign ' + n + ' to the group ' + a.group_name;
+            case 'assign_ticket_to_user': return 'assign ' + n + ' to ' + a.user_name;
+            case 'change_priority': return 'set ' + n + ' to priority ' + a.priority;
+            case 'send_message_to_user': return 'message ' + a.recipient_name;
+        }
+        return String(st.say || st.tool);
     }
 
     function _makePlan(args) {
@@ -7271,6 +7613,12 @@
             if (!st || !st.tool || !_planToolAllowed(String(st.tool))) {
                 return { ok: false, error: 'Step ' + (i + 1) + ' uses "' + (st && st.tool) + '" which plans may not run. Plans stick to ticket writes and messages.' };
             }
+            var need = _planRequired()[String(st.tool)] || [];
+            for (var rq = 0; rq < need.length; rq++) {
+                if (st.args[need[rq]] === undefined || String(st.args[need[rq]]).replace(/\s+/g, '') === '') {
+                    return { ok: false, error: 'Step ' + (i + 1) + ' (' + st.tool + ') is missing ' + need[rq] + ' - fill it in and file the plan again.' };
+                }
+            }
         }
         var b = _ctxReadBlob();
         b.plan = {
@@ -7280,9 +7628,10 @@
             undo: [], results: []
         };
         _ctxWriteBlob(b);
+        if (_brainTurn.parked) _brainTurn.parked.push('plan');
         return {
             ok: true, plan_id: b.plan.id, step_count: steps.length,
-            read_back: steps.map(function (s0, ix) { return (ix + 1) + '. ' + String(s0.say || s0.tool); }),
+            read_back: steps.map(function (s0, ix) { return (ix + 1) + '. ' + _planStepText(s0); }),
             message: 'Plan filed but NOT running. Read the numbered steps back in one breath and ask "Shall I run it?". When they agree in their NEXT message, call execute_plan.'
         };
     }
@@ -7297,6 +7646,17 @@
             if (plan.msg === _currentUserMsg) {
                 return { ok: false, error: 'The user has not confirmed this plan yet - it was filed THIS turn. Read it back, wait for their yes, then call execute_plan in that next turn.' };
             }
+            // a yes only counts in the turn straight after the read-back and
+            // within ten minutes - an older plan gets read back again first
+            if (!_draftFresh(plan)) {
+                plan.turn = _curTurn(); plan.at = new GlideDateTime().getNumericValue(); plan.msg = _currentUserMsg;
+                b.plan = plan;
+                _ctxWriteBlob(b);
+                if (_brainTurn.parked) _brainTurn.parked.push('plan');
+                return { ok: false, needs_confirmation: true,
+                         read_back: plan.steps.map(function (s0, ix) { return (ix + 1) + '. ' + _planStepText(s0); }),
+                         message: 'That plan was read back too long ago to count this answer as a yes. Read the steps back again and ask "Shall I run it?"; call execute_plan only after their NEXT yes.' };
+            }
             plan.confirmed = true;
         }
         if (plan.hops >= 5) {
@@ -7308,54 +7668,65 @@
 
         var WRITE_BUDGET = 4;
         var done = [], failed = null;
+        // every field a step can change, captured BEFORE it writes, so
+        // "undo the plan" really reverses what the plan did
+        var FIELDS = { assign_ticket_to_group: ['assignment_group'], assign_ticket_to_user: ['assigned_to'],
+                       change_priority: ['priority', 'impact', 'urgency'], resolve_ticket: ['state', 'close_code', 'close_notes'] };
+        var ONE_WAY = { update_ticket: 1, add_work_note: 1, send_message_to_user: 1 };
+        plan.hop_at = new GlideDateTime().getNumericValue();
         while (plan.cursor < plan.steps.length && done.length < WRITE_BUDGET) {
             var st = plan.steps[plan.cursor];
-            // undo breadcrumb BEFORE the write, for field updates
+            var tool = String(st.tool), sa = st.args || {};
+            var crumb = null;
             try {
-                if (String(st.tool) === 'update_field' && st.args && st.args.ticket_number && st.args.field) {
-                    var tb = _tableForNumber(String(st.args.ticket_number));
-                    if (tb) {
-                        var pre = new GlideRecord(tb);
-                        if (pre.get('number', String(st.args.ticket_number))) {
-                            plan.undo.push({ kind: 'field', table: tb, sys_id: String(pre.sys_id),
-                                             number: String(st.args.ticket_number),
-                                             field: String(st.args.field).replace(/\s+/g, '_'),
-                                             before: String(pre.getValue(String(st.args.field).replace(/\s+/g, '_')) || '') });
-                        }
+                var flds = tool === 'update_field' ? [String(sa.field || '').replace(/\s+/g, '_')] : FIELDS[tool];
+                if (flds && sa.ticket_number) {
+                    var tb = _tableForNumber(String(sa.ticket_number).toUpperCase());
+                    var pre = tb ? new GlideRecord(tb) : null;
+                    if (pre && pre.get('number', String(sa.ticket_number).toUpperCase())) {
+                        var before = {};
+                        for (var fi = 0; fi < flds.length; fi++) if (pre.isValidField(flds[fi])) before[flds[fi]] = String(pre.getValue(flds[fi]) || '');
+                        crumb = { kind: 'fields', table: tb, sys_id: String(pre.sys_id), number: String(sa.ticket_number).toUpperCase(), before: before };
                     }
                 }
             } catch (eU) {}
             var res;
-            try { res = _runTool(String(st.tool), st.args || {}); }
+            try { res = _runTool(tool, sa); }
             catch (eX) { res = { ok: false, error: String(eX.message || eX) }; }
             if (res && res.ok === false) {
-                failed = { step: plan.cursor + 1, say: String(st.say || st.tool), error: String(res.error || 'failed') };
+                failed = { step: plan.cursor + 1, say: _planStepText(st), error: String(res.error || 'failed') };
                 break;
             }
-            if (String(st.tool) === 'create_ticket' && res && res.number) {
-                plan.undo.push({ kind: 'created', number: String(res.number) });
-            }
-            plan.results.push({ step: plan.cursor + 1, ok: true });
-            done.push((plan.cursor + 1) + '. ' + String(st.say || st.tool));
+            if (crumb) plan.undo.push(crumb);
+            if (tool === 'create_ticket' && res && res.number) plan.undo.push({ kind: 'created', number: String(res.number) });
+            plan.results.push({ step: plan.cursor + 1, ok: true, one_way: !!ONE_WAY[tool] });
+            // speak what the tool REPORTS it did (the group it actually found,
+            // the priority it read back) rather than what was planned
+            done.push((plan.cursor + 1) + '. ' + String((res && res.message) || _planStepText(st)).replace(/\s+/g, ' ').substring(0, 140));
             plan.cursor++;
         }
 
         var finished = plan.cursor >= plan.steps.length;
+        var oneWay = 0;
+        for (var ow = 0; ow < plan.results.length; ow++) if (plan.results[ow].one_way) oneWay++;
         var out;
         if (failed) {
+            plan.halted = true;
             out = { ok: false, halted_at_step: failed.step, step_error: failed.error,
                     done_this_round: done, completed: plan.cursor, total: plan.steps.length,
-                    message: 'The plan HALTED at step ' + failed.step + ' (' + failed.say + '): ' + failed.error + '. Tell them exactly that, what DID complete, and that "undo the plan" reverses the finished steps. Do not improvise a workaround without asking.' };
+                    undoable: plan.undo.length, one_way: oneWay,
+                    message: 'The plan HALTED at step ' + failed.step + ' (' + failed.say + '): ' + failed.error + '. Tell them exactly that and what DID complete' + (plan.undo.length ? ', and that "undo the plan" reverses the finished field changes' : '') + '. Do not improvise a workaround without asking.' };
             b.plan = plan;   // keep for undo
         } else if (finished) {
             out = { ok: true, done: true, completed: plan.cursor, total: plan.steps.length,
-                    done_this_round: done,
-                    message: 'Plan complete - all ' + plan.steps.length + ' steps ran and verified. One tight summary sentence, then offer "undo the plan" in passing.' };
+                    done_this_round: done, undoable: plan.undo.length, one_way: oneWay,
+                    message: 'Plan complete. Say what each step reported in done_this_round, briefly' + (plan.undo.length ? ', then offer "undo the plan" in passing' : '') + '.' };
             plan.finished = true;
             b.plan = plan;   // keep for undo until a new plan replaces it
         } else {
             out = { ok: true, done: false, continue_plan: true,
                     completed: plan.cursor, total: plan.steps.length, done_this_round: done,
+                    undoable: plan.undo.length, one_way: oneWay,
                     message: 'Budget for this transaction used: ' + plan.cursor + ' of ' + plan.steps.length + ' steps done. Say a SHORT progress line ("three done, two to go"). The page will bring you back automatically - when the next turn says [continue plan], call execute_plan again.' };
             b.plan = plan;
         }
@@ -7372,14 +7743,21 @@
         for (var i = plan.undo.length - 1; i >= 0; i--) {
             var u = plan.undo[i];
             try {
-                if (u.kind === 'field') {
+                if (u.kind === 'field' || u.kind === 'fields') {
+                    var before = u.kind === 'fields' ? u.before : {};
+                    if (u.kind === 'field') before[u.field] = u.before;
                     var gr = new GlideRecord(u.table);
-                    if (gr.get(u.sys_id)) {
-                        gr.setValue(u.field, u.before);
-                        gr.work_notes = 'Plan step undone via Netra: ' + u.field + ' restored.';
-                        gr.update();
-                        restored.push(u.field + ' on ' + u.number);
-                    }
+                    if (!gr.get(u.sys_id)) { problems.push(u.number + ' is gone'); continue; }
+                    var names = [];
+                    for (var fk in before) { if (before.hasOwnProperty(fk)) { gr.setValue(fk, before[fk]); names.push(fk.replace(/_/g, ' ')); } }
+                    gr.work_notes = 'Plan step undone via Netra: ' + names.join(', ') + ' restored.';
+                    gr.update();
+                    // read it back - a business rule can quietly refuse the restore
+                    var rb = new GlideRecord(u.table), same = rb.get(u.sys_id);
+                    for (var fk2 in before) { if (before.hasOwnProperty(fk2) && same && fk2 !== 'priority' && String(rb.getValue(fk2) || '') !== String(before[fk2])) same = false; }
+                    if (same && before.hasOwnProperty('priority') && String(rb.getValue('priority') || '') !== String(before.priority)) same = false;
+                    if (same) restored.push(names.join(' and ') + ' on ' + u.number);
+                    else problems.push(names.join(' and ') + ' on ' + u.number + ' did not stick');
                 } else if (u.kind === 'created') {
                     var tb2 = _tableForNumber(u.number);
                     var gr2 = new GlideRecord(tb2);
@@ -7394,8 +7772,11 @@
         }
         delete b.plan;
         _ctxWriteBlob(b);
-        return { ok: true, restored: restored, problems: problems,
-                 message: restored.length + ' step(s) reversed' + (problems.length ? ', ' + problems.length + ' could not be' : '') + '. List what was restored, briefly.' };
+        var oneWay = 0;
+        for (var ow = 0; ow < (plan.results || []).length; ow++) if (plan.results[ow].one_way) oneWay++;
+        return { ok: true, restored: restored, problems: problems, one_way: oneWay,
+                 message: restored.length + ' change(s) reversed and read back' + (problems.length ? '; NOT reversed: ' + problems.join('; ') : '') +
+                          (oneWay ? '. ' + oneWay + ' step(s) were comments, notes or messages, which can not be taken back' : '') + '. Say exactly that.' };
     }
 
     /* ===================================================================
