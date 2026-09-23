@@ -241,7 +241,9 @@ NetraIntent.prototype = {
         // ============================================================
         // Create ticket
         // ============================================================
-        var createMatch = t.match(/(?:create|open|log|raise|submit|file|i (?:need|want) (?:a |to (?:create|open|log) (?:a )?))?\s*(?:a |an )?(?:new )?ticket\s+(?:for|about|that|on|regarding)?[,:\-\s]+(.+)/i);
+        // an explicit request to create, anchored at the start - "is there a
+        // ticket for the email outage" is a question, never a new incident
+        var createMatch = t.match(/^(?:please\s+)?(?:create|open|log|raise|submit|file|i (?:need|want) (?:a |to (?:create|open|log) (?:a )?))\s*(?:a |an )?(?:new )?ticket\s+(?:for|about|that|on|regarding)?[,:\-\s]+(.+)/i);
         if (createMatch && createMatch[1] && createMatch[1].trim().length > 2)
             return this._intent('create', { description: this._cleanDescription(createMatch[1]) }, raw);
         var reportMatch = t.match(/^(?:please\s+)?report\s+(?:that\s+)?(.+)/i);

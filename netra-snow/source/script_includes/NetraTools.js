@@ -61,20 +61,20 @@ NetraTools.prototype = {
     },
 
     listMyTickets: function (limit) {
-        var gr = new GlideRecord('incident');
-        gr.addQuery('caller_id', this.userSysId);
+        // the user's plate: tickets they raised AND tickets assigned to them -
+        // for IT staff the second is most of the work
+        var gr = new GlideRecordSecure('incident');
+        gr.addQuery('caller_id', this.userSysId).addOrCondition('assigned_to', this.userSysId);
         gr.addQuery('state', 'NOT IN', this.STATE.CLOSED + ',' + this.STATE.CANCELLED);
         gr.orderByDesc('sys_updated_on');
         gr.setLimit(limit || 10);
         gr.query();
         var out = [];
         while (gr.next()) out.push(this._shape(gr));
-        // the list is capped; the spoken count must not be - and resolved
-        // tickets are not "open"
-        var total = out.length, resolved = 0;
+        var total = out.length, resolved = 0, assigned = 0;
         try {
             var ga = new GlideAggregate('incident');
-            ga.addQuery('caller_id', this.userSysId);
+            ga.addQuery('caller_id', this.userSysId).addOrCondition('assigned_to', this.userSysId);
             ga.addQuery('state', 'NOT IN', this.STATE.CLOSED + ',' + this.STATE.CANCELLED);
             ga.addAggregate('COUNT');
             ga.groupBy('state');
@@ -85,22 +85,41 @@ NetraTools.prototype = {
                 total += c;
                 if (String(ga.getValue('state')) === this.STATE.RESOLVED) resolved += c;
             }
+            var gb = new GlideAggregate('incident');
+            gb.addQuery('assigned_to', this.userSysId);
+            gb.addQuery('state', 'NOT IN', this.STATE.RESOLVED + ',' + this.STATE.CLOSED + ',' + this.STATE.CANCELLED);
+            gb.addAggregate('COUNT');
+            gb.query();
+            assigned = gb.next() ? (parseInt(gb.getAggregate('COUNT'), 10) || 0) : 0;
         } catch (eA) {}
-        return { ok: true, tickets: out, total: total, open_total: total - resolved, resolved_total: resolved };
+        return { ok: true, tickets: out, total: total, open_total: total - resolved, resolved_total: resolved,
+                 assigned_open: assigned, raised_open: Math.max(0, total - resolved - assigned) };
     },
 
     resolveTicket: function (number, closeNotes) {
         if (!this._ticketWritesEnabled())
             return { ok: false, read_only: true, error: 'Ticket modification is disabled.', message: this.READ_ONLY_MSG };
         var gr = this._findByNumber(number);
-        if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found, or you are not the caller.' };
-        gr.state = this.STATE.RESOLVED;
-        gr.close_code = 'Solved (Permanently)';
-        gr.close_notes = closeNotes || 'Resolved by caller via Netra.';
-        gr.resolved_by = this.userSysId;
+        if (!gr) return { ok: false, error: 'Ticket ' + number + ' was not found, or you can not see it.' };
+        if (!gr.canWrite()) return { ok: false, error: 'You do not have permission to resolve ' + number + '.' };
+        var st = String(gr.getValue('state') || '');
+        // re-resolving would overwrite someone's close notes and could not be undone honestly
+        if (st === this.STATE.RESOLVED || st === this.STATE.CLOSED || st === this.STATE.CANCELLED) {
+            return { ok: false, already: true, error: number + ' is already ' + this.STATE_LABEL[st] + ' - I changed nothing.' };
+        }
+        var before = { state: st, close_code: String(gr.getValue('close_code') || ''), close_notes: String(gr.getValue('close_notes') || '') };
+        gr.setValue('state', this.STATE.RESOLVED);
+        gr.setValue('close_code', 'Solved (Permanently)');
+        if (closeNotes) gr.setValue('close_notes', closeNotes);
+        else if (!gr.getValue('close_notes')) gr.setValue('close_notes', 'Resolved via Netra.');
+        gr.setValue('resolved_by', this.userSysId);
         gr.resolved_at = new GlideDateTime();
-        gr.update();
-        return { ok: true, number: number };
+        if (!gr.update()) return { ok: false, error: 'The platform refused to resolve ' + number + '.' };
+        var chk = this._findByNumber(number);
+        if (!chk || String(chk.getValue('state')) !== this.STATE.RESOLVED) {
+            return { ok: false, error: 'I asked to resolve ' + number + ' but it is still ' + (chk ? this.STATE_LABEL[String(chk.getValue('state'))] || 'unchanged' : 'unchanged') + ' - a rule on the platform may need more fields.' };
+        }
+        return { ok: true, verified: true, number: number, before: before, message: number + ' is resolved - I read it back.' };
     },
 
     updateTicket: function (number, comment) {
@@ -108,15 +127,16 @@ NetraTools.prototype = {
             return { ok: false, read_only: true, error: 'Ticket modification is disabled.', message: this.READ_ONLY_MSG };
         if (!comment || comment.trim().length < 1) return { ok: false, error: 'Comment is empty.' };
         var gr = this._findByNumber(number);
-        if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found, or you are not the caller.' };
+        if (!gr) return { ok: false, error: 'Ticket ' + number + ' was not found, or you can not see it.' };
+        if (!gr.canWrite()) return { ok: false, error: 'You do not have permission to comment on ' + number + '.' };
         gr.comments = comment;
-        gr.update();
-        return { ok: true, number: number };
+        if (!gr.update()) return { ok: false, error: 'The platform refused the comment on ' + number + '.' };
+        return { ok: true, number: number, message: 'Comment added to ' + number + ' - the caller can see it.' };
     },
 
     getStatus: function (number) {
         var gr = this._findByNumber(number);
-        if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found, or you are not the caller.' };
+        if (!gr) return { ok: false, error: 'Ticket ' + number + ' was not found, or you can not see it.' };
         return { ok: true, ticket: this._shape(gr) };
     },
 
@@ -177,7 +197,7 @@ NetraTools.prototype = {
                 sys_id:  String(gr.sys_id),
                 subject: subject,
                 ref_number: ref,
-                created: String(gr.sys_created_on)
+                created: gr.getDisplayValue('sys_created_on')
             });
         }
         var total = out.length;
@@ -192,7 +212,8 @@ NetraTools.prototype = {
         return { ok: true, approvals: out, total: total };
     },
 
-    decideApproval: function (refNumber, approve) {
+    /** the user's pending approval for a record number, with what it is about */
+    findPendingApproval: function (refNumber) {
         if (!refNumber) return { ok: false, error: 'Which one should I act on?' };
         var gr = new GlideRecord('sysapproval_approver');
         gr.addQuery('approver', this.userSysId);
@@ -206,14 +227,29 @@ NetraTools.prototype = {
                 var srcRec = new GlideRecord(srcTable);
                 if (!srcRec.isValid() || !srcRec.get(srcSysId)) continue;
                 if (String(srcRec.getValue('number') || '').toUpperCase() === String(refNumber).toUpperCase()) {
-                    gr.state = approve ? 'approved' : 'rejected';
-                    gr.comments = approve ? 'Approved via Netra.' : 'Rejected via Netra.';
-                    gr.update();
-                    return { ok: true, number: refNumber, decision: approve ? 'approved' : 'rejected' };
+                    return { ok: true, approval_sys_id: String(gr.sys_id), number: String(srcRec.getValue('number')),
+                             subject: String(srcRec.getValue('short_description') || '').substring(0, 160) };
                 }
             } catch (e) {}
         }
-        return { ok: false, error: 'I could not find a pending approval for ' + refNumber + '.' };
+        return { ok: false, error: 'I could not find a pending approval of yours for ' + refNumber + '.' };
+    },
+
+    decideApproval: function (refNumber, approve) {
+        var found = this.findPendingApproval(refNumber);
+        if (!found.ok) return found;
+        var gr = new GlideRecord('sysapproval_approver');
+        if (!gr.get(found.approval_sys_id)) return { ok: false, error: 'That approval is gone.' };
+        gr.state = approve ? 'approved' : 'rejected';
+        gr.comments = approve ? 'Approved via Netra.' : 'Rejected via Netra.';
+        if (!gr.update()) return { ok: false, error: 'The platform refused the decision on ' + refNumber + '.' };
+        var chk = new GlideRecord('sysapproval_approver');
+        var want = approve ? 'approved' : 'rejected';
+        if (!chk.get(found.approval_sys_id) || String(chk.getValue('state')) !== want) {
+            return { ok: false, error: 'I recorded the decision on ' + refNumber + ' but it did not stick when I read it back.' };
+        }
+        return { ok: true, verified: true, number: refNumber, decision: want,
+                 message: refNumber + ' is ' + want + ' - I read it back. Decisions can not be undone.' };
     },
 
     // ============================================================
@@ -270,7 +306,8 @@ NetraTools.prototype = {
         until.add(Math.round(hours * 3600 * 1000));
         pref.paused_until = until;
         pref.update();
-        return { ok: true, paused_until: String(pref.paused_until), hours: hours };
+        return { ok: true, paused_until_local: until.getDisplayValue(), hours: hours,
+                 message: 'Notifications paused for ' + hours + ' hour' + (hours === 1 ? '' : 's') + '.' };
     },
 
     resumeNotifications: function () {
@@ -316,24 +353,20 @@ NetraTools.prototype = {
     // ============================================================
     //  Helpers
     // ============================================================
+    // GlideRecordSecure: Netra sees and changes exactly what the signed-in
+    // user may - the same ACLs as the incident form (a technician can work
+    // their group's tickets; a caller only their own)
     _findByNumber: function (number) {
         if (!number) return null;
-        var gr = new GlideRecord('incident');
+        var gr = new GlideRecordSecure('incident');
         gr.addQuery('number', String(number).toUpperCase());
-        gr.addQuery('caller_id', this.userSysId);
+        gr.setLimit(1);
         gr.query();
         return gr.next() ? gr : null;
     },
 
     _findByNumberAny: function (number) {
-        if (!number) return null;
-        var gr = new GlideRecord('incident');
-        gr.addQuery('number', String(number).toUpperCase());
-        // either caller or assignee can read
-        gr.addQuery('caller_idORassigned_to', this.userSysId)
-          .addOrCondition('caller_id', this.userSysId);
-        gr.query();
-        return gr.next() ? gr : null;
+        return this._findByNumber(number);
     },
 
     _recentJournal: function (sysId, limit) {
@@ -363,8 +396,10 @@ NetraTools.prototype = {
             state: this.STATE_LABEL[state] || state,
             priority: this.PRIORITY_LABEL[prio] || prio,
             assigned_to: gr.assigned_to.getDisplayValue() || null,
-            updated: String(gr.sys_updated_on),
-            created: String(gr.sys_created_on)
+            // the user's own timezone and format, never raw UTC the model would misread
+            updated: gr.getDisplayValue('sys_updated_on'),
+            created: gr.getDisplayValue('sys_created_on'),
+            role: String(gr.getValue('assigned_to') || '') === this.userSysId ? 'assigned to you' : 'raised by you'
         };
     },
 

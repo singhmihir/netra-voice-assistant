@@ -22,7 +22,9 @@ var P = {
     now: Date.UTC(2026, 8, 23, 20, 0, 0),
     user: { sys_id: 'u_admin', name: 'System Administrator', user_name: 'admin' },
     guid: 0,
-    tzOffsetMs: 0       // user timezone offset for display values (ms east of UTC)
+    tzOffsetMs: 0,      // user timezone offset for display values (ms east of UTC)
+    ROLES: null,        // null = admin (every role); or { role: true }
+    ACL: null           // function (table, op, rec) -> boolean, enforced by GlideRecordSecure only
 };
 
 function newId() {
@@ -312,6 +314,7 @@ function GlideRecord(table) {
             return makeElement({ _rec: self.rec, table: table }, p);
         },
         set: function (o, p, v) {
+            if (typeof v === 'function' && p in o) { o[p] = v; return true; }   // GlideRecordSecure wraps methods
             if (!self.rec) self.rec = { sys_mod_count: '0' };
             self.rec[p] = (v === null || v === undefined) ? '' : String(v);
             self._rec = self.rec;
@@ -323,7 +326,21 @@ GlideRecord.onUpdate = {};     // table -> fn(next, old): simulate business rule
 GlideRecord.onInsert = {};
 GlideRecord.refuseDelete = {}; // table -> true: simulate cross-scope delete refusal
 GlideRecord.refuseInsert = {}; // table -> true: simulate an insert the platform refuses
-var GlideRecordSecure = GlideRecord;
+function aclOk(table, op, rec) { return !P.ACL || P.ACL(table, op, rec || {}) !== false; }
+function GlideRecordSecure(table) {
+    var gr = GlideRecord(table), self = gr._self;
+    var baseQuery = gr.query, baseGet = gr.get, baseUpdate = gr.update, baseInsert = gr.insert;
+    gr.query = function () {
+        baseQuery.call(gr);
+        self.rows = (self.rows || []).filter(function (x) { return aclOk(x.t, 'read', x.r); });
+    };
+    gr.get = function (a, b) { var ok = baseGet.call(gr, a, b); if (ok && !aclOk(self.recTable || table, 'read', self.rec)) { self.rec = null; return false; } return ok; };
+    gr.canRead = function () { return aclOk(self.recTable || table, 'read', self.rec); };
+    gr.canWrite = function () { return aclOk(self.recTable || table, 'write', self.rec); };
+    gr.update = function () { if (!aclOk(self.recTable || table, 'write', self.rec)) return null; return baseUpdate.call(gr); };
+    gr.insert = function () { if (!aclOk(table, 'create', self.rec)) return null; return baseInsert.call(gr); };
+    return gr;
+}
 
 /* ---------------- GlideAggregate ---------------- */
 function GlideAggregate(table) {
@@ -361,7 +378,7 @@ var gs = {
     getUserID: function () { return P.user.sys_id; },
     getUserName: function () { return P.user.user_name; },
     getUserDisplayName: function () { return P.user.name; },
-    hasRole: function () { return true; },
+    hasRole: function (r) { return !P.ROLES || !!P.ROLES[r] || !!P.ROLES.admin; },
     info: function (m) { P.LOG.push('info ' + m); },
     warn: function (m) { P.LOG.push('warn ' + m); },
     error: function (m) { P.LOG.push('error ' + m); },
@@ -412,6 +429,7 @@ function reset() {
     P.STORE = {}; P.PROPS = {}; P.DISPLAY = {}; P.CHOICES = JSON.parse(JSON.stringify(DEFAULT_CHOICES)); P.INVALID_FIELDS = {}; P.UNSUPPORTED = []; P.LOG = [];
     P.HTTP = null; P.now = Date.UTC(2026, 8, 23, 20, 0, 0); P.guid = 0; P.tzOffsetMs = 0;
     P.user = { sys_id: 'u_admin', name: 'System Administrator', user_name: 'admin' };
+    P.ROLES = null; P.ACL = null;
     GlideRecord.onUpdate = {}; GlideRecord.onInsert = {}; GlideRecord.refuseDelete = {}; GlideRecord.refuseInsert = {};
 }
 

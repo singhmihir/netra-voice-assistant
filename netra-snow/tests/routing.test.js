@@ -88,7 +88,7 @@ T.test('"apply them" with nothing parked reaches the mission intent, not a bare 
 T.test('counts are true totals, not the length of a capped list', function () {
     var s = new S.Session();
     for (var i = 0; i < 12; i++) S.g.put('incident', { number: 'INC00200' + (10 + i), caller_id: 'u_admin', state: i < 3 ? '6' : '2', active: 'true', short_description: 'x' + i });
-    T.match(fast(s, 'my tickets').text, /You have 15 open tickets and 3 resolved, waiting to close/);
+    T.match(fast(s, 'my tickets').text, /You have 15 open tickets, and 3 resolved, waiting to close/);
     for (var j = 0; j < 14; j++) S.g.put('sysapproval_approver', { approver: 'u_admin', state: 'requested', sysapproval: '', source_table: '' });
     T.match(fast(s, 'my approvals').text, /^14 approvals are waiting on you - the newest three/);
 });
