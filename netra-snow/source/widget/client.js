@@ -156,6 +156,7 @@ api.controller = function ($scope, $timeout, $window) {
     };
     // R1.4 - last-turn tool-call trace (so you can actually see what she did)
     c.lastTrace = [];   // [{name, ts}, ...]
+    c.agency = (c.data && c.data.agency) || { orders: [], corrections: 0, facts: 0, addendum: '', plan: null };   // R17
     // R7 - live conversation transcript for the dev panel Chat tab
     c.convo = [];       // [{who:'you'|'netra'|'sys', text, t}]
     function _convoPush(who, text) {
@@ -3499,6 +3500,7 @@ api.controller = function ($scope, $timeout, $window) {
                 if (Array.isArray(r.history)) {
                     geminiHistory = r.history;
                     _memPersist();   // R11 - survive refreshes
+                    if (r.agency) c.agency = r.agency;   // R17 - AGENCY card refresh
                     if (r.memory) {
                         logEvent('mem', 'memory: ' + (r.memory.prompts || 0) + '/50 prompts in the live window, ' +
                             c.mem.entries + ' turns, ~' + c.mem.kb + 'KB' +

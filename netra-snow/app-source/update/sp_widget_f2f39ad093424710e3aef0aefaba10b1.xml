@@ -156,6 +156,7 @@ api.controller = function ($scope, $timeout, $window) {
     };
     // R1.4 - last-turn tool-call trace (so you can actually see what she did)
     c.lastTrace = [];   // [{name, ts}, ...]
+    c.agency = (c.data && c.data.agency) || { orders: [], corrections: 0, facts: 0, addendum: '', plan: null };   // R17
     // R7 - live conversation transcript for the dev panel Chat tab
     c.convo = [];       // [{who:'you'|'netra'|'sys', text, t}]
     function _convoPush(who, text) {
@@ -3499,6 +3500,7 @@ api.controller = function ($scope, $timeout, $window) {
                 if (Array.isArray(r.history)) {
                     geminiHistory = r.history;
                     _memPersist();   // R11 - survive refreshes
+                    if (r.agency) c.agency = r.agency;   // R17 - AGENCY card refresh
                     if (r.memory) {
                         logEvent('mem', 'memory: ' + (r.memory.prompts || 0) + '/50 prompts in the live window, ' +
                             c.mem.entries + ' turns, ~' + c.mem.kb + 'KB' +
@@ -8102,6 +8104,7 @@ api.controller = function ($scope, $timeout, $window) {
             awayGa.query();
             data.away_pending = awayGa.next() ? parseInt(awayGa.getAggregate('COUNT'), 10) : 0;
         } catch (eAw) { data.away_pending = 0; }
+        try { data.agency = _agencyTelemetry(); } catch (eAg) { data.agency = null; }
         try {
             var trainSnap = _trainingRead();
             data.training = {
@@ -8615,7 +8618,8 @@ api.controller = function ($scope, $timeout, $window) {
                     prompts: (typeof promptsSeen === 'number') ? promptsSeen : 0,
                     digested: droppedPrompts.length,
                     entries: contents.length
-                }
+                },
+                agency: _agencyTelemetry()    // R17 - Lab AGENCY card
             };
         }
 
@@ -13549,6 +13553,40 @@ api.controller = function ($scope, $timeout, $window) {
         } catch (e) {}
     }
 
+    /**
+     * R17 - one compact object for the Lab's AGENCY card: what she is
+     * watching, what she has learned, any plan in flight. Cheap on
+     * purpose (one task query + the request-cached blob) - it rides boot
+     * and chat responses, never the 9s poll.
+     */
+    function _agencyTelemetry() {
+        var out = { orders: [], corrections: 0, facts: 0, addendum: '', plan: null };
+        try {
+            var gr = new GlideRecord(SCOPE + '_task');
+            gr.addQuery('user', user);
+            gr.orderByDesc('sys_updated_on');
+            gr.setLimit(6);
+            gr.query();
+            while (gr.next()) {
+                out.orders.push({
+                    nt: String(gr.nt_number), state: String(gr.state),
+                    kind: String(gr.kind), target: String(gr.target_number || 'approvals'),
+                    action: String(gr.action)
+                });
+            }
+        } catch (e0) {}
+        try {
+            var b = _ctxReadBlob();
+            out.corrections = (b.corrections || []).length;
+            out.facts = (b.facts || []).length;
+            out.addendum = _habitAddendum().replace(/^[\s\S]*?:\n/, '').substring(0, 600);
+            if (b.plan && !b.plan.finished) {
+                out.plan = { total: b.plan.steps.length, done: b.plan.cursor, confirmed: !!b.plan.confirmed };
+            }
+        } catch (e1) {}
+        return out;
+    }
+
     function _habitAddendum() {
         try {
             var b = _ctxReadBlob();
@@ -14554,7 +14592,7 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
 })();
-]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>46</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 17:11:03</sys_updated_on><template><![CDATA[<!--
+]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>47</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 17:37:10</sys_updated_on><template><![CDATA[<!--
   Netra Mic widget template - R9 "Prism"
 
   R8.1: the prism hue engine drives every colour in this template via
@@ -15455,6 +15493,29 @@ api.controller = function ($scope, $timeout, $window) {
         <div class="netra-lab-row netra-lab-btns">
           <button ng-click="c.memForget()">Forget everything</button>
         </div>
+      </section>
+
+      <!-- R17 - AGENCY: what she is doing on her own, and what she has
+           learned about you - the transparency card for the autonomy tier -->
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">AGENCY
+          <span class="netra-lab-chip" ng-if="c.agency.plan">plan {{c.agency.plan.done}}/{{c.agency.plan.total}}</span>
+        </div>
+        <div class="netra-lab-feed" role="log" aria-label="Standing orders">
+          <div class="netra-lab-feed-row" ng-repeat="o in c.agency.orders track by o.nt">
+            <span class="netra-lab-feed-t">{{o.nt}}</span>
+            <span class="netra-lab-feed-k" ng-class="{'lk-warn': o.state === 'error', 'lk-mem': o.state === 'active'}">{{o.state}}</span>
+            <span class="netra-lab-feed-m">{{o.action}} &middot; {{o.target}}</span>
+          </div>
+          <div class="netra-lab-feed-row" ng-if="!c.agency.orders.length">
+            <span class="netra-lab-feed-m">no standing orders - try "watch INC... and nudge the assignee if nothing moves"</span>
+          </div>
+        </div>
+        <div class="netra-lab-grid">
+          <div><span>corrections learned</span><b>{{c.agency.corrections}}</b></div>
+          <div><span>saved facts</span><b>{{c.agency.facts}}</b></div>
+        </div>
+        <div class="netra-lab-row" ng-if="c.agency.addendum" style="white-space:pre-wrap; opacity:.85; font-size:11px;" aria-label="What Netra knows about you">{{c.agency.addendum}}</div>
       </section>
 
       <!-- R11 - BACKGROUND FEED: the live event log, same stream the old

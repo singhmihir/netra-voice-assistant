@@ -901,6 +901,29 @@
         </div>
       </section>
 
+      <!-- R17 - AGENCY: what she is doing on her own, and what she has
+           learned about you - the transparency card for the autonomy tier -->
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">AGENCY
+          <span class="netra-lab-chip" ng-if="c.agency.plan">plan {{c.agency.plan.done}}/{{c.agency.plan.total}}</span>
+        </div>
+        <div class="netra-lab-feed" role="log" aria-label="Standing orders">
+          <div class="netra-lab-feed-row" ng-repeat="o in c.agency.orders track by o.nt">
+            <span class="netra-lab-feed-t">{{o.nt}}</span>
+            <span class="netra-lab-feed-k" ng-class="{'lk-warn': o.state === 'error', 'lk-mem': o.state === 'active'}">{{o.state}}</span>
+            <span class="netra-lab-feed-m">{{o.action}} &middot; {{o.target}}</span>
+          </div>
+          <div class="netra-lab-feed-row" ng-if="!c.agency.orders.length">
+            <span class="netra-lab-feed-m">no standing orders - try "watch INC... and nudge the assignee if nothing moves"</span>
+          </div>
+        </div>
+        <div class="netra-lab-grid">
+          <div><span>corrections learned</span><b>{{c.agency.corrections}}</b></div>
+          <div><span>saved facts</span><b>{{c.agency.facts}}</b></div>
+        </div>
+        <div class="netra-lab-row" ng-if="c.agency.addendum" style="white-space:pre-wrap; opacity:.85; font-size:11px;" aria-label="What Netra knows about you">{{c.agency.addendum}}</div>
+      </section>
+
       <!-- R11 - BACKGROUND FEED: the live event log, same stream the old
            dev console had - so you can watch what she does behind the
            scenes right from the Live page -->

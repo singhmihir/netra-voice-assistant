@@ -174,6 +174,7 @@
             awayGa.query();
             data.away_pending = awayGa.next() ? parseInt(awayGa.getAggregate('COUNT'), 10) : 0;
         } catch (eAw) { data.away_pending = 0; }
+        try { data.agency = _agencyTelemetry(); } catch (eAg) { data.agency = null; }
         try {
             var trainSnap = _trainingRead();
             data.training = {
@@ -687,7 +688,8 @@
                     prompts: (typeof promptsSeen === 'number') ? promptsSeen : 0,
                     digested: droppedPrompts.length,
                     entries: contents.length
-                }
+                },
+                agency: _agencyTelemetry()    // R17 - Lab AGENCY card
             };
         }
 
@@ -5619,6 +5621,40 @@
             if (b.corrections.length > 30) b.corrections = b.corrections.slice(-30);
             _ctxWriteBlob(b);
         } catch (e) {}
+    }
+
+    /**
+     * R17 - one compact object for the Lab's AGENCY card: what she is
+     * watching, what she has learned, any plan in flight. Cheap on
+     * purpose (one task query + the request-cached blob) - it rides boot
+     * and chat responses, never the 9s poll.
+     */
+    function _agencyTelemetry() {
+        var out = { orders: [], corrections: 0, facts: 0, addendum: '', plan: null };
+        try {
+            var gr = new GlideRecord(SCOPE + '_task');
+            gr.addQuery('user', user);
+            gr.orderByDesc('sys_updated_on');
+            gr.setLimit(6);
+            gr.query();
+            while (gr.next()) {
+                out.orders.push({
+                    nt: String(gr.nt_number), state: String(gr.state),
+                    kind: String(gr.kind), target: String(gr.target_number || 'approvals'),
+                    action: String(gr.action)
+                });
+            }
+        } catch (e0) {}
+        try {
+            var b = _ctxReadBlob();
+            out.corrections = (b.corrections || []).length;
+            out.facts = (b.facts || []).length;
+            out.addendum = _habitAddendum().replace(/^[\s\S]*?:\n/, '').substring(0, 600);
+            if (b.plan && !b.plan.finished) {
+                out.plan = { total: b.plan.steps.length, done: b.plan.cursor, confirmed: !!b.plan.confirmed };
+            }
+        } catch (e1) {}
+        return out;
     }
 
     function _habitAddendum() {
