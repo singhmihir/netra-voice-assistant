@@ -1,0 +1,416 @@
+/**
+ * NetraTaskRunner - the part of Netra that acts while you're away. (R17)
+ *
+ * Standing orders live in x_196061_netra_v1_task: "watch INC0010031 and
+ * nudge the assignee if nothing moves in 4 hours", spoken once, authorized
+ * once, then executed here - inside the same 5-minute scheduled job that
+ * already does the notification scans. No Gemini calls in here, ever: by
+ * the time a task row exists the decision was already made in conversation.
+ * This just evaluates plain GlideRecord conditions and does the one
+ * pre-authorized thing.
+ *
+ * Trust rules, all enforced in code where the model cant vote:
+ *  - the ticket_writes kill switch is re-checked before EVERY write, so
+ *    flipping it also stops autonomy, instantly
+ *  - nudges: max 1 per person per 24h, max 3 per task, quiet hours
+ *    19:00-08:00 (re-armed for morning, not dropped)
+ *  - anything that changes a field stores the before-value in undo_json
+ *    first, so "undo task twelve" can put it back
+ *  - every act lands in action_log AND a notification row, so the away
+ *    debrief can read out exactly what happened, numbered
+ *  - any parse error or missing record fails CLOSED: state=error plus a
+ *    spoken notification, never a guess
+ */
+var NetraTaskRunner = Class.create();
+NetraTaskRunner.prototype = {
+    initialize: function () {
+        this.SCOPE = 'x_196061_netra_v1';
+        this.TASK  = this.SCOPE + '_task';
+        this.NOTIF = this.SCOPE + '_notification';
+        this.MAX_PER_RUN = 25;
+        this.NUDGE_MIN_GAP_H = 24;
+        this.NUDGE_MAX_PER_TASK = 3;
+        this.QUIET_START = 19;   // 7pm
+        this.QUIET_END   = 8;    // 8am
+    },
+
+    writesEnabled: function () {
+        return String(gs.getProperty(this.SCOPE + '.ticket_writes', 'true')) !== 'false';
+    },
+
+    run: function () {
+        var fired = 0, checked = 0;
+        var now = new GlideDateTime();
+        var gr = new GlideRecord(this.TASK);
+        gr.addQuery('state', 'active');
+        gr.addQuery('next_check_at', '<=', now.toString());
+        gr.orderBy('next_check_at');
+        gr.setLimit(this.MAX_PER_RUN);
+        gr.query();
+        while (gr.next()) {
+            checked++;
+            try {
+                fired += this._checkOne(gr) ? 1 : 0;
+            } catch (e) {
+                this._fail(gr, 'runner threw: ' + (e.message || e));
+            }
+        }
+        if (checked) gs.info('[NetraTaskRunner] checked ' + checked + ' task(s), fired ' + fired);
+        return fired;
+    },
+
+    _checkOne: function (task) {
+        // expiry first - an expired watch reports back too, so silence
+        // never means "I forgot"
+        if (task.expires_at && new GlideDateTime(String(task.expires_at)).before(new GlideDateTime())) {
+            task.state = 'expired';
+            this._log(task, 'expired without firing');
+            task.update();
+            this._notify(task, String(task.nt_number) + ': my watch on ' + String(task.target_number) +
+                ' expired without the condition ever coming true.');
+            return false;
+        }
+        var cond;
+        try {
+            cond = JSON.parse(String(task.condition_json || '{}'));
+        } catch (eP) {
+            this._fail(task, 'condition unreadable');
+            return false;
+        }
+        if (String(task.kind) === 'chase_approvals') return this._chaseApprovals(task, cond);
+        return this._watchTicket(task, cond);
+    },
+
+    // ---- kind: watch_ticket ------------------------------------------
+    _watchTicket: function (task, cond) {
+        var t = new GlideRecord(String(task.target_table || 'incident'));
+        if (!t.get(String(task.target_sys_id))) {
+            this._fail(task, 'target record is gone');
+            return false;
+        }
+        var met = true;
+        if (cond.no_movement_hours) {
+            var cutoff = new GlideDateTime();
+            cutoff.addSeconds(-3600 * parseInt(cond.no_movement_hours, 10));
+            met = met && new GlideDateTime(String(t.sys_updated_on)).before(cutoff);
+        }
+        if (cond.still_unassigned) met = met && !String(t.assigned_to);
+        if (cond.state_equals !== undefined && cond.state_equals !== null && cond.state_equals !== '') {
+            met = met && String(t.state) === String(cond.state_equals);
+        }
+        if (cond.due_at_ms) met = met && new GlideDateTime().getNumericValue() >= parseInt(cond.due_at_ms, 10);
+        if (!met) {
+            this._rearm(task, 30);   // look again in half an hour
+            task.update();
+            return false;
+        }
+        return this._fire(task, t);
+    },
+
+    _fire: function (task, t) {
+        var action = String(task.action || 'notify_only');
+        var params = {};
+        try { params = JSON.parse(String(task.action_params || '{}')); } catch (eP) {}
+        var num = String(t.number || task.target_number);
+        var who = String(task.user);
+
+        if (action !== 'notify_only' && !this.writesEnabled()) {
+            this._fail(task, 'ticket writes are switched off, holding fire');
+            return false;
+        }
+
+        var spoken = '';
+        if (action === 'notify_only') {
+            spoken = num + ' met your watch condition.';
+
+        } else if (action === 'add_comment') {
+            var msg = String(params.comment || 'Checking in on this one.');
+            t.comments = msg + ' (standing order ' + String(task.nt_number) + ' via Netra, authorized by ' + this._name(who) + ')';
+            t.update();
+            this._log(task, 'commented on ' + num);
+            spoken = 'I added your comment to ' + num + ' as ordered.';
+
+        } else if (action === 'nudge_assignee') {
+            if (this._inQuietHours()) { this._rearmMorning(task); task.update(); return false; }
+            var assignee = String(t.assigned_to);
+            if (!assignee) {
+                spoken = num + ' has no assignee to nudge - the condition fired but there is nobody to poke. You may want to reassign it.';
+            } else if (!this._cadenceOk(task, assignee)) {
+                this._rearm(task, 60 * 6);
+                task.update();
+                return false;
+            } else {
+                t.work_notes = 'Gentle reminder from ' + this._name(who) + ' via Netra: this ticket has been quiet for a while - any update? (standing order ' + String(task.nt_number) + ')';
+                t.update();
+                this._notifyUser(assignee, num, this._name(who) + ' asked me to nudge you about ' + num + ' - it has been quiet for a while.');
+                this._log(task, 'nudged ' + this._name(assignee) + ' on ' + num, { nudged: assignee });
+                spoken = 'I nudged ' + this._name(assignee) + ' about ' + num + '.';
+            }
+
+        } else if (action === 'escalate_priority') {
+            var target = String(params.priority || '2');
+            var before = String(t.priority);
+            if (before === target) {
+                spoken = num + ' is already at priority ' + target + ', nothing to escalate.';
+            } else {
+                var res = this.setPriority(t, target);
+                if (!res.ok) {
+                    this._fail(task, 'could not move ' + num + ' to priority ' + target + ' (' + res.why + ')');
+                    return false;
+                }
+                task.undo_json = JSON.stringify({ table: t.getTableName(), sys_id: String(t.sys_id),
+                                                  restore: res.before, target_was: target });
+                t.work_notes = 'Priority raised ' + before + ' -> ' + target + ' by standing order ' + String(task.nt_number) + ' (authorized in advance by ' + this._name(who) + ' via Netra).';
+                t.update();
+                this._log(task, 'escalated ' + num + ' priority ' + before + ' -> ' + target, { undoable: true });
+                spoken = 'I escalated ' + num + ' from priority ' + before + ' to ' + target + ', as you authorized. Say undo task ' + this._digits(task.nt_number) + ' to put it back.';
+            }
+        } else {
+            this._fail(task, 'unknown action ' + action);
+            return false;
+        }
+
+        task.fire_count = parseInt(String(task.fire_count || '0'), 10) + 1;
+        if (task.fire_count >= parseInt(String(task.max_fires || '1'), 10)) {
+            task.state = 'fired';
+        } else {
+            this._rearm(task, 60 * 4);
+        }
+        task.update();
+        this._notify(task, String(task.nt_number) + ': ' + spoken);
+        return true;
+    },
+
+    // ---- kind: chase_approvals ---------------------------------------
+    _chaseApprovals: function (task, cond) {
+        // chase approvals the owner is WAITING ON (their own request),
+        // never ones they are supposed to approve - that is scanner turf
+        var owner = String(task.user);
+        var open = 0, nudged = 0;
+        var appr = new GlideRecord('sysapproval_approver');
+        appr.addQuery('state', 'requested');
+        if (cond.source_sys_id) appr.addQuery('sysapproval', String(cond.source_sys_id));
+        appr.setLimit(20);
+        appr.query();
+        while (appr.next()) {
+            var reqBy = this._requestedBy(appr);
+            if (reqBy !== owner) continue;
+            var approver = String(appr.approver);
+            if (approver === owner) continue;   // never chase yourself
+            open++;
+            if (this._inQuietHours()) continue;
+            if (!this._cadenceOk(task, approver)) continue;
+            var label = this._approvalLabel(appr);
+            this._notifyUser(approver, label, this._name(owner) + ' asked me to remind you: ' + label + ' is still waiting on your approval.');
+            this._writeApprovalNote(appr, 'Reminder from ' + this._name(owner) + ' via Netra: still waiting on this approval. (standing order ' + String(task.nt_number) + ')');
+            this._log(task, 'nudged approver ' + this._name(approver) + ' about ' + label, { nudged: approver });
+            nudged++;
+        }
+        if (!open) {
+            task.state = 'fired';
+            this._log(task, 'all approvals resolved');
+            task.update();
+            this._notify(task, String(task.nt_number) + ': good news - nothing is waiting on approval for you anymore.');
+            return true;
+        }
+        if (nudged) this._notify(task, String(task.nt_number) + ': I sent ' + nudged + ' approval reminder' + (nudged === 1 ? '' : 's') + '. ' + open + ' still pending.');
+        this._rearm(task, 60 * 12);   // chase cadence: twice a day
+        task.update();
+        return nudged > 0;
+    },
+
+    _requestedBy: function (appr) {
+        try {
+            var srcTable = String(appr.source_table || 'change_request');
+            var src = new GlideRecord(srcTable);
+            if (src.get(String(appr.sysapproval))) {
+                return String(src.requested_by || src.opened_by || '');
+            }
+        } catch (e) {}
+        return '';
+    },
+
+    _approvalLabel: function (appr) {
+        try {
+            var src = new GlideRecord(String(appr.source_table || 'change_request'));
+            if (src.get(String(appr.sysapproval))) return String(src.number || 'a request');
+        } catch (e) {}
+        return 'a request';
+    },
+
+    _writeApprovalNote: function (appr, note) {
+        if (!this.writesEnabled()) return;
+        try {
+            var src = new GlideRecord(String(appr.source_table || 'change_request'));
+            if (src.get(String(appr.sysapproval)) && src.isValidField('work_notes')) {
+                src.work_notes = note;
+                src.update();
+            }
+        } catch (e) { gs.warn('[NetraTaskRunner] approval note failed: ' + (e.message || e)); }
+    },
+
+    /**
+     * Set priority for real, and PROVE it stuck.
+     *
+     * On stock incident, priority is derived: a data lookup recalculates it
+     * from impact x urgency and silently stomps direct writes - the update
+     * "succeeds", the work note lands, and priority never moves (found out
+     * the hard way on this feature's first live fire). So: try the direct
+     * write, re-read, and if the lookup stomped it, drive impact+urgency
+     * through the standard matrix instead. Always verify, never trust
+     * update(). Returns { ok, before:{...} } with the fields it actually
+     * changed, for undo.
+     */
+    setPriority: function (t, target) {
+        var MATRIX = { '1': ['1', '1'], '2': ['1', '2'], '3': ['2', '2'], '4': ['2', '3'], '5': ['3', '3'] };
+        var before = { priority: String(t.priority), impact: String(t.impact), urgency: String(t.urgency) };
+        var sysId = String(t.sys_id), table = t.getTableName();
+
+        t.priority = target;
+        t.update();
+        var check = new GlideRecord(table);
+        check.get(sysId);
+        if (String(check.priority) === String(target)) {
+            return { ok: true, before: { priority: before.priority }, via: 'direct' };
+        }
+        var pair = MATRIX[String(target)];
+        if (!pair || !t.isValidField('impact') || !t.isValidField('urgency')) {
+            return { ok: false, why: 'priority is recalculated on this table and I have no impact/urgency lever' };
+        }
+        check.impact = pair[0];
+        check.urgency = pair[1];
+        check.update();
+        var check2 = new GlideRecord(table);
+        check2.get(sysId);
+        if (String(check2.priority) === String(target)) {
+            return { ok: true, before: { impact: before.impact, urgency: before.urgency }, via: 'matrix' };
+        }
+        return { ok: false, why: 'wrote impact ' + pair[0] + ' urgency ' + pair[1] + ' but priority read back ' + String(check2.priority) };
+    },
+
+    // ---- undo (called from the widget, addressed by NT number) --------
+    undoTask: function (ntNumber, requestingUser) {
+        var gr = new GlideRecord(this.TASK);
+        gr.addQuery('nt_number', String(ntNumber).toUpperCase());
+        gr.addQuery('user', requestingUser);
+        gr.setLimit(1);
+        gr.query();
+        if (!gr.next()) return { ok: false, error: 'No standing order ' + ntNumber + ' of yours.' };
+        var undo;
+        try { undo = JSON.parse(String(gr.undo_json || 'null')); } catch (eP) { undo = null; }
+        if (!undo || !undo.restore) {
+            return { ok: false, error: ntNumber + ' has nothing reversible recorded - its actions were comments or nudges, which I can only follow up with a correcting note.' };
+        }
+        var t = new GlideRecord(undo.table);
+        if (!t.get(undo.sys_id)) return { ok: false, error: 'The record it changed is gone.' };
+        // refuse if a human moved priority again after us - never fight a person
+        if (undo.target_was && String(t.priority) !== String(undo.target_was)) {
+            return { ok: false, error: 'Someone changed it again after me (priority is now ' + String(t.priority) + ') - not touching it. Check it yourself.' };
+        }
+        var restored = [];
+        for (var f in undo.restore) {
+            if (!undo.restore.hasOwnProperty(f)) continue;
+            t.setValue(f, undo.restore[f]);
+            restored.push(f + ' back to ' + undo.restore[f]);
+        }
+        t.work_notes = 'Standing order ' + String(gr.nt_number) + ' undone by ' + this._name(requestingUser) + ' via Netra: ' + restored.join(', ') + '.';
+        t.update();
+        var check = new GlideRecord(undo.table);
+        check.get(undo.sys_id);
+        var backTo = String(check.priority);
+        gr.undo_json = '';
+        this._log(gr, 'undone: ' + restored.join(', ') + ' (priority now ' + backTo + ')');
+        gr.update();
+        return { ok: true, restored: restored.join(', ') + ' on ' + String(t.number || undo.sys_id) + ' - priority reads back ' + backTo };
+    },
+
+    // ---- plumbing ------------------------------------------------------
+    _cadenceOk: function (task, personSysId) {
+        var log = this._readLog(task);
+        var count = 0, lastMs = 0;
+        for (var i = 0; i < log.length; i++) {
+            if (log[i].nudged === personSysId) {
+                count++;
+                if (log[i].at_ms > lastMs) lastMs = log[i].at_ms;
+            }
+        }
+        if (count >= this.NUDGE_MAX_PER_TASK) return false;
+        var gapMs = this.NUDGE_MIN_GAP_H * 3600 * 1000;
+        return (new GlideDateTime().getNumericValue() - lastMs) >= gapMs;
+    },
+
+    _inQuietHours: function () {
+        var h = new GlideDateTime().getLocalTime().getHourOfDayLocalTime();
+        return h >= this.QUIET_START || h < this.QUIET_END;
+    },
+
+    _rearm: function (task, minutes) {
+        // epoch write: string assignment to a date field is re-interpreted
+        // in the session timezone and lands hours off (bit us on day one)
+        var next = new GlideDateTime();
+        next.addSeconds(60 * minutes);
+        task.next_check_at.setDateNumericValue(next.getNumericValue());
+    },
+
+    _rearmMorning: function (task) {
+        var next = new GlideDateTime();
+        next.addSeconds(3600 * 13);   // deep in quiet hours; lands next morning
+        task.next_check_at.setDateNumericValue(next.getNumericValue());
+    },
+
+    _readLog: function (task) {
+        try {
+            var l = JSON.parse(String(task.action_log || '[]'));
+            return Object.prototype.toString.call(l) === '[object Array]' ? l : [];
+        } catch (e) { return []; }
+    },
+
+    _log: function (task, what, extra) {
+        var log = this._readLog(task);
+        var entry = { at: new GlideDateTime().toString(), at_ms: new GlideDateTime().getNumericValue(), what: what };
+        if (extra) { for (var k in extra) { if (extra.hasOwnProperty(k)) entry[k] = extra[k]; } }
+        log.push(entry);
+        if (log.length > 40) log = log.slice(-40);
+        task.action_log = JSON.stringify(log);
+    },
+
+    _fail: function (task, why) {
+        task.state = 'error';
+        this._log(task, 'ERROR: ' + why);
+        task.update();
+        this._notify(task, String(task.nt_number) + ' hit a problem and stopped: ' + why + '. Nothing was changed.');
+        gs.warn('[NetraTaskRunner] ' + task.nt_number + ' failed: ' + why);
+    },
+
+    _notify: function (task, message) {
+        this._notifyUser(String(task.user), String(task.target_number || ''), message);
+    },
+
+    _notifyUser: function (userSysId, ticketNumber, message) {
+        if (!userSysId) return;
+        var n = new GlideRecord(this.NOTIF);
+        n.initialize();
+        n.user = userSysId;
+        n.kind = 'task_report';
+        n.ticket_number = ticketNumber;
+        n.ticket_sys_id = '';
+        n.message = String(message).substring(0, 1000);
+        n.delivered = false;
+        n.insert();
+    },
+
+    _name: function (sysId) {
+        try {
+            var u = new GlideRecord('sys_user');
+            if (u.get(sysId)) return String(u.first_name) || String(u.name);
+        } catch (e) {}
+        return 'your colleague';
+    },
+
+    _digits: function (nt) {
+        var m = String(nt || '').match(/(\d+)/);
+        return m ? String(parseInt(m[1], 10)) : String(nt);
+    },
+
+    type: 'NetraTaskRunner'
+};

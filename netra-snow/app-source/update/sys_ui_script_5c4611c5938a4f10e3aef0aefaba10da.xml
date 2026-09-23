@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <?xml version="1.0" encoding="UTF-8"?><record_update table="sys_ui_script"><sys_ui_script action="INSERT_OR_UPDATE"><active>true</active><description>three.js r147 (UMD) + postprocessing passes + the Netra Live 3D stage (glass orb, starfield, bloom). Loaded as a Service Portal widget dependency.</description><global>false</global><ignore_in_now_experience>false</ignore_in_now_experience><name>x_196061_netra_v1.netra_stage3d</name><script><![CDATA[/**
  * @license
  * Copyright 2010-2022 Three.js Authors

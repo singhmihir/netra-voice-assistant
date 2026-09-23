@@ -1,6 +1,67 @@
-# Netra on ServiceNow 🎙️ v5.0
+# Netra on ServiceNow 🎙️ v6.0
 
 A voice-first, fully accessible assistant that runs **natively inside ServiceNow** as a scoped application. Zero external services, zero recurring cost. Designed for blind and visually-impaired ServiceNow users.
+
+---
+
+## v6.0 — Trusted Agency (2026-09)
+
+v5 made her reason. v6 makes her **act** — while you're away, across turns,
+and increasingly the way *you* would — with every autonomous act bounded,
+logged, spoken, and reversible by voice.
+
+- **Standing orders** — *"watch INC0010031 and if nobody touches it for four
+  hours, escalate it to P2"*. Said once, confirmed once, then executed by the
+  5-minute scanner with **zero Gemini calls** — pure deterministic condition
+  checks. Actions are deliberately small: notify, comment, nudge assignee,
+  escalate priority. Autonomous reassign/resolve stays interactive, on purpose.
+  The confirm is **structural, not prompt-discipline**: the create tool
+  physically cannot arm an order in the turn that proposed it (the first live
+  test caught the model trying).
+- **Approval chaser / assignee nudger** — cadence-capped in *code*: max one
+  nudge per person per 24h, three per task, quiet hours 19:00–08:00 (re-armed
+  for morning, not dropped). Nudges are attributed honestly: *"Reminder from
+  Mihir via Netra…"*.
+- **While-you-were-away debrief** — on return she reads a numbered ledger of
+  what she did: *"One: escalated INC-thirty-one at 6:40, as you authorized.
+  Say undo one if I got any of it wrong."* — and **"undo one" works**, restoring
+  recorded before-values, refusing if a human touched the record after her.
+- **Plans (compound commands that finish)** — *"resolve these three with note
+  X and bump the last one to P2"* becomes a filed plan, read back, then executed
+  in budgeted chunks (4 writes/transaction, auto-continuing across turns,
+  hop-capped). A failed step **halts** the plan with an honest report; *"undo
+  the plan"* walks the undo stack in reverse.
+- **She learns you** — overrides of her triage advice, undos of her writes, and
+  `remember that…` facts feed a per-user profile injected into every turn.
+  `suggest_triage` now blends instance history with *your* history and **flags
+  disagreement instead of silently picking**: *"history says Hardware, but
+  you've sent these to Field Services three times — which way?"*
+- **Verify-after-write, everywhere** — found live: on stock incident, priority
+  is recalculated from impact × urgency, so direct writes "succeeded" while
+  changing nothing. Every field write now reads back what actually stored, uses
+  the impact/urgency matrix when priority is derived, and *says so honestly*
+  when the platform stomped the change.
+
+### Gemini 3 migration (the 2.5 family retires as early as 2026-10-16)
+
+- Pinned, measured chain — no more `-latest` roulette: primary
+  `gemini-2.5-flash-lite` (0.5s, until Google turns it off) → `gemini-3.6-flash`
+  (6s, also the complex-turn brain) → `gemini-3-flash-preview`. The dead 2.0
+  ids are gone. HTTP 0 (timeout) now counts as transient so the chain falls
+  through instead of dying.
+- Generation-aware knobs: `thinkingLevel` on 3.x (`thinkingBudget` → 400 there,
+  verified live), `thinkingBudget: 0` kept for 2.5-flash, temperature forced to
+  1.0 on 3.x per Google's guidance.
+- **Thought signatures**: Gemini 3 rejects any unsigned `functionCall` in
+  history — and a mixed-generation fallback chain produces exactly those (a
+  2.5 model answers hop 1, a 3.x model reads it back on hop 2 → 400, chat
+  dead). Fix verified against the live API: signatures are echoed verbatim,
+  preserved through history truncation, and foreign/unsigned calls get
+  Google's documented migration token.
+- **Timezone-proof scheduling**: assigning a date *string* to a GlideRecord
+  field re-interprets it in the session timezone (our first standing order
+  armed itself 7 hours late). All load-bearing date writes now go through
+  `setDateNumericValue()`.
 
 ---
 
@@ -215,7 +276,7 @@ Three-part fix:
 
 | Path | Files | Manual steps |
 |---|---|---|
-| **A. Update Set XML (Recommended)** | `update-set/Netra_v5.0_Batch.xml` | *Retrieved Update Sets → Import Update Set from XML*, then Preview & Commit the parent **"Netra - v5.0"** — the six children commit automatically |
+| **A. Update Set XML (Recommended)** | `update-set/Netra_v6.0_Batch.xml` | *Retrieved Update Sets → Import Update Set from XML*, then Preview & Commit the parent **"Netra - v6.0"** — the six children commit automatically |
 | B. Studio app import | `app-source/` | Push this repo to your own git remote, then *Studio → Import From Source Control* — Netra installs as a real scoped application |
 | C. Background Script | `install/setup-netra.js` | Create scope (1 click), paste + Run script (1 click), drop widget on page (1 click) |
 

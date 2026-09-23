@@ -41,6 +41,13 @@ NetraScanner.prototype = {
             gs.warn('[NetraScanner] cluster detection failed: ' + eM);
         }
 
+        // R17 - execute due standing orders (the act-while-away engine).
+        // Deliberately AFTER reminders and BEFORE the per-user scans, so a
+        // task outcome rides the very next widget poll.
+        try { enqueued += new NetraTaskRunner().run(); } catch (eT) {
+            gs.warn('[NetraScanner] task runner failed: ' + eT);
+        }
+
         var prefs = new GlideRecord('x_196061_netra_v1_user_pref');
         prefs.addQuery('active', true);
         prefs.query();

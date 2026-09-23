@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include"><sys_script_include action="INSERT_OR_UPDATE"><access>package_private</access><active>true</active><api_name>x_196061_netra_v1.NetraTools</api_name><caller_access/><client_callable>false</client_callable><description>GlideRecord ops: incidents, approvals, watchlist, prefs.</description><mobile_callable>false</mobile_callable><name>NetraTools</name><sandbox_callable>false</sandbox_callable><script><![CDATA[/**
  * NetraTools — server-side GlideRecord operations.
  *

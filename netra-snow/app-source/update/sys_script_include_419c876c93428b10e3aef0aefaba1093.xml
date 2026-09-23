@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include"><sys_script_include action="INSERT_OR_UPDATE"><access>package_private</access><active>true</active><api_name>x_196061_netra_v1.NetraVulnerability</api_name><caller_access/><client_callable>false</client_callable><description>Vulnerability Response analyst operations: triage, exposure, CVE lookup, assign, state, defer, notes.</description><mobile_callable>false</mobile_callable><name>NetraVulnerability</name><sandbox_callable>false</sandbox_callable><script><![CDATA[/**
  * NetraVulnerability — server-side Vulnerability Response (VR) operations for
  * the Netra voice assistant. Gives Netra full coverage of a vulnerability

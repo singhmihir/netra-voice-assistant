@@ -325,6 +325,22 @@ api.controller = function ($scope, $timeout, $window) {
     }
     if (c.liveMode) $timeout(function () { _maybeAutoBrief(0); }, 14000);
 
+    // R17 - if standing orders acted while the tab was closed, debrief
+    // unprompted. Same wait-until-quiet dance as the morning briefing, but
+    // gated on the server's away_pending count instead of the calendar.
+    function _maybeAwayDebrief(tries) {
+        if (!c.liveMode || !(c.data && c.data.away_pending > 0)) return;
+        var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
+        if (calibBusy || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
+            if (tries < 12) $timeout(function () { _maybeAwayDebrief(tries + 1); }, 12000);
+            return;
+        }
+        c.data.away_pending = 0;   // once per boot
+        logEvent('boot', 'standing orders acted while away - auto debrief');
+        processCommand('What did you do while I was away? Give me the numbered debrief.', 1.0);
+    }
+    if (c.liveMode) $timeout(function () { _maybeAwayDebrief(0); }, 9000);
+
     // typed commands - same pipeline as voice, minus the microphone
     c.labCmd = '';
     c.labSendCmd = function () {
@@ -3404,6 +3420,19 @@ api.controller = function ($scope, $timeout, $window) {
                     } else if (r.force_history_reset) {
                         logEvent('warn', 'server requested history reset (payload too large)');
                         _memForget('server reset');
+                    }
+                    // R17 - a plan used its per-transaction write budget and
+                    // has steps left: bring the brain back automatically so
+                    // long plans span turns without the user re-prompting.
+                    // Guarded by stale (barge-in wins) and a soft local cap.
+                    if (r.continue_plan && !stale) {
+                        c._planHops = (c._planHops || 0) + 1;
+                        if (c._planHops <= 6) {
+                            logEvent('brain', 'plan continues - auto-resubmitting (hop ' + c._planHops + ')');
+                            $timeout(function () { processCommand('[continue plan]', 1.0); }, 1200);
+                        }
+                    } else if (!r.continue_plan) {
+                        c._planHops = 0;
                     }
                     // R2 - act on client directives from tools
                     // R6 - never act on directives from a barged (stale) turn
