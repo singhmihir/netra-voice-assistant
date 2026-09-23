@@ -59,6 +59,25 @@ reasoning actually earns its keep.
   — re-reading every write, skipping anything a human touched since, fully
   undoable.
 
+**Verified live on a PDI** (seeded scenarios under `install/seed-*.js`):
+a real turn skipped two daily-exhausted models without sending them a
+request and answered on the first live one; fast-lane intents, undo and the
+away debrief ran at 0 generate calls; change correlation ranked the one
+direct change first and left the decoys out (dossier gathered in ~110 ms);
+*"investigate"* spent exactly one call, cited only real evidence, came back
+from cache for free on the second ask, and said "not enough evidence" on a
+ticket with no CI instead of inventing a theory; the evidence watch reported
+only new facts and graded its theory against the real close notes; a mission
+reviewed 27 tickets with 27 embedding calls and **0** generate calls,
+skipped the one a human had edited, applied 11 confirmed changes with
+read-back, and undo restored all 11.
+
+**Known limits.** Free keys allow 20 generate calls per model per day, so a
+heavy day will still put Netra into basic mode for a while — she says so and
+says when she is back. Instances without a `caused_by` / `rfc` field on
+incident get the change link as a cross-referenced work note on both
+records instead.
+
 ---
 
 ## v6.0 — Trusted Agency (2026-09)
@@ -333,7 +352,7 @@ Three-part fix:
 
 | Path | Files | Manual steps |
 |---|---|---|
-| **A. Update Set XML (Recommended)** | `update-set/Netra_v6.0_Batch.xml` | *Retrieved Update Sets → Import Update Set from XML*, then Preview & Commit the parent **"Netra - v6.0"** — the six children commit automatically |
+| **A. Update Set XML (Recommended)** | `update-set/Netra_v7.0_Batch.xml` | *Retrieved Update Sets → Import Update Set from XML*, then Preview & Commit the parent **"Netra - v7.0"** — the six children commit automatically |
 | B. Studio app import | `app-source/` | Push this repo to your own git remote, then *Studio → Import From Source Control* — Netra installs as a real scoped application |
 | C. Background Script | `install/setup-netra.js` | Create scope (1 click), paste + Run script (1 click), drop widget on page (1 click) |
 

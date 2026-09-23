@@ -1,4 +1,4 @@
-# Netra on ServiceNow — Installation Guide (v6.0)
+# Netra on ServiceNow — Installation Guide (v7.0)
 
 **Two install paths.** Pick one.
 
@@ -97,19 +97,28 @@ Proactive scan check:
 
 ---
 
-## Path B — Update Set XML (v6.0 batch, RECOMMENDED)
+## Path B — Update Set XML (v7.0 batch, RECOMMENDED)
 
-The complete app ships as ONE file now: `update-set/Netra_v6.0_Batch.xml`
-(parent "Netra - v6.0" + six children, ~330 updates - tables, script
-includes, widget + page, REST API, automation, app shell, properties and
-the navigator menu).
+The complete app ships as ONE file now: `update-set/Netra_v7.0_Batch.xml`
+(parent "Netra - v7.0" + six children, ~390 updates - tables including the
+v7 quota ledger and mission items, 15 script includes, widget + page, REST
+API, automation, app shell, properties and the navigator menu).
 
 1. *System Update Sets → Retrieved Update Sets → Import Update Set from XML*
-2. Upload `Netra_v6.0_Batch.xml`
-3. Open the parent **"Netra - v6.0"**, click **Preview Update Set Batch**
+2. Upload `Netra_v7.0_Batch.xml`
+3. Open the parent **"Netra - v7.0"**, click **Preview Update Set Batch**
 4. Click **Commit Update Set Batch** - the children commit in order
 5. Set your Gemini key in the `x_196061_netra_v1.gemini_api_key` property
    (shipped blank on purpose) and open `/sp?id=netra_live`
+
+Upgrading from v6.0: commit the v7.0 batch on top. It removes the old
+`gemini_model` pin (v7 routes across a governed chain of four models), so
+if you had pinned a model, set `x_196061_netra_v1.model_chain` instead.
+
+Free Gemini keys allow **20 generate calls per model per day**. v7 is built
+around that: most everyday questions cost no call at all, and when every
+model is resting Netra keeps working in basic mode and tells you when her
+reasoning is back. Ask *"how's your brain?"* to hear the live ledger.
 
 ## Path C — Studio app import
 

@@ -78,7 +78,83 @@ NetraTaskRunner.prototype = {
             return false;
         }
         if (String(task.kind) === 'chase_approvals') return this._chaseApprovals(task, cond);
+        // R18 - MUST be explicit: _watchTicket starts from met=true, so any
+        // new kind that fell through to it would fire on the very first pass
+        if (String(task.kind) === 'investigate_watch') return this._investigateWatch(task, cond);
+        if (String(task.kind) !== 'watch_ticket') {
+            this._fail(task, 'unknown standing order kind ' + task.kind);
+            return false;
+        }
         return this._watchTicket(task, cond);
+    },
+
+    // ---- kind: investigate_watch (R18) --------------------------------
+    // "keep digging on this while I'm away". Each pass re-snapshots the
+    // ticket and its CI, reports ONLY what is new, checks each theory's
+    // signal ("a sibling was fixed by rolling back the patch - that
+    // supports theory one"), and when the ticket resolves, grades the
+    // theories against the real close notes - including saying plainly
+    // when it got it wrong. Zero model calls, like everything in here.
+    _investigateWatch: function (task, cond) {
+        var num = String(task.target_number);
+        var t = new GlideRecord(String(task.target_table || 'incident'));
+        if (!t.get(String(task.target_sys_id))) { this._fail(task, 'target record is gone'); return false; }
+        var inv = new NetraInvestigator();
+        var anchor = inv.resolveAnchor(num);
+        if (!anchor || !anchor.ok) { this._fail(task, 'could not re-open the investigation on ' + num); return false; }
+
+        var closed = String(t.state) === '6' || String(t.state) === '7' || String(t.active) === 'false';
+        if (closed) {
+            // the CI name is in every theory, so it can never tell them apart
+            var g = inv.grade(cond.sig || [], String(t.close_notes || ''), { exclude: [String(anchor.ci_name || '')] });
+            var verdict = num + ' is resolved, and ' + g.text;
+            task.state = 'fired';
+            this._log(task, 'graded: ' + g.outcome + (g.n ? ' (theory ' + g.n + ')' : ''), { outcome: g.outcome, theory: g.n || 0 });
+            task.update();
+            this._notify(task, String(task.nt_number) + ': ' + verdict);
+            return true;
+        }
+
+        var snapOld = cond.snap || {};
+        var track = [];
+        for (var tk = 0; cond.sig && tk < cond.sig.length; tk++) if (cond.sig[tk].ref) track.push(cond.sig[tk].ref);
+        var snapNew = inv.snapshot(anchor, { since_ms: snapOld.at || 0, track: track });
+        if (!snapNew || !snapNew.ok) {
+            if (snapNew && snapNew.gone) { this._fail(task, 'the ticket I was watching is gone'); return false; }
+            this._rearm(task, 30);   // a flaky read is not news - try again next time
+            task.update();
+            return false;
+        }
+        var said = [];
+        var facts = inv.diffSnapshot(snapOld, snapNew) || [];
+        for (var i = 0; i < facts.length && said.length < 4; i++) said.push(facts[i]);
+        var sigs = inv.checkSignals(cond.sig || [], snapOld, snapNew) || [];
+        for (var s = 0; s < sigs.length; s++) {
+            if (sigs[s].supported) said.push(sigs[s].text);   // already ends "...supports my theory one"
+        }
+        var compact = inv.compactSnapshot(snapNew, snapOld);
+        cond.snap = compact;
+        var ser = JSON.stringify(cond);
+        // condition_json is a 4000-char column - trim the snapshot lists, never the theories
+        while (ser.length > 3900) {
+            if (compact.sib && compact.sib.length > 3) compact.sib = compact.sib.slice(-3);
+            else if (compact.res && compact.res.length > 3) compact.res = compact.res.slice(-3);
+            else if (compact.chg && compact.chg.length > 3) compact.chg = compact.chg.slice(-3);
+            else break;
+            ser = JSON.stringify(cond);
+        }
+        task.condition_json = ser;
+        var sent = false;
+        var fires = parseInt(String(task.fire_count || '0'), 10);
+        if (said.length && fires < parseInt(String(task.max_fires || '5'), 10)) {
+            task.fire_count = fires + 1;
+            this._log(task, 'new on ' + num + ': ' + said.join('; '));
+            sent = true;
+        }
+        this._rearm(task, 30);
+        task.update();
+        if (sent) this._notify(task, String(task.nt_number) + ': still digging on ' + num + '. ' + said.join('. ') + '.');
+        return sent;
     },
 
     // ---- kind: watch_ticket ------------------------------------------
@@ -414,4 +490,4 @@ NetraTaskRunner.prototype = {
 
     type: 'NetraTaskRunner'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 16:33:42</sys_created_on><sys_id>808f008d93e787d0e3aef0aefaba10be</sys_id><sys_mod_count>2</sys_mod_count><sys_name>NetraTaskRunner</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_808f008d93e787d0e3aef0aefaba10be</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 16:49:24</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 16:33:42</sys_created_on><sys_id>808f008d93e787d0e3aef0aefaba10be</sys_id><sys_mod_count>4</sys_mod_count><sys_name>NetraTaskRunner</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_808f008d93e787d0e3aef0aefaba10be</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 19:06:07</sys_updated_on></sys_script_include></record_update>

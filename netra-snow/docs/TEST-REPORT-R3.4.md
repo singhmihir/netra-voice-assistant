@@ -14,7 +14,7 @@ browser, or the ServiceNow PDI. The actual cause was uncovered during
 this test run:
 
 > Google's automated secret-scanner detected the previous Gemini API key
-> (`AIzaSyCR-u08-rLgog85nM_3UAuGzFFH27PsHVc`) inside the
+> (`AIzaSyCR…` (redacted; revoked by Google)) inside the
 > `Netra_Version_1.xml` update-set file that was committed to the public
 > GitHub repo in commit `015515c`. Google revoked the key. Every Gemini
 > call from ServiceNow then returned **HTTP 403: "Your API key was
