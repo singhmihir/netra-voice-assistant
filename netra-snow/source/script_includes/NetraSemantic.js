@@ -241,8 +241,9 @@ NetraSemantic.prototype = {
             row.body_digest   = txt.substring(0, 1500);
             row.embedding     = JSON.stringify(res.values);
             row.model         = this.EMBED_MODEL;
-            // epoch write: a date string gets re-read in the session timezone
-            row.embedded_at.setDateNumericValue(new GlideDateTime().getNumericValue());
+            // epoch write: a date string gets re-read in the session timezone.
+            // guarded: a missing column must not cost us the cached vector
+            if (row.isValidField('embedded_at')) row.embedded_at.setDateNumericValue(new GlideDateTime().getNumericValue());
             row.insert();
         } catch (eW) { gs.warn('[NetraSemantic] embed cache write failed: ' + (eW.message || eW)); }
         this._keepVec(sysId, res.values);
@@ -328,8 +329,10 @@ NetraSemantic.prototype = {
                 src.error = 'table ' + table + ' is not readable from this scope';
             } else {
                 if (opts.resolved) {
-                    // resolved or closed, and only the ones that actually say how
-                    gr.addEncodedQuery('state IN 6,7');
+                    // resolved or closed. addQuery, not the widget's 'state IN 6,7'
+                    // encoded string: a space-padded operator can be dropped as an
+                    // invalid term, which would silently scan open tickets too
+                    gr.addQuery('state', 'IN', '6,7');
                 } else if (opts.openOnly) {
                     gr.addActiveQuery();
                 }
@@ -352,7 +355,9 @@ NetraSemantic.prototype = {
                         assignment_group: String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : ''),
                         assigned_to: String(gr.assigned_to.getDisplayValue ? gr.assigned_to.getDisplayValue() : ''),
                         close_notes: String(gr.close_notes || '').replace(/\s+/g, ' ').substring(0, 600),
-                        resolved_at: String(gr.resolved_at || gr.closed_at || ''),
+                        // getValue, not the element: a GlideElement is always truthy,
+                        // so `gr.resolved_at || gr.closed_at` never fell back
+                        resolved_at: String(gr.getValue('resolved_at') || gr.getValue('closed_at') || ''),
                         opened: String(gr.sys_created_on || ''),
                         _gid: String(gr.getValue('assignment_group') || ''),
                         _table: table
@@ -538,6 +543,13 @@ NetraSemantic.prototype = {
                 if (String(r.matches[i].assignment_group || '').trim() === top.value) pickEvidence.push(r.matches[i].number);
             }
         }
+        // how many lookalikes actually carry a group. sample_size counts
+        // unassigned lookalikes too (they cast no vote), so "confident" can
+        // rest on a single voter; callers that WRITE should check this
+        var voters = 0;
+        for (var vi = 0; vi < r.matches.length; vi++) {
+            if (String(r.matches[vi].assignment_group || '').trim()) voters++;
+        }
         var evidence = [];
         for (var e = 0; e < r.matches.length && e < 3; e++) {
             var m = r.matches[e];
@@ -548,6 +560,7 @@ NetraSemantic.prototype = {
             ok: true,
             confident: !!(top && top.share >= 0.5 && r.matches.length >= 3),
             sample_size: r.matches.length,
+            voters: voters,
             assignment_group: groups,
             category: cats,
             priority: prios,

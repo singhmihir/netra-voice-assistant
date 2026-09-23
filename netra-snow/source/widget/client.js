@@ -322,13 +322,16 @@ api.controller = function ($scope, $timeout, $window) {
         try { last = localStorage.getItem('netra_brief_last') || ''; } catch (eB2) {}
         if (last === _todayKey()) return;   // already briefed today
         var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
-        if (calibBusy || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
+        // never talk over a question the user has not answered yet
+        var awaitingAnswer = /\?\s*["']?\s*$/.test(String(c.lastSpoken || ''));
+        if (calibBusy || awaitingAnswer || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
             if (tries < 12) $timeout(function () { _maybeAutoBrief(tries + 1); }, 12000);
             return;
         }
         try { localStorage.setItem('netra_brief_last', _todayKey()); } catch (eB3) {}
         logEvent('boot', 'first visit today - reading the morning briefing');
-        processCommand('Give me my daily briefing. Keep it tight - the top items only.', 1.0);
+        c._nextTurnAuto = true;
+        processCommand('give me my daily briefing', 1.0);   // fast-lane phrasing: zero model calls
     }
     if (c.liveMode) $timeout(function () { _maybeAutoBrief(0); }, 14000);
 
@@ -338,13 +341,15 @@ api.controller = function ($scope, $timeout, $window) {
     function _maybeAwayDebrief(tries) {
         if (!c.liveMode || !(c.data && c.data.away_pending > 0)) return;
         var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
-        if (calibBusy || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
+        var awaitingAnswer = /\?\s*["']?\s*$/.test(String(c.lastSpoken || ''));
+        if (calibBusy || awaitingAnswer || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
             if (tries < 12) $timeout(function () { _maybeAwayDebrief(tries + 1); }, 12000);
             return;
         }
         c.data.away_pending = 0;   // once per boot
         logEvent('boot', 'standing orders acted while away - auto debrief');
-        processCommand('What did you do while I was away? Give me the numbered debrief.', 1.0);
+        c._nextTurnAuto = true;
+        processCommand('what did you do while i was away', 1.0);   // fast-lane phrasing: zero model calls
     }
     if (c.liveMode) $timeout(function () { _maybeAwayDebrief(0); }, 9000);
 
@@ -3361,6 +3366,10 @@ api.controller = function ($scope, $timeout, $window) {
         c.data.action  = 'chat';
         c.data.message = transcript;
         c.data.history = geminiHistory;
+        // R18 - auto turns (debrief, briefing) must not count as the user's
+        // turn, or a read-back waiting for "yes" goes stale underneath them
+        c.data.auto = !!c._nextTurnAuto;
+        c._nextTurnAuto = false;
         // R8.2 - live-stage flag (server strips navigation tools) + prosody
         c.data.live_mode = !!c.liveMode;
         var prosOut = null;

@@ -381,7 +381,9 @@
         _brainTurn.calls = 0; _brainTurn.attempts = []; _brainTurn.skipped = 0;
         _brainTurn.mode = 'full'; _brainTurn.blobWritten = false;
         var tb = null;
-        try { tb = _ctxReadBlob(); tb.turn = (tb.turn || 0) + 1; } catch (eT) {}
+        // auto turns (debrief/briefing) are Netra talking, not the user
+        // answering - they must not age a draft that is waiting for a yes
+        try { tb = _ctxReadBlob(); if (!(input && input.auto)) tb.turn = (tb.turn || 0) + 1; } catch (eT) {}
         var out;
         try {
             out = _chatCore(userMessage, history, liveMode, prosody);
@@ -705,6 +707,7 @@
 
             // Final natural-language reply
             var finalText = textChunks.join(' ').trim() || 'Done.';
+            try { finalText = _fixSpokenRefs(finalText, toolLog); } catch (eRef) {}
 
             // Persist last spoken utterance into the context table (best-effort)
             try {
@@ -1127,6 +1130,27 @@
         return d + ' day' + (d === 1 ? '' : 's') + ' ago';
     }
 
+    // "in March 2026, about 6 months ago" from a stored UTC date-time string
+    function _whenSpoken(utc) {
+        if (!utc) return '';
+        try {
+            var g = new GlideDateTime();
+            g.setValue(String(utc));
+            var ms = g.getNumericValue();
+            if (!ms) return '';
+            var days = Math.round((new GlideDateTime().getNumericValue() - ms) / 86400000);
+            var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+                          'August', 'September', 'October', 'November', 'December'];
+            var dt = new Date(ms);
+            var label = 'in ' + MONTHS[dt.getUTCMonth()] + ' ' + dt.getUTCFullYear();
+            if (days < 1) return 'today';
+            if (days < 14) return days + ' day' + (days === 1 ? '' : 's') + ' ago';
+            if (days < 60) return label + ', about ' + Math.round(days / 7) + ' weeks ago';
+            if (days < 730) return label + ', about ' + Math.round(days / 30.4) + ' months ago';
+            return label + ', about ' + Math.round(days / 365.25) + ' years ago';
+        } catch (eW) { return ''; }
+    }
+
     function _until(ms) {
         if (!ms) return '';
         var mins = Math.round((ms - new GlideDateTime().getNumericValue()) / 60000);
@@ -1300,6 +1324,38 @@
     }
 
     // ---- response plumbing --------------------------------------------------
+    // The model sometimes reads the tail of a sys_id ("incident ending 68b")
+    // instead of the ticket number. A listener cannot catch that, so map any
+    // spoken tail that belongs to a sys_id from this turn's tool results -
+    // and to no ticket number - back to that ticket's real last three digits.
+    function _fixSpokenRefs(text, toolLog) {
+        if (!text || !toolLog || !toolLog.length || String(text).indexOf('ending') < 0) return text;
+        var pairs = [];
+        function walk(o, d) {
+            if (!o || typeof o !== 'object' || d > 6 || pairs.length > 300) return;
+            if (o.sys_id && o.number && /^[0-9a-f]{32}$/.test(String(o.sys_id)) && /^[A-Z]+\d+$/.test(String(o.number))) {
+                pairs.push({ sid: String(o.sys_id), num: String(o.number) });
+            }
+            for (var k in o) { if (o.hasOwnProperty(k) && o[k] && typeof o[k] === 'object') walk(o[k], d + 1); }
+        }
+        for (var i = 0; i < toolLog.length; i++) walk(toolLog[i].result, 0);
+        if (!pairs.length) return text;
+        return String(text).replace(/\bending ((?:[0-9a-f] ?){2,7}[0-9a-f])\b/gi, function (all, tail) {
+            var t = tail.replace(/ /g, '').toLowerCase();
+            if (!/\d/.test(t)) return all;
+            for (var a = 0; a < pairs.length; a++) {
+                if (pairs[a].num.toLowerCase().slice(-t.length) === t) return all;
+            }
+            for (var b = 0; b < pairs.length; b++) {
+                if (pairs[b].sid.slice(-t.length) === t) {
+                    var dg = pairs[b].num.replace(/^[A-Z]+/, '');
+                    return 'ending ' + dg.substring(dg.length - 3).split('').join(' ');
+                }
+            }
+            return all;
+        });
+    }
+
     function _flReply(text, contents, intent, route, extra) {
         contents.push({ role: 'model', parts: [{ text: text }] });
         try {
@@ -1420,7 +1476,7 @@
         return [
             // quota / health - honest, from the ledger, free
             function (lc, norm, contents) {
-                if (!/^(quota status|quota|brain status|model status|how'?s your brain|how is your brain|are you (ok|okay|alright)|are you in basic mode|how are your models|health check|what'?s your quota|how much quota( do you have)?( left)?)$/.test(lc)) return null;
+                if (!/^(quota status|quota|brain status|model status|how'?s your brain|how is your brain|are you (ok|okay|alright)|are you in basic mode|how are your models|health check|what'?s your quota|how much quota( do you have)?( left)?|how much (brain|thinking|model|ai|quota|capacity)( power)?( do you have| have you got| is there)? left|how many (calls|questions|requests)( do you have| have you got)? left|(what'?s|what is) (your|the) (brain|model|ai) status|are you running low)$/.test(lc)) return null;
                 return _flReply(_sayQuota(), contents, 'quota_status');
             },
             // repeat
@@ -1444,6 +1500,16 @@
                 if (!/^(what did you do|what happened|what have you done)( while i was (away|gone|out)| overnight| since i left)?$|^debrief( me)?$|^(any news|give me the debrief|what did i miss)$/.test(lc)) return null;
                 var ar = _awayReport(true);
                 return _flReply(_sayAway(ar), contents, 'away_report');
+            },
+            // morning briefing - the data is all GlideRecord already
+            function (lc, norm, contents) {
+                if (!/^((give me |read me |read )?(my |the )?(daily|morning) briefing|brief me|what'?s on (for )?today|what'?s my day look like)$/.test(lc)) return null;
+                var br = _dailyBriefing();
+                if (!br || !br.ok) return null;
+                var said = [String(br.greeting || ''), String(br.briefing || '')];
+                for (var hh = 0; hh < (br.highlights || []).length && hh < 3; hh++) said.push(String(br.highlights[hh]));
+                return _flReply(said.join(' ').replace(/\s+/g, ' ').replace(/\b(INC|CHG|PRB|RITM|REQ|SCTASK)\d{7}\b/g, function (m) { return _spkNum(m); }) +
+                                ' What would you like to focus on first?', contents, 'daily_briefing');
             },
             // work board
             function (lc, norm, contents) {
@@ -1513,6 +1579,9 @@
         return W[s] ? String(W[s]) : String(s).replace(/\D/g, '');
     }
 
+    // "NT0005", "5", "mission 5" -> 5 ; the one place mission numbers are compared
+    function _ntNum(x) { return parseInt(String(x || '').replace(/\D/g, ''), 10) || 0; }
+
     function _liveMissionNt() {
         try {
             var bd = new NetraMissionRunner().board(user);
@@ -1542,7 +1611,7 @@
                     if (!board.length) return _flReply('No missions yet. Say "work through the unassigned queue" to start one.', contents, 'mission_board');
                     var want = _missionDigits(bm[1]);
                     for (var b = 0; b < board.length; b++) {
-                        if (!want || parseInt(board[b].nt_number.replace(/\D/g, ''), 10) === parseInt(want, 10)) return _flReply(board[b].sentence, contents, 'mission_board');
+                        if (!want || _ntNum(board[b].nt_number) === _ntNum(want)) return _flReply(board[b].sentence, contents, 'mission_board');
                     }
                     return _flReply('I have no mission ' + want + '.', contents, 'mission_board');
                 }
@@ -1570,11 +1639,11 @@
                     var nta = _missionDigits(am[1]) || _liveMissionNt();
                     if (!nta) return _flReply('There is no mission to apply.', contents, 'mission_apply');
                     var bdd = new NetraMissionRunner().board(user), cc = null;
-                    for (var k = 0; k < bdd.length; k++) if (parseInt(bdd[k].nt_number.replace(/\D/g, ''), 10) === parseInt(nta, 10)) cc = bdd[k];
-                    if (!cc) return _flReply('I have no mission ' + nta + '.', contents, 'mission_apply');
+                    for (var k = 0; k < bdd.length; k++) if (_ntNum(bdd[k].nt_number) === _ntNum(nta)) cc = bdd[k];
+                    if (!cc) return _flReply('I have no mission ' + _ntNum(nta) + '.', contents, 'mission_apply');
                     if (cc.state !== 'awaiting_apply') return _flReply(cc.sentence, contents, 'mission_apply');
                     var n = cc.counts.confident_pending || cc.counts.confident || 0;
-                    if (!n) return _flReply('Mission ' + parseInt(nta, 10) + ' found nothing confident enough to apply.', contents, 'mission_apply');
+                    if (!n) return _flReply('Mission ' + _ntNum(nta) + ' found nothing confident enough to apply.', contents, 'mission_apply');
                     _parkDraft('mission_apply', { nt: nta });
                     return _flReply('I will route ' + n + ' ticket' + (n === 1 ? '' : 's') + ' the way the history suggests - group, category and priority - re-reading each one, adding a work note, and skipping any that someone touched since my review. Duplicates I only report, never merge. Shall I?', contents, 'mission_apply_draft');
                 }
@@ -1584,7 +1653,7 @@
                     var ntu = _missionDigits(um[1]) || _liveMissionNt();
                     if (!ntu) return _flReply('There is no mission to undo.', contents, 'mission_undo');
                     _parkDraft('mission_undo', { nt: ntu });
-                    return _flReply('I will put back every ticket mission ' + parseInt(ntu, 10) + ' changed - except any that someone has changed since, which I will leave alone. Shall I?', contents, 'mission_undo_draft');
+                    return _flReply('I will put back every ticket mission ' + _ntNum(ntu) + ' changed - except any that someone has changed since, which I will leave alone. Shall I?', contents, 'mission_undo_draft');
                 }
                 return null;
             }
@@ -1787,14 +1856,29 @@
         }
         if (dossier.anchor && dossier.anchor.number) refs[String(dossier.anchor.number).toUpperCase()] = true;
         var kept = [], dropped = 0;
+        var SIG = { change_backed_out: 1, sibling_resolved_with: 1, new_siblings: 1, ci_status_change: 1, none: 1 };
         for (var h = 0; h < (hyps || []).length && kept.length < 3; h++) {
             var hy = hyps[h] || {};
             var cites = hy.cites || [];
+            if (typeof cites === 'string') cites = cites.split(/[\s,;]+/);
+            var cleanCites = [];
+            for (var cc0 = 0; cc0 < cites.length; cc0++) { var cid = String(cites[cc0]).replace(/[^A-Za-z0-9]/g, '').toUpperCase(); if (cid) cleanCites.push(cid); }
+            cites = cleanCites;
             var ok = cites.length > 0;
             for (var c = 0; c < cites.length && ok; c++) if (!ids[String(cites[c]).toUpperCase()]) ok = false;
             var said = String(hy.statement || '') + ' ' + String(hy.confirm_by || '') + ' ' + String(hy.rule_out_by || '');
-            var named = said.match(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK)\d{5,}\b/g) || [];
+            // catch "INC 0099999" too - models space numbers out
+            var named = said.replace(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK|CTASK|PTASK)\s+(\d{5,})\b/gi, '$1$2')
+                            .match(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK|CTASK|PTASK)\d{5,}\b/gi) || [];
             for (var n = 0; n < named.length && ok; n++) if (!refs[named[n].toUpperCase()]) ok = false;
+            if (ok) {
+                var onlyAnchor = true;
+                for (var oa = 0; oa < cites.length; oa++) {
+                    var citem = _invItem(dossier, cites[oa]);
+                    if (!citem || citem.kind !== 'ticket') onlyAnchor = false;
+                }
+                if (onlyAnchor) ok = false;   // restating the symptom is not a cause
+            }
             if (!ok || !hy.statement) { dropped++; continue; }
             // confidence can not exceed the strength of what it cites
             var strong = false, allWeak = true;
@@ -1803,11 +1887,13 @@
                 if (wt === 'strong') strong = true;
                 if (wt !== 'weak') allWeak = false;
             }
-            var conf = hy.confidence;
+            var conf = String(hy.confidence || '').toLowerCase();
+            if (conf !== 'high' && conf !== 'medium' && conf !== 'low') conf = 'low';
             if (allWeak) conf = 'low';
             else if (conf === 'high' && !strong) conf = 'medium';
             var sig = hy.signal || { type: 'none' };
-            if (sig.ref && !refs[String(sig.ref).toUpperCase()]) sig = { type: 'none' };
+            if (!SIG.hasOwnProperty(String(sig.type))) sig = { type: 'none' };
+            if (sig.ref && !refs[String(sig.ref).replace(/\s+/g, '').toUpperCase()]) sig = { type: 'none' };
             kept.push({ statement: String(hy.statement).substring(0, 300), confidence: conf,
                         cites: cites.slice(0, 5), confirm_by: String(hy.confirm_by || '').substring(0, 240),
                         rule_out_by: String(hy.rule_out_by || '').substring(0, 240),
@@ -1828,9 +1914,9 @@
         var subject = a.number ? _spkNum(a.number) : ('**' + (a.ci_name || 'that configuration item') + '**');
         var parts = [];
         if (!res.hypotheses.length) {
-            var missing = [];
-            if (!a.ci_sys_id) missing.push('which server or service it is on (the configuration item is empty)');
-            if (dossier.items.length < 4) missing.push('more history on the ticket');
+            var missing = (dossier.missing || []).slice(0, 2);
+            if (!missing.length && !a.ci_sys_id) missing.push('which server or service it is on (the configuration item is empty)');
+            if (!missing.length && dossier.items.length < 4) missing.push('more history on the ticket');
             return 'I looked into ' + subject + ' but there is not enough evidence for an honest theory yet' +
                    (missing.length ? ' - what would help most is ' + missing.join(', and ') : '') + '. ' +
                    _invSourcesLine(dossier);
@@ -1848,20 +1934,24 @@
                        (because.length ? ' Evidence: ' + because.join('; ') + '.' : ''));
         }
         if (res.hypotheses[0].confirm_by) parts.push('To confirm the first: ' + res.hypotheses[0].confirm_by);
-        if (res.mode === 'rules') parts.push('My reasoning model was not available, so these come from rules over the evidence.');
+        if (res.mode === 'rules' && String(gs.getProperty(SCOPE + '.investigate_llm', 'true')) !== 'false') parts.push('My reasoning model was not available, so these come from rules over the evidence.');
+        else if (res.mode === 'rules') parts.push('These come from rules over the evidence, no model involved.');
         parts.push(_invSourcesLine(dossier));
         parts.push('Say "evidence for one" to hear why, or "write it up" to put this in a work note.');
         return parts.join(' ');
     }
 
     function _invSourcesLine(dossier) {
-        var src = dossier.sources || {}, ok = 0, bad = [];
+        var src = dossier.sources || {}, ok = 0, bad = [], skipped = 0;
         for (var k in src) {
             if (!src.hasOwnProperty(k)) continue;
             if (src[k].status === 'blocked' || src[k].status === 'error') bad.push(k.replace(/_/g, ' '));
+            else if (src[k].status === 'skipped') skipped++;
             else ok++;
         }
-        return 'I checked ' + ok + ' source' + (ok === 1 ? '' : 's') + (bad.length ? '; I could not read ' + bad.join(', ') : '') + '.';
+        return 'I checked ' + ok + ' source' + (ok === 1 ? '' : 's') +
+               (skipped ? ', skipped ' + skipped + ' that did not apply' : '') +
+               (bad.length ? '; I could not read ' + bad.join(', ') : '') + '.';
     }
 
     function _investigate(target) {
@@ -1878,23 +1968,30 @@
         }
         if (anchor.kind === 'ticket') { try { _setFocusTicket(anchor.number); } catch (eF) {} }
         var dossier = inv.gatherDossier(anchor, { deadlineMs: 6000 });
-        // similar resolved incidents - the embedding API has its own quota
-        try {
+        var bc = _ctxReadBlob().investigation;
+        var cacheHit = bc && bc.anchor_key === String(anchor.number || anchor.ci_sys_id) && bc.fingerprint === dossier.fingerprint &&
+                       (new GlideDateTime().getNumericValue() - bc.at) < 2 * 3600000;
+        // similar resolved incidents - the embedding API has its own quota,
+        // and a cache hit does not need them at all
+        if (!cacheHit) try {
             var q = String(anchor.short_description || anchor.ci_name || '');
             if (q) {
                 var sim = _semanticIncidents(q, { resolved: true, excludeSysId: anchor.sys_id || '', limit: 2, scanLimit: 200, maxLive: 2 });
                 if (sim && sim.ok) {
                     for (var s = 0; s < sim.matches.length; s++) {
                         var m = sim.matches[s];
-                        inv.appendItem(dossier, { kind: 'similar', ref: m.number,
+                        // close_notes + score let the engine weigh it and fire its
+                        // "this has happened before" rule
+                        inv.appendItem(dossier, { kind: 'similar', ref: m.number, sys_id: m.sys_id,
                             at_ms: m.resolved_at ? new GlideDateTime(m.resolved_at).getNumericValue() : 0,
                             text: m.number + ' was a lookalike (resolved)' + (m.close_notes ? ', fixed with: ' + String(m.close_notes).substring(0, 120) : ', no fix recorded'),
-                            weight: m.score >= 0.75 && m.close_notes ? 'medium' : 'weak' });
+                            score: m.score, close_notes: m.close_notes || '' });
                     }
                     dossier.sources.similar = { rows: sim.matches.length, ms: 0, status: sim.matches.length ? 'ok' : 'empty' };
                 }
             }
         } catch (eS) { dossier.sources.similar = { rows: 0, ms: 0, status: 'error' }; }
+        if (cacheHit) { dossier.items = bc.items; dossier.sources = bc.sources; }
 
         var b = _ctxReadBlob();
         var anchorKey = String(anchor.number || anchor.ci_sys_id);
@@ -1905,8 +2002,11 @@
             res = cached.result;
             res.mode = 'cached';
         } else {
-            var rules = inv.ruleHypotheses(dossier);
-            var useLlm = String(gs.getProperty(SCOPE + '.investigate_llm', 'true')) !== 'false' && dossier.items.length >= 3;
+            var rules = inv.ruleHypotheses(dossier, { max: 9 });
+            // thin evidence gets no theories at all - a model handed nothing
+            // but the ticket text will happily restate the symptom as a cause
+            var thin = !!dossier.thin || (!anchor.ci_sys_id && !(dossier.suspects || []).length && dossier.items.length < 4);
+            var useLlm = !thin && String(gs.getProperty(SCOPE + '.investigate_llm', 'true')) !== 'false';
             res = null;
             if (useLlm) {
                 var lines = [];
@@ -1939,8 +2039,8 @@
                 }
             }
             if (!res) {
-                var vr = _invValidate(rules, dossier);
-                res = { mode: 'rules', model: null, headline: '', hypotheses: vr.hypotheses, dropped: vr.dropped, unknowns: [] };
+                var vr = thin ? { hypotheses: [], dropped: 0 } : _invValidate(rules, dossier);
+                res = { mode: thin ? 'thin' : 'rules', model: null, headline: '', hypotheses: vr.hypotheses, dropped: vr.dropped, unknowns: [] };
             }
         }
         var speech = _invCompose(res, dossier);
@@ -1975,10 +2075,12 @@
         }
         var t0 = anchor.opened_ms ? inv.firstTicketMs(anchor.ci_sys_id, anchor.opened_ms) : new GlideDateTime().getNumericValue();
         var sc = inv.suspectChanges(anchor.ci_sys_id, t0, { hours: hours || 72 });
-        if (!sc || !sc.ok) return { ok: false, error: (sc && sc.error) || 'change lookup failed' };
+        if (!sc || !sc.ok) return { ok: false, error: (sc && (sc.message || sc.error)) || 'change lookup failed', final_speech: (sc && (sc.message || sc.error)) || 'I could not check the changes.' };
         var speech;
         if (!sc.suspects.length) {
-            speech = 'Nothing changed on **' + (sc.ci ? sc.ci.name : anchor.ci_name) + '** or its direct neighbours in the three days before the first ticket.';
+            // the engine knows the difference between "nothing changed",
+            // "changes but none close enough" and "a source I could not read"
+            speech = inv.describeSuspects(sc, { stress: true });
         } else {
             var bits = [];
             for (var i = 0; i < sc.suspects.length && i < 3; i++) bits.push(sc.suspects[i].sentence);
@@ -2019,7 +2121,10 @@
         for (var k in inv.sources) {
             if (!inv.sources.hasOwnProperty(k)) continue;
             var sr = inv.sources[k];
-            bits.push(k.replace(/_/g, ' ') + (sr.status === 'ok' ? ' (' + sr.rows + ')' : sr.status === 'empty' ? ' (nothing there)' : ' (could not read)'));
+            bits.push(k.replace(/_/g, ' ') + (sr.status === 'ok' ? ' (' + sr.rows + ')'
+                : sr.status === 'empty' ? ' (nothing there)'
+                : sr.status === 'skipped' ? ' (skipped' + (sr.note ? ', ' + String(sr.note).substring(0, 40) : '') + ')'
+                : ' (could not read)'));
         }
         return 'I checked: ' + bits.join(', ') + '. As of ' + _ago(inv.at) + '.';
     }
@@ -2078,16 +2183,33 @@
         if (!chg) return { text: String(a.number) + ' was not one of the suspect changes, so I will not link it.' };
         var gr = new GlideRecord(inv.anchor.table || 'incident');
         if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone.' };
-        if (!gr.isValidField('caused_by')) return { text: 'This instance has no "caused by" field on that table, so there is nowhere to link it.' };
-        var old = String(gr.getValue('caused_by') || '');
-        var oldDisp = old ? String(gr.caused_by.getDisplayValue()) : 'empty';
-        gr.setValue('caused_by', chg.sys_id);
+        var linkField = gr.isValidField('caused_by') ? 'caused_by' : (gr.isValidField('rfc') ? 'rfc' : '');
+        if (!linkField) {
+            // no field to link through on this instance - cross-reference both
+            // records with work notes instead, so the trail still exists
+            var who = gs.getUserDisplayName();
+            gr.work_notes = 'Suspected related change: ' + chg.number + ' (' + chg.sentence + '). Linked by ' + who + ' via Netra - correlation, not proof.';
+            gr.update();
+            var cr = new GlideRecord('change_request');
+            var chgNoted = false;
+            if (cr.get(chg.sys_id) && cr.isValidField('work_notes')) {
+                cr.work_notes = inv.anchor.number + ' may be related to this change (' + chg.sentence + '). Noted by ' + who + ' via Netra.';
+                cr.update();
+                chgNoted = true;
+            }
+            return { text: 'This instance has no "caused by" field, so I cross-referenced them instead: a work note on ' + _spkNum(inv.anchor.number) +
+                           (chgNoted ? ' and one on ' + _spkNum(chg.number) : '') + ' pointing at each other. Notes can not be deleted, so if that was wrong just tell me and I will add a correction.',
+                     tool: 'link_change', extra: { verified: true, via: 'work_notes' } };
+        }
+        var old = String(gr.getValue(linkField) || '');
+        var oldDisp = old ? String(gr[linkField].getDisplayValue()) : 'empty';
+        gr.setValue(linkField, chg.sys_id);
         gr.work_notes = 'Linked "caused by" to ' + chg.number + ' via Netra (suspect change: ' + chg.sentence + ') - authorised by ' + gs.getUserDisplayName() + '.';
         gr.update();
         var chk = new GlideRecord(inv.anchor.table || 'incident');
         chk.get(inv.anchor.sys_id);
-        var ok = String(chk.getValue('caused_by') || '') === String(chg.sys_id);
-        if (ok) _noteUndo({ kind: 'field', number: inv.anchor.number, table: inv.anchor.table || 'incident', field: 'caused_by', old: old, old_display: oldDisp });
+        var ok = String(chk.getValue(linkField) || '') === String(chg.sys_id);
+        if (ok) _noteUndo({ kind: 'field', number: inv.anchor.number, table: inv.anchor.table || 'incident', field: linkField, old: old, old_display: oldDisp });
         return { text: ok ? ('Linked - ' + _spkNum(inv.anchor.number) + ' now shows ' + _spkNum(chg.number) + ' as the cause. I read it back. Say "undo that" to unlink.')
                           : ('I set it but the link did not stick when I read it back - something on the platform put it back.'),
                  tool: 'link_change', extra: { verified: ok } };
@@ -2097,16 +2219,25 @@
     function _invWatchConfirmed() {
         var inv = _invFresh();
         if (!inv || !inv.anchor.sys_id) return { text: 'The investigation has gone stale - say "investigate" again first.' };
-        var sig = [], hyp = [];
+        var engine = new NetraInvestigator();
         var hs = inv.result.hypotheses;
+        var numbered = [];
         for (var i = 0; i < hs.length; i++) {
-            if (hs[i].signal && hs[i].signal.type && hs[i].signal.type !== 'none') {
-                sig.push({ n: i + 1, type: hs[i].signal.type, ref: hs[i].signal.ref || '', kw: (hs[i].signal.keywords || []).slice(0, 4) });
-            }
-            hyp.push({ n: i + 1, statement: String(hs[i].statement).substring(0, 160), keywords: (hs[i].signal && hs[i].signal.keywords || []).slice(0, 4) });
+            numbered.push({ n: i + 1, statement: hs[i].statement, signal: hs[i].signal || { type: 'none', keywords: [] } });
         }
+        // one entry per theory (type none included) with its statement, so
+        // the resolution grading can judge every theory, not just signalled ones
+        var sig = engine.watchSignals(numbered);
         var snap = {};
-        try { snap = new NetraInvestigator().snapshot(inv.anchor.kind === 'ticket' ? new NetraInvestigator().resolveAnchor(inv.anchor.number) : inv.anchor); } catch (eS) {}
+        try {
+            var anc = engine.resolveAnchor(inv.anchor.number);
+            // baseline must track the SAME refs the runner tracks, or the
+            // first pass reports a pre-existing change as "new"
+            var track0 = [];
+            for (var tr = 0; tr < sig.length; tr++) if (sig[tr].ref) track0.push(sig[tr].ref);
+            var sn0 = engine.snapshot(anc, { since_ms: 0, track: track0 });
+            if (sn0 && sn0.ok) snap = engine.compactSnapshot(sn0, null);
+        } catch (eS) {}
         var row = new GlideRecord(SCOPE + '_task');
         row.initialize();
         row.user = user;
@@ -2120,7 +2251,7 @@
         row.max_fires = 5;
         row.fire_count = 0;
         row.authorized_utterance = String(_cleanMsg(_currentUserMsg)).substring(0, 1000);
-        row.condition_json = JSON.stringify({ snap: snap, sig: sig, hyp: hyp }).substring(0, 3990);
+        row.condition_json = JSON.stringify({ snap: snap, sig: sig });
         row.action_params = '{}';
         row.action_log = '[]';
         var nowMs = new GlideDateTime().getNumericValue();
@@ -2137,12 +2268,13 @@
         return [
             // investigate
             function (lc, norm, contents) {
-                var m = lc.match(/^(?:please )?(?:investigate|diagnose|troubleshoot|root cause|look into|dig into|debug)(?: the)?(?: ticket| incident| server)? (.+)$/) ||
-                        lc.match(/^why is (.+?) (?:happening|broken|failing|down|slow|not working)$/) ||
-                        lc.match(/^what'?s (?:going on|happening|wrong) with (.+)$/) ||
-                        lc.match(/^(investigate) again$/);
+                var again = /^(?:investigate|check|dig|look) (?:it |this |that )?again$|^refresh (?:the )?investigation$/.test(lc);
+                var m = again ? ['', ''] :
+                        (lc.match(/^(?:please )?(?:investigate|diagnose|troubleshoot|root cause|look into|dig into|debug)(?: the)?(?: ticket| incident| server)? (.+)$/) ||
+                         lc.match(/^why is (.+?) (?:happening|broken|failing|down|slow|not working)$/) ||
+                         lc.match(/^what'?s (?:going on|happening|wrong) with (.+)$/));
                 if (!m) return null;
-                var target = m[1] === 'investigate' ? '' : m[1];
+                var target = m[1];
                 if (/^(it|this|that|this one)$/.test(target)) target = '';
                 if (!target) { var fi = _invFresh(); target = (fi && (fi.anchor.number || fi.anchor.ci_name)) || _focusNumber(); }
                 var nums = _findNums(norm);
@@ -2193,7 +2325,11 @@
                     var num = lm[1] ? String(lm[1]).toUpperCase() : (inv3.suspects[0] && inv3.suspects[0].number);
                     if (!num) return _flReply('There was no suspect change in that investigation to link.', contents, 'link_change');
                     _parkDraft('link_change', { number: num });
-                    return _flReply('I will set "caused by" on ' + _spkNum(inv3.anchor.number) + ' to ' + _spkNum(num) + ' - remember that is correlation, not proof. Shall I?', contents, 'link_change_draft');
+                    var lf = new GlideRecord(inv3.anchor.table || 'incident');
+                    var hasField = lf.isValidField('caused_by') || lf.isValidField('rfc');
+                    return _flReply((hasField ? 'I will set "caused by" on ' + _spkNum(inv3.anchor.number) + ' to ' + _spkNum(num)
+                                              : 'This instance has no "caused by" field, so I will cross-reference ' + _spkNum(inv3.anchor.number) + ' and ' + _spkNum(num) + ' with a work note on each') +
+                                    ' - remember that is correlation, not proof. Shall I?', contents, 'link_change_draft');
                 }
                 return null;
             }
@@ -2725,7 +2861,7 @@
 '- Never reveal API keys, internal sys_ids, or technical jargon to the user.\n' +
 '\n' +
 'R8.2 - TICKET NUMBER SPEECH (short-form first):\n' +
-'- FIRST MENTION of any record: speak the record type plus the LAST THREE digits only - "**incident ending 3 4 5**", "the change ending 0 1 2". Never read the full number unprompted.\n' +
+'- FIRST MENTION of any record: speak the record type plus the LAST THREE digits only - "**incident ending 3 4 5**", "the change ending 0 1 2". Never read the full number unprompted. Take the digits from the ticket NUMBER field, never from a sys_id.\n' +
 '- Speak the FULL number letter-by-digit ONLY when: the user asks ("full number", "complete number", "what is the whole number"), OR two records in play share the same last three digits (disambiguate once, then go back to short form).\n' +
 '- In follow-ups about the same record, prefer "it" / "that incident" / the short form.\n' +
 '\n' +
@@ -3764,8 +3900,8 @@
                     if (!mnt) return { ok: false, error: 'There is no mission.' };
                     if (mact === 'pause' || mact === 'resume' || mact === 'cancel') { var c2 = runner.control(mnt, user, mact); return { ok: c2.ok, final_speech: String(c2.message || c2.error) }; }
                     if (mact === 'report') { var r2 = runner.report(mnt, user, parseInt(args.page, 10) || 1); return { ok: r2.ok, final_speech: String(r2.message || r2.error) }; }
-                    if (mact === 'apply_request') { _parkDraft('mission_apply', { nt: mnt }); return { ok: true, final_speech: 'I will apply the confident routings from mission ' + parseInt(mnt, 10) + ', re-reading each one and skipping anything someone touched since. Shall I?' }; }
-                    if (mact === 'undo_request') { _parkDraft('mission_undo', { nt: mnt }); return { ok: true, final_speech: 'I will put back every ticket mission ' + parseInt(mnt, 10) + ' changed, except ones someone changed since. Shall I?' }; }
+                    if (mact === 'apply_request') { _parkDraft('mission_apply', { nt: mnt }); return { ok: true, final_speech: 'I will apply the confident routings from mission ' + _ntNum(mnt) + ', re-reading each one and skipping anything someone touched since. Shall I?' }; }
+                    if (mact === 'undo_request') { _parkDraft('mission_undo', { nt: mnt }); return { ok: true, final_speech: 'I will put back every ticket mission ' + _ntNum(mnt) + ' changed, except ones someone changed since. Shall I?' }; }
                     return { ok: false, error: 'Unknown mission action.' };
                 }
                 // ------- R17 plan / execute / verify -------
@@ -6317,10 +6453,28 @@
      * opts = { resolved:bool, openOnly:bool, limit:int, threshold:float,
      *          excludeSysId:string, table:string, days:int }
      */
+    // one engine for widget, scanner and missions: NetraSemantic loads only the
+    // vectors of the tickets it scanned and reports "could not read" honestly
+    // (assigned lazily: the router runs before module-level vars down here are set)
+    var _semEngine;
     function _semanticIncidents(query, opts) {
         opts = opts || {};
-        var table = opts.table || 'incident';
         if (!query) return { ok: false, error: 'Give me something to look for.' };
+        if (!_semEngine) _semEngine = { inst: null, failed: false };
+        if (!_semEngine.inst && !_semEngine.failed) {
+            try { _semEngine.inst = new NetraSemantic(); } catch (eSem) { _semEngine.failed = true; }
+        }
+        if (_semEngine.inst) {
+            var r = _semEngine.inst.semanticIncidents(query, opts);
+            // stats go to the model inside tool results; timings are noise there
+            if (r && r.stats) { delete r.stats.sources; delete r.stats.live_attempts; }
+            return r;
+        }
+        return _semanticIncidentsLocal(query, opts);
+    }
+
+    function _semanticIncidentsLocal(query, opts) {
+        var table = opts.table || 'incident';
         var qRes = _embedText(query, 'RETRIEVAL_QUERY');
         if (qRes.error) return { ok: false, error: qRes.error, embed_failed: true };
         var qVec = qRes.values;
@@ -6394,6 +6548,7 @@
             var m = r.matches[i];
             m.similarity = Number(m.score.toFixed(3));
             delete m.score;
+            m.resolved_when = _whenSpoken(m.resolved_at);
             if (m.close_notes) withFix.push(m); else noFix.push(m);
         }
         var all = withFix.concat(noFix);
@@ -6404,7 +6559,7 @@
         return {
             ok: true, count: all.length, matches: all, stats: r.stats,
             has_fixes: withFix.length,
-            message: 'Read the closest 1-2 out loud: what the old ticket was, and CRUCIALLY what the close notes say fixed it. Mention how long ago it was. Do not read the similarity numbers aloud.'
+            message: 'Read the closest 1-2 out loud: what the old ticket was, and CRUCIALLY what the close notes say fixed it. Say when it was resolved using resolved_when exactly as given - do not work dates out yourself. Do not read the similarity numbers aloud.'
         };
     }
 
@@ -6809,15 +6964,33 @@
         gr.setLimit(1);
         gr.query();
         if (!gr.next()) return { ok: false, error: 'No standing order ' + key + ' of yours.' };
+        if (String(gr.kind) === 'mission') {
+            var mc = new NetraMissionRunner().control(key, user, 'cancel');
+            return { ok: mc.ok, message: String(mc.message || mc.error) };
+        }
         if (String(gr.state) !== 'active') return { ok: true, message: key + ' was already ' + String(gr.state) + '.' };
         gr.state = 'cancelled';
         gr.update();
         return { ok: true, message: key + ' cancelled. It never fires again.' };
     }
 
+    function _ntKind(key) {
+        var gr = new GlideRecord(SCOPE + '_task');
+        gr.addQuery('user', user);
+        gr.addQuery('nt_number', key);
+        gr.setLimit(1);
+        gr.query();
+        return gr.next() ? String(gr.kind) : '';
+    }
+
     function _undoTaskAction(nt) {
         var key = 'NT' + String(nt || '').replace(/\D/g, '');
         while (key.length < 6) key = key.substring(0, 2) + '0' + key.substring(2);
+        // a mission's changes live on its item rows, not the header
+        if (_ntKind(key) === 'mission') {
+            var mu = new NetraMissionRunner().undo(key, user);
+            return { ok: mu.ok, restored: String(mu.message || ''), error: mu.error };
+        }
         return new NetraTaskRunner().undoTask(key, user);
     }
 

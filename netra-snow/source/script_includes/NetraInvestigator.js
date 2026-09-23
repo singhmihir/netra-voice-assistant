@@ -60,13 +60,17 @@ NetraInvestigator.prototype = {
         this.AUDIT_FIELDS = ['state', 'priority', 'assignment_group', 'assigned_to', 'cmdb_ci', 'category'];
         this.AUDIT_REF = { assignment_group: 'sys_user_group', assigned_to: 'sys_user', cmdb_ci: 'cmdb_ci' };
         this.INC_STATE = { '1': 'New', '2': 'In Progress', '3': 'On Hold', '6': 'Resolved', '7': 'Closed', '8': 'Canceled' };
+        this.PRB_STATE = { '101': 'New', '102': 'Assess', '103': 'Root Cause Analysis', '104': 'Fix in Progress',
+                           '106': 'Resolved', '107': 'Closed' };
         this.PRIORITY = { '1': '1 - Critical', '2': '2 - High', '3': '3 - Moderate', '4': '4 - Low', '5': '5 - Planning' };
         this.SIGNAL_TYPES = { change_backed_out: 1, sibling_resolved_with: 1, new_siblings: 1, ci_status_change: 1, none: 1 };
         this.ORD = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
         this.DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         this.MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         this.ROLLBACK_RE = /roll(?:ed|ing|s)?[\s\-]*back|revert|back(?:ed|ing)?[\s\-]*out|backout|\bund(?:o|id|one)\b/i;
-        this.REC_RE = /\b(INC|CHG|PRB|KB|RITM)\d+\b/gi;
+        // record numbers a theory may name. also catches the spaced form a model
+        // writes ("INC 0010013") - matches are compared with the space removed
+        this.REC_RE = /\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK|CTASK|PTASK)(?:\d+|\s\d{4,})\b/gi;
 
         // words that never discriminate between theories. kept on the
         // instance on purpose: NetraKnowledge already owns a global STOP_WORDS
@@ -205,15 +209,25 @@ NetraInvestigator.prototype = {
             out.push(s);
         };
         add(clean.join(' '));
+        // hostname-shaped single words first (a digit, dash, dot or
+        // underscore): a long sentence makes 40+ n-grams and the cap below
+        // must never cut the one token that is obviously the server
+        for (var h = 0; h < clean.length; h++) {
+            var hw = clean[h];
+            if (hw.length >= 3 && /[\d\-\._]/.test(hw) && /[A-Za-z]/.test(hw) && !/^[A-Za-z]{2,6}\d{5,}$/.test(hw) &&
+                !this.CI_STOP[hw.toLowerCase()]) add(hw);
+        }
         for (var n = Math.min(5, clean.length); n >= 1; n--) {
             for (var s = 0; s + n <= clean.length; s++) {
                 var first = clean[s].toLowerCase(), last = clean[s + n - 1].toLowerCase();
                 if (this.CI_STOP[first] || this.CI_STOP[last]) continue;
                 if (n === 1 && (first.length < 3 || /^[A-Za-z]{2,6}\d{5,}$/.test(first))) continue;
                 add(clean.slice(s, s + n).join(' '));
+                // speech gives "netra lab web01" for netra-lab-web01
+                if (n > 1) add(clean.slice(s, s + n).join('-'));
             }
         }
-        return out.slice(0, 40);
+        return out.slice(0, 60);
     },
 
     /**
@@ -221,7 +235,7 @@ NetraInvestigator.prototype = {
      * and including the anchor. no incidents -> the anchor time itself.
      */
     firstTicketMs: function (ciSysId, anchorOpenedMs) {
-        var anchor = (typeof anchorOpenedMs === 'number' && anchorOpenedMs > 0) ? anchorOpenedMs : this._nowMs();
+        var anchor = this._epoch(anchorOpenedMs) || this._nowMs();
         if (!ciSysId) return anchor;
         var lo = anchor - 24 * this.H, best = null;
         try {
@@ -265,7 +279,9 @@ NetraInvestigator.prototype = {
         var self = this;
         ciSysId = this._safeId(ciSysId);
         var nowMs = this._nowMs();
-        var t0 = (typeof t0Ms === 'number' && t0Ms > 0) ? t0Ms : nowMs;
+        // callers hand in getNumericValue() results - coerce, so a boxed Java
+        // long can't silently turn t0 into "now"
+        var t0 = this._epoch(t0Ms) || nowMs;
         var hours = Math.max(1, Math.min(168, parseInt(opts.hours, 10) || this.LOOKBACK_H));
         var afterH = (typeof opts.after_hours === 'number') ? opts.after_hours : this.AFTER_H;
         var top = parseInt(opts.top, 10) || this.TOP_SUSPECTS;
@@ -442,10 +458,17 @@ NetraInvestigator.prototype = {
         var nb = Math.max(0, (r.ci_set || []).length - 1);
         var scope = ci + (nb ? ' or the ' + this._num(nb) + ' thing' + (nb === 1 ? '' : 's') + ' it is linked to' : '');
         if (!r.suspects.length) {
-            if (gaps.length) return 'I found no changes on ' + scope + ', but I could not read the ' + this._list(gaps) +
-                                    ', so I cannot rule changes out.';
             var hrs = r.window_hours || this.LOOKBACK_H;
-            return 'Nothing changed on ' + scope + (r.ticket_count ? ' in the ' + hrs + ' hours before the first ticket.' : ' in the last ' + hrs + ' hours.');
+            var span = r.ticket_count ? ' in the ' + hrs + ' hours before the first ticket' : ' in the last ' + hrs + ' hours';
+            // changes that were found but scored under the cut are not "nothing"
+            var lead = r.candidates > 0 ?
+                'No change on ' + scope + ' lines up closely' + span + ' - the ' + this._num(r.candidates) +
+                ' I found were too far off in time or only loosely linked' : '';
+            if (gaps.length) {
+                return (lead ? lead + '. And ' : 'I found no changes on ' + scope + ', but ') + 'I could not read the ' +
+                       this._list(gaps) + ', so I cannot rule changes out.';
+            }
+            return lead ? lead + '.' : 'Nothing changed on ' + scope + span + '.';
         }
         var s0 = r.suspects[0];
         var out = 'I found ' + this._num(r.suspects.length) + ' change' + (r.suspects.length === 1 ? '' : 's') +
@@ -724,14 +747,16 @@ NetraInvestigator.prototype = {
                 f.active = active;
                 f.mod_count = parseInt(this._str(coreRec, 'sys_mod_count'), 10) || 0;
                 f.reassignments = parseInt(this._str(coreRec, 'reassignment_count'), 10) || 0;
-                f.unassigned_hours = (!assignee && active && opened) ? Math.floor((nowMs - opened) / this.H) : 0;
+                // the raw value decides "unassigned": an unreadable user record
+                // has an empty display value but is still an assignee
+                f.unassigned_hours = (!this._str(coreRec, 'assigned_to') && active && opened) ? Math.floor((nowMs - opened) / this.H) : 0;
                 f.awaiting_caller = (anchor.table === 'incident' && this._str(coreRec, 'state') === '3' &&
                                      this._str(coreRec, 'hold_reason') === '1');
                 f.problem_id = coreRec.isValidField('problem_id') ? this._str(coreRec, 'problem_id') : '';
                 var txt = anchor.number + " '" + anchor.short_description + "'" + (opened ? ', opened ' + this._when(opened, nowMs) : '') +
                           ', ' + (f.state || 'state unknown') +
                           ', priority ' + (this._dv(coreRec, 'priority') || '?') +
-                          ', ' + (assignee ? 'assigned to ' + assignee : 'unassigned') + (group ? ' (' + group + ')' : '') +
+                          ', ' + (this._str(coreRec, 'assigned_to') ? 'assigned to ' + (assignee || 'someone') : 'unassigned') + (group ? ' (' + group + ')' : '') +
                           (ciName ? ', CI ' + ciName : ', no CI set') +
                           (f.awaiting_caller ? ', on hold awaiting caller' : '');
                 core = add(1, 0, 'ticket', anchor.number, opened, txt, 'medium', { sys_id: anchor.sys_id });
@@ -823,7 +848,9 @@ NetraInvestigator.prototype = {
                 g.addQuery('sys_class_name', 'incident');
                 g.addQuery('cmdb_ci', ciId);
                 g.addQuery('active', true);
-                g.orderBy('opened_at');
+                // newest 30: on a noisy shared CI the oldest 30 are months-old
+                // strays and the cluster around t0 would be cut off
+                g.orderByDesc('opened_at');
                 g.setLimit(30);
                 g.query();
                 var anchorIn = false;
@@ -835,6 +862,7 @@ NetraInvestigator.prototype = {
                                       short_description: self._cut(self._str(g, 'short_description'), 80),
                                       opened_ms: self._ms(g, 'opened_at') });
                 }
+                f.siblings.reverse();   // oldest first from here on
                 // cluster = tickets on the CI opened inside [t0, t0+2h], the
                 // anchor included - same "3 on one CI" bar the scanner uses
                 var cl = (anchorIn && anchor.opened_ms !== null && anchor.opened_ms <= t0 + 2 * self.H) ? 1 : 0, nums = [];
@@ -868,8 +896,11 @@ NetraInvestigator.prototype = {
                     if (seen[sid]) return;
                     seen[sid] = 1;
                     src.rows++;
+                    // g is a TASK row: its display value would come from task's
+                    // choice list (3 = "Closed Complete"), not problem's - map it
+                    // ourselves and say nothing when we don't know the value
                     var p = { number: self._str(g, 'number'), sys_id: sid, short_description: self._cut(self._str(g, 'short_description'), 100),
-                              state: self._dv(g, 'state'), linked: linked };
+                              state: self.PRB_STATE[self._str(g, 'state')] || '', linked: linked };
                     var t = p.number + " '" + p.short_description + "' " + (linked ? 'is linked to ' + anchor.number : 'is open on ' + ciName) +
                             (p.state ? ' (' + p.state + ')' : '');
                     p.item = add(4, 3, 'problem', p.number, self._ms(g, 'opened_at'), t, linked ? 'strong' : 'medium', { sys_id: sid });
@@ -978,11 +1009,25 @@ NetraInvestigator.prototype = {
                 }
                 src.rows = rows.length;
                 if (!rows.length) {
+                    // zero rows for the six fields. first ask whether ANY audit
+                    // row is visible for this record (comments and other fields
+                    // are audited too) - if so the read works and the ticket
+                    // simply never had those fields changed
+                    var any = new GlideRecord('sys_audit');
+                    any.addQuery('tablename', anchor.table);
+                    any.addQuery('documentkey', anchor.sys_id);
+                    any.setLimit(1);
+                    any.query();
+                    if (any.next()) { src.note = 'no changes to state, priority, assignment, CI or category'; return; }
                     // a record touched twice or more with zero audit rows is a
-                    // read we were refused, not a quiet ticket
+                    // read we were refused, not a quiet ticket; a table where
+                    // no row at all is visible is refused too
                     if ((f.mod_count || 0) >= 2) {
                         src.status = 'blocked';
                         src.note = 'the ticket was updated ' + f.mod_count + ' times but no audit rows came back';
+                    } else if (!self._canSeeAny('sys_audit')) {
+                        src.status = 'blocked';
+                        src.note = "couldn't read sys_audit (no rows visible at all - privilege missing?)";
                     }
                     return;
                 }
@@ -1073,8 +1118,13 @@ NetraInvestigator.prototype = {
         }
 
         d.thin = this._isThin(d);
+        // weight + text too: a CI going non-operational or a change closing
+        // unsuccessful changes no ref or timestamp, and the 2h cache must not
+        // replay theories built on the old state
         var fp = [anchor.sys_id, String(t0)];
-        for (var fi = 0; fi < d.items.length; fi++) fp.push(d.items[fi].kind + '|' + d.items[fi].ref + '|' + d.items[fi].at_ms);
+        for (var fi = 0; fi < d.items.length; fi++) {
+            fp.push(d.items[fi].kind + '|' + d.items[fi].ref + '|' + d.items[fi].at_ms + '|' + d.items[fi].weight + '|' + d.items[fi].text);
+        }
         d.fingerprint = this._hash(fp.join(';'));
         d.elapsed_ms = this._clock() - start;
         return d;
@@ -1100,8 +1150,9 @@ NetraInvestigator.prototype = {
             // similarity is a lookalike, never proof - it tops out at medium
             w = (score !== null && score >= 0.85) ? 'medium' : 'weak';
         }
+        // callers pass 0 for "no date" - that would print as 1970
         var it = { id: 'E' + (max + 1), kind: String(item.kind || 'note'), ref: String(item.ref || ''),
-                   at_ms: (typeof item.at_ms === 'number') ? item.at_ms : null,
+                   at_ms: (typeof item.at_ms === 'number' && item.at_ms > 0) ? item.at_ms : null,
                    text: this._cut(String(item.text || ''), 200), weight: w };
         if (score !== null) it.score = Math.round(score * 1000) / 1000;
         if (item.close_notes) it.close_notes = this._cut(String(item.close_notes), 300);
@@ -1125,13 +1176,17 @@ NetraInvestigator.prototype = {
 
     _isThin: function (d) {
         // substantive = anything beyond the ticket's own description, the
-        // CI's static record and keyword KB hits
+        // CI's static record and keyword KB hits. a similar-resolved
+        // lookalike only counts at the recurrence bar (0.75+ with a fix
+        // recorded) - top-2 embedding matches always exist, so a low one
+        // would otherwise turn every empty ticket into "evidence"
         var items = d.items || [];
         for (var i = 0; i < items.length; i++) {
             var k = items[i].kind;
             if (k === 'ticket' || k === 'kb') continue;
             if (k === 'ci' && items[i].weight !== 'strong') continue;
             if (k === 'neighbour' && !items[i].ref) continue;
+            if (k === 'similar' && !(typeof items[i].score === 'number' && items[i].score >= 0.75 && items[i].close_notes)) continue;
             return false;
         }
         // a process story needs no CI - an ignored ticket is evidence too
@@ -1260,7 +1315,7 @@ NetraInvestigator.prototype = {
 
         // CI not operational / in maintenance
         if (f.ci && f.ci.not_operational && f.ci.item) {
-            var lbl = (f.ci.op === '2' || f.ci.op === '3' || f.ci.op === '6') ? f.ci.op_label : f.ci.install_label;
+            var lbl = ((f.ci.op === '2' || f.ci.op === '3' || f.ci.op === '6') ? f.ci.op_label : f.ci.install_label) || 'not operational';
             H.push({
                 rule: 'ci_status',
                 statement: ci + ' is marked ' + lbl + ' in the CMDB, so this may be planned or known work on it rather than a new fault.',
@@ -1275,7 +1330,8 @@ NetraInvestigator.prototype = {
         // process: unassigned 4h+, 3+ reassignments, or waiting on the caller
         if (f.core_item) {
             var why = [];
-            if (f.unassigned_hours >= 4) why.push('it has been unassigned for ' + f.unassigned_hours + ' hours');
+            // measured from when it was opened - we don't know it was never assigned
+            if (f.unassigned_hours >= 4) why.push('it is still unassigned ' + f.unassigned_hours + ' hours after it was opened');
             if (f.reassignments >= 3) why.push('it has been reassigned ' + f.reassignments + ' times');
             if (f.awaiting_caller) why.push('it is on hold waiting for the caller');
             if (why.length) {
@@ -1335,7 +1391,11 @@ NetraInvestigator.prototype = {
         for (var i = 0; hyps && i < hyps.length && out.length < 3; i++) {
             var h = hyps[i] || {};
             var st = this._cut(String(h.statement || ''), 300);
-            var cites = (h.cites && h.cites.length) ? h.cites : [];
+            var cites = (typeof h.cites === 'string') ? h.cites.split(/[\s,;]+/) :
+                        ((h.cites && typeof h.cites.length === 'number') ? h.cites : []);
+            var nonEmpty = [];
+            for (var ce = 0; ce < cites.length; ce++) { if (String(cites[ce] || '').replace(/\s+/g, '')) nonEmpty.push(cites[ce]); }
+            cites = nonEmpty;
             if (!st) { dropped.push({ statement: '', why: 'empty statement' }); continue; }
             if (!cites.length) { dropped.push({ statement: st, why: 'no cites' }); continue; }
             var bad = '';
@@ -1350,13 +1410,20 @@ NetraInvestigator.prototype = {
             var m, unknown = '';
             var re = new RegExp(this.REC_RE.source, 'gi');
             while ((m = re.exec(txt)) !== null) {
-                if (!known[m[0].toUpperCase()]) { unknown = m[0].toUpperCase(); break; }
+                var rn = m[0].toUpperCase().replace(/\s+/g, '');
+                if (!known[rn]) { unknown = rn; break; }
             }
             if (unknown) { dropped.push({ statement: st, why: 'names ' + unknown + ', which is not in the evidence' }); continue; }
-            var sig = h.signal || {};
-            var type = this.SIGNAL_TYPES[sig.type] ? sig.type : 'none';
+            var sig = (h.signal && typeof h.signal === 'object') ? h.signal : {};
+            var type = this._sigType(sig.type);
+            // the watch re-reads and reports on signal.ref - it must be a record
+            // from the evidence too, or the signal is dropped (the theory stays)
+            var sref = String(sig.ref || '');
+            var rm = sref.match(new RegExp(this.REC_RE.source, 'i'));
+            if (rm && !known[rm[0].toUpperCase().replace(/\s+/g, '')]) { type = 'none'; sref = ''; }
+            if (type === 'none' && sig.type !== 'none') sref = '';
             var kws = [];
-            for (var k = 0; sig.keywords && k < sig.keywords.length && kws.length < 4; k++) {
+            for (var k = 0; sig.keywords && typeof sig.keywords !== 'string' && k < sig.keywords.length && kws.length < 4; k++) {
                 var kw = String(sig.keywords[k] || '').toLowerCase().replace(/^\s+|\s+$/g, '').substring(0, 30);
                 if (kw && kws.indexOf(kw) < 0) kws.push(kw);
             }
@@ -1366,7 +1433,7 @@ NetraInvestigator.prototype = {
                 cites: clean,
                 confirm_by: this._cut(String(h.confirm_by || ''), 200),
                 rule_out_by: this._cut(String(h.rule_out_by || ''), 200),
-                signal: { type: type, ref: this._cut(String(sig.ref || ''), 40), keywords: kws }
+                signal: { type: type, ref: this._cut(sref, 40), keywords: kws }
             });
         }
         return { hypotheses: out, dropped: dropped };
@@ -1377,22 +1444,29 @@ NetraInvestigator.prototype = {
         var out = [];
         for (var i = 0; hypotheses && i < hypotheses.length && out.length < 3; i++) {
             var h = hypotheses[i];
-            if (!h || !h.signal || !this.SIGNAL_TYPES[h.signal.type]) continue;
+            if (!h) continue;
+            // a malformed signal is dropped, the THEORY is not: it is stored
+            // as type none so the resolution grading can still judge it
+            var sg = (h.signal && typeof h.signal === 'object') ? h.signal : {};
+            var type = this._sigType(sg.type);
+            var valid = type === sg.type;
             var kw = [];
-            for (var k = 0; h.signal.keywords && k < h.signal.keywords.length && kw.length < 4; k++) {
-                if (typeof h.signal.keywords[k] === 'string' && h.signal.keywords[k]) kw.push(h.signal.keywords[k].substring(0, 30));
+            var kws = (valid && sg.keywords && typeof sg.keywords.length === 'number') ? sg.keywords : [];
+            for (var k = 0; k < kws.length && kw.length < 4; k++) {
+                if (typeof kws[k] === 'string' && kws[k]) kw.push(kws[k].substring(0, 30));
             }
-            out.push({ n: h.n || (i + 1), type: h.signal.type, ref: String(h.signal.ref || '').substring(0, 40), kw: kw,
+            out.push({ n: h.n || (i + 1), type: type, ref: valid ? String(sg.ref || '').substring(0, 40) : '', kw: kw,
                        s: this._cut(String(h.statement || ''), 120) });
         }
         return out;
     },
 
     _knownRefs: function (d) {
+        var self = this;
         var known = {};
         var grab = function (s) {
-            var m, re = /\b(INC|CHG|PRB|KB|RITM)\d+\b/gi;
-            while ((m = re.exec(String(s || ''))) !== null) known[m[0].toUpperCase()] = 1;
+            var m, re = new RegExp(self.REC_RE.source, 'gi');
+            while ((m = re.exec(String(s || ''))) !== null) known[m[0].toUpperCase().replace(/\s+/g, '')] = 1;
         };
         if (!d) return known;
         if (d.anchor) grab(d.anchor.number);
@@ -1403,6 +1477,12 @@ NetraInvestigator.prototype = {
         }
         for (var s = 0; d.suspects && s < d.suspects.length; s++) grab(d.suspects[s].number);
         return known;
+    },
+
+    // own-property check: a model-supplied type like "constructor" must not
+    // pass as a signal type through Object.prototype
+    _sigType: function (t) {
+        return (typeof t === 'string' && this.SIGNAL_TYPES.hasOwnProperty(t)) ? t : 'none';
     },
 
     _itemById: function (d, id) {
@@ -1522,12 +1602,17 @@ NetraInvestigator.prototype = {
 
         tryPart('chg', function () {
             var chg = [], seen = {};
-            var take = function (g) {
+            // f (fresh) = touched since the last pass. a TRACKED change is
+            // re-read every pass whatever its age, so "not in the old snapshot"
+            // alone must never make it news. c = created since the last pass
+            var take = function (g, fresh) {
                 var n = self._str(g, 'number');
-                if (seen[n] || chg.length >= 8) return;
+                if (seen[n]) { if (fresh) snap.x.chg[n].f = true; return; }
+                if (chg.length >= 8) return;
                 seen[n] = 1;
+                var cm = self._ms(g, 'sys_created_on');
                 chg.push({ n: n, s: self._dv(g, 'state') || self._str(g, 'state'), cc: self._str(g, 'close_code') });
-                snap.x.chg[n] = { d: self._cut(self._str(g, 'short_description'), 60) };
+                snap.x.chg[n] = { d: self._cut(self._str(g, 'short_description'), 60), f: !!fresh, c: cm !== null && cm >= since };
             };
             var track = [];
             for (var i = 0; opts.track && i < opts.track.length; i++) {
@@ -1538,7 +1623,10 @@ NetraInvestigator.prototype = {
                 a.addQuery('number', 'IN', track.join(','));
                 a.setLimit(8);
                 a.query();
-                while (a.next()) take(a);
+                while (a.next()) {
+                    var um = self._ms(a, 'sys_updated_on');
+                    take(a, um !== null && um >= since);
+                }
             }
             if (setIds.length) {
                 var b = new GlideRecord('change_request');
@@ -1547,7 +1635,7 @@ NetraInvestigator.prototype = {
                 b.orderByDesc('sys_updated_on');
                 b.setLimit(8);
                 b.query();
-                while (b.next()) take(b);
+                while (b.next()) take(b, true);
             }
             snap.chg = chg;
         });
@@ -1583,6 +1671,17 @@ NetraInvestigator.prototype = {
             for (var i = 0; i < o.res.length; i++) { if (merged.indexOf(o.res[i]) < 0) merged.push(o.res[i]); }
             out.res = merged.slice(0, 20);
         }
+        // chg too: a pass only re-reads changes touched since the last one, so
+        // replacing the list would forget the quiet ones and the next touch
+        // would announce an old change as new. same CI only - a new CI is a
+        // new baseline
+        if (out.chg && o.chg && (!o.ci || !out.ci || o.ci === out.ci)) {
+            var mc = out.chg.slice(0);
+            for (var j = 0; j < o.chg.length && mc.length < 8; j++) {
+                if (!this._findChg(mc, o.chg[j].n)) mc.push(o.chg[j]);
+            }
+            out.chg = mc;
+        }
         return out;
     },
 
@@ -1592,6 +1691,12 @@ NetraInvestigator.prototype = {
         if (!oldSnap || !newSnap) return facts;
         var ci = newSnap.ci_n || oldSnap.ci_n || 'the same ' + (newSnap.ci_k || 'CI');
         var x = newSnap.x || { sib: {}, res: {}, chg: {} };
+        if (this._ciSwitched(oldSnap, newSnap)) {
+            // someone changed the ticket's CI: everything on the new one would
+            // look "new". say what happened; the next pass diffs the new CI
+            facts.push((newSnap.num || 'the ticket') + "'s configuration item was changed" +
+                       (newSnap.ci ? ' to ' + (newSnap.ci_n || 'another CI') : ' (it is now empty)'));
+        }
 
         var added = this._newSiblings(oldSnap, newSnap);
         if (added.length) {
@@ -1607,12 +1712,15 @@ NetraInvestigator.prototype = {
             var cn = x.res[resolved[r]];
             facts.push(resolved[r] + ' on ' + ci + ' was resolved' + (cn ? ": '" + this._cut(cn, 120) + "'" : ', with no close notes'));
         }
-        if (oldSnap.chg && newSnap.chg) {
+        if (oldSnap.chg && newSnap.chg && !this._ciSwitched(oldSnap, newSnap)) {
             for (var c = 0; c < newSnap.chg.length; c++) {
                 var nc = newSnap.chg[c], oc = this._findChg(oldSnap.chg, nc.n);
-                var desc = x.chg[nc.n] && x.chg[nc.n].d;
+                var xc = (x.chg && x.chg[nc.n]) || {};
+                var desc = xc.d;
                 if (!oc) {
-                    facts.push('a new change touches ' + ci + ': ' + nc.n + (desc ? " '" + desc + "'" : '') + (nc.s ? ' (' + nc.s + ')' : ''));
+                    if (xc.f === false) continue;   // tracked but untouched: baseline, not news
+                    facts.push((xc.c === false ? 'a change on ' + ci + ' was updated: ' : 'a new change touches ' + ci + ': ') +
+                               nc.n + (desc ? " '" + desc + "'" : '') + (nc.s ? ' (' + nc.s + ')' : ''));
                 } else if (oc.cc !== nc.cc && nc.cc) {
                     facts.push('the change ' + nc.n + ' was ' + (this.CLOSE_LABEL[nc.cc] || 'closed ' + nc.cc));
                 } else if (oc.s !== nc.s) {
@@ -1620,7 +1728,7 @@ NetraInvestigator.prototype = {
                 }
             }
         }
-        if (oldSnap.ci_st && newSnap.ci_st && oldSnap.ci_st !== newSnap.ci_st) {
+        if (oldSnap.ci_st && newSnap.ci_st && oldSnap.ci_st !== newSnap.ci_st && !this._ciSwitched(oldSnap, newSnap)) {
             facts.push(ci + ' is now ' + newSnap.ci_st + ' (it was ' + oldSnap.ci_st + ')');
         }
         if (oldSnap.st && newSnap.st && oldSnap.st !== newSnap.st) {
@@ -1647,6 +1755,7 @@ NetraInvestigator.prototype = {
         var ci = newSnap.ci_n || 'the same ' + noun;
         var added = this._newSiblings(oldSnap, newSnap);
         var resolved = this._newResolved(oldSnap, newSnap);
+        var switched = this._ciSwitched(oldSnap, newSnap);
         for (var i = 0; i < signals.length && i < 3; i++) {
             var sg = signals[i] || {};
             var n = parseInt(sg.n, 10) || (i + 1);
@@ -1659,19 +1768,27 @@ NetraInvestigator.prototype = {
             if (sg.type === 'change_backed_out') {
                 var nc = ref ? this._findChg(newSnap.chg, ref) : null;
                 var oc = ref ? this._findChg(oldSnap.chg, ref) : null;
-                if (nc && nc.cc === 'unsuccessful' && (!oc || oc.cc !== 'unsuccessful')) {
+                var ncx = (nc && x.chg && x.chg[nc.n]) || {};
+                // closed unsuccessful is only news if we saw it otherwise, or it
+                // was touched since the last pass (not an old closure we just met)
+                if (nc && nc.cc === 'unsuccessful' && (oc ? oc.cc !== 'unsuccessful' : ncx.f !== false)) {
                     text = 'the change ' + ref + ' was closed unsuccessful' + tail;
                 }
-                for (k = 0; !text && newSnap.chg && k < newSnap.chg.length; k++) {
+                for (k = 0; !text && !switched && newSnap.chg && k < newSnap.chg.length; k++) {
                     var c2 = newSnap.chg[k];
-                    var d2 = (x.chg[c2.n] && x.chg[c2.n].d) || '';
-                    if (!this._findChg(oldSnap.chg, c2.n) && this.ROLLBACK_RE.test(d2)) {
+                    var c2x = (x.chg && x.chg[c2.n]) || {};
+                    var d2 = c2x.d || '';
+                    if (!this._findChg(oldSnap.chg, c2.n) && c2x.f !== false && this.ROLLBACK_RE.test(d2)) {
                         text = "a new change on " + ci + ", " + c2.n + " '" + d2 + "', looks like a rollback" + tail;
                     }
                 }
+                // every rollback note contains "rollback" once canonicalised, so
+                // that keyword alone can't tie a note to THIS change
+                var kwNoRb = {};
+                for (var kk in kw) { if (kw.hasOwnProperty(kk) && kk !== 'rollback') kwNoRb[kk] = 1; }
                 for (k = 0; !text && k < resolved.length; k++) {
                     cn = x.res[resolved[k]] || '';
-                    if (this.ROLLBACK_RE.test(cn) && ((ref && cn.toUpperCase().indexOf(ref) >= 0) || this._hits(kw, cn) >= 1)) {
+                    if (this.ROLLBACK_RE.test(cn) && ((ref && cn.toUpperCase().indexOf(ref) >= 0) || this._hits(kwNoRb, cn) >= 1)) {
                         text = 'a ticket on the same ' + noun + ', ' + resolved[k] + ", was resolved with '" + this._cut(cn, 120) + "'" + tail;
                     }
                 }
@@ -1688,7 +1805,7 @@ NetraInvestigator.prototype = {
                            ' since my last look' + tail;
                 }
             } else if (sg.type === 'ci_status_change') {
-                if (oldSnap.ci_st && newSnap.ci_st && oldSnap.ci_st !== newSnap.ci_st && !/^operational$/i.test(newSnap.ci_st)) {
+                if (!switched && oldSnap.ci_st && newSnap.ci_st && oldSnap.ci_st !== newSnap.ci_st && !/^operational$/i.test(newSnap.ci_st)) {
                     text = ci + ' is now ' + newSnap.ci_st + tail;
                 }
             }
@@ -1750,9 +1867,15 @@ NetraInvestigator.prototype = {
                  text: "that matches my theory " + this._num(n) + ". The close notes say '" + snippet + "'." };
     },
 
+    // the snapshot's CI changed between passes (someone set or fixed it)
+    _ciSwitched: function (o, nw) {
+        if (!o || !nw || o.ci === undefined || nw.ci === undefined) return false;
+        return String(o.ci || '') !== String(nw.ci || '');
+    },
+
     _newSiblings: function (o, nw) {
         var out = [];
-        if (!o || !nw || !o.sib || !nw.sib) return out;
+        if (!o || !nw || !o.sib || !nw.sib || this._ciSwitched(o, nw)) return out;
         for (var i = 0; i < nw.sib.length; i++) {
             if (o.sib.indexOf(nw.sib[i]) < 0 && (!o.res || o.res.indexOf(nw.sib[i]) < 0)) out.push(nw.sib[i]);
         }
@@ -1761,7 +1884,7 @@ NetraInvestigator.prototype = {
 
     _newResolved: function (o, nw) {
         var out = [];
-        if (!o || !nw || !o.res || !nw.res) return out;
+        if (!o || !nw || !o.res || !nw.res || this._ciSwitched(o, nw)) return out;
         for (var i = 0; i < nw.res.length; i++) { if (o.res.indexOf(nw.res[i]) < 0) out.push(nw.res[i]); }
         return out;
     },
@@ -1775,7 +1898,9 @@ NetraInvestigator.prototype = {
         var sv = this._str(t, 'state');
         if (tbl === 'incident' && (sv === '6' || sv === '7' || sv === '8')) return true;
         if (tbl === 'problem' && (sv === '106' || sv === '107')) return true;
-        return !this._bool(t, 'active');
+        var a = this._str(t, 'active');
+        if (a === '') return false;   // no active field (a CI) - never "done"
+        return !(a === '1' || a === 'true');
     },
 
     // =================================================================
@@ -1985,12 +2110,22 @@ NetraInvestigator.prototype = {
 
     _nowMs: function () { return Number(new GlideDateTime().getNumericValue()); },
 
+    // epoch ms from a number, numeric string or boxed long; 0 when unusable
+    _epoch: function (v) {
+        if (v === null || v === undefined || v === '') return 0;
+        var n = Number(v);
+        return (isFinite(n) && n > 0) ? n : 0;
+    },
+
     _clock: function () { return new Date().getTime(); },
 
+    // query value for a date comparison: the UTC internal string
+    // ("yyyy-MM-dd HH:mm:ss"), which addQuery reads as internal time. passing
+    // the scoped GlideDateTime object itself leaves the conversion to Rhino
     _gdt: function (ms) {
         var g = new GlideDateTime();
         g.setNumericValue(ms);
-        return g;
+        return String(g.getValue());
     },
 
     _tzOffset: function (ms) {

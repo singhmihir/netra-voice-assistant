@@ -60,6 +60,7 @@ NetraMissionRunner.prototype = {
         this.PAGE_SIZE = 5;
         this.FIX_THRESHOLD = 0.75;      // stricter than find_similar_resolved's 0.62: we quote the fix
         this.APPLY_SHARE = 0.5;         // category/priority only written with a majority behind them
+        this.MIN_VOTERS = 3;            // lookalikes WITH a group needed before a routing counts as confident
         this.MIN_WAIT_MS = 20000;
         this.EMBED_TROUBLE_WAIT_MS = 2 * 60 * 1000;
         this.WRITES_OFF_RECHECK_MS = 5 * 60 * 1000;
@@ -144,7 +145,12 @@ NetraMissionRunner.prototype = {
             caps: { max_items: this.MAX_ITEMS, per_pass: this.PER_PASS, apply_per_pass: this.APPLY_PER_PASS,
                     live_embeds_per_item: this.LIVE_EMBEDS_PER_ITEM },
             counts: counts, phase: 'review', wait: null,
-            lease_until_ms: 0, lease_owner: '', started_ms: now, passes: 0, queue_total: q.total
+            // born holding its own lease: the header is 'running' the moment
+            // it is inserted, and a scanner pass landing mid-way through the
+            // item inserts would otherwise see 3 items, review them, and flip
+            // the mission to done while items 4..50 are still being written
+            lease_until_ms: now + this.HEADER_LEASE_MS, lease_owner: 'launch',
+            started_ms: now, passes: 0, queue_total: q.total
         };
         h.condition_json = JSON.stringify(cond);
         h.action_log = '[]';
@@ -174,9 +180,8 @@ NetraMissionRunner.prototype = {
             this._failMission(hid, 'could not write any mission items (is the ' + this.ITEM + ' table installed?)', null);
             return { ok: false, nt_number: nt, items: 0, error: 'I could not write the mission items, so the mission stopped before it started.' };
         }
-        if (made !== q.rows.length) {
-            this._commit(hid, null, function (fresh, c) { c.counts.total = made; c.counts.queued = made; });
-        }
+        // always: this also releases the launch lease so the scanner can start
+        this._commit(hid, 'launch', function (fresh, c) { c.counts = c.counts || {}; c.counts.total = made; c.counts.queued = made; });
         var eta = this.etaMinutes(made);
         return { ok: true, nt_number: nt, items: made, eta_minutes: eta,
                  message: this._missionName(nt) + ' is running: ' + this._plural(made, 'incident') +
@@ -439,7 +444,14 @@ NetraMissionRunner.prototype = {
         }
         if (off.length) {
             var why = off.join(' and ') + ' did not read back as restored';
-            if (it) { fnd.undo_error = why; it.findings_json = this._fit(fnd, 4000); it.update(); }
+            if (it) {
+                fnd.undo_error = why;
+                it.findings_json = this._fit(fnd, 4000);
+                // our own undo write bumped sys_mod_count: re-baseline, or a
+                // retry would blame "someone changed it after me" for our edit
+                if (chk) { u.mod_after = this._int(chk.getValue('sys_mod_count')); it.undo_json = this._fit(u, 1000); }
+                it.update();
+            }
             return why;
         }
         if (it) {
@@ -488,7 +500,9 @@ NetraMissionRunner.prototype = {
             var im = this._get(this.TASK, idle[j]);
             if (!im) continue;
             var exp = this._ms(im, 'expires_at');
-            if (!exp || exp > now) break;   // sorted by expiry: the rest are later
+            // empty expiry sorts FIRST ascending - skip it, dont let it end the loop
+            if (!exp) continue;
+            if (exp > now) break;   // sorted by expiry: the rest are later
             try { this._expire(im, out); } catch (eX) { gs.warn('[NetraMission] expiry failed: ' + (eX.message || eX)); }
         }
         if (out.missions) {
@@ -676,17 +690,26 @@ NetraMissionRunner.prototype = {
         if (!it || String(it.state) !== 'reviewed') return { status: 'noop' };
         var f = this._parse(it.getValue('findings_json')) || {};
         var p = f.proposal || {};
+        // fresh read: only an unreverted confident proposal is ever written
+        if (!p.confident || f.undone) return { status: 'noop' };
         var table = String(it.target_table || this.QUEUE_TABLE), sysId = String(it.target_sys_id);
         var tk = this._ticket(table, sysId);
         if (tk.blocked) return { status: 'noop', fatal: tk.blocked };
         var t = tk.gr;
         if (!t) return this._applySkip(it, f, 'the ticket no longer exists');
         var cur = this._int(t.getValue('sys_mod_count'));
+        var atReview = this._int(it.getValue('mod_count_at_review'));
 
         // a previous pass died between the ticket write and the bookkeeping:
         // if our group is on the ticket, that was us - finish the paperwork
         var pend = this._parse(it.getValue('undo_json'));
         if (pend && pend.pending && pend.set && String(t.getValue('assignment_group') || '') === pend.set.assignment_group) {
+            if (cur !== atReview + 1) {
+                // our write is ONE update. anything more means a person (or a
+                // rule) also touched it - cant tell our change from theirs, so
+                // no undo record that could later stomp their edit
+                return this._applyError(it, f, 'a scan stopped mid-write and the ticket shows more changes than my one write, so I cannot tell my change from anyone else\'s - check it yourself', null);
+            }
             delete pend.pending;
             pend.mod_after = cur;
             pend.recovered = true;
@@ -697,7 +720,7 @@ NetraMissionRunner.prototype = {
             it.update();
             return { status: 'applied' };
         }
-        if (cur !== this._int(it.getValue('mod_count_at_review'))) return this._applySkip(it, f, 'someone changed it after my review');
+        if (cur !== atReview) return this._applySkip(it, f, 'someone changed it after my review');
         if (!this._isTrue(t.getValue('active'))) return this._applySkip(it, f, 'it was closed after my review');
 
         var gid = String(p.group_id || '');
@@ -746,13 +769,30 @@ NetraMissionRunner.prototype = {
             } else if (!this.writesEnabled()) {
                 notes.push('priority held: ticket writes were switched off');
             } else {
+                var PF = ['priority', 'impact', 'urgency'];
+                var pBefore = {};
+                for (var pb = 0; pb < PF.length; pb++) if (chk.isValidField(PF[pb])) pBefore[PF[pb]] = String(chk.getValue(PF[pb]) || '');
                 var pr = new NetraTaskRunner().setPriority(chk, String(p.priority));
+                var pc = this._get(table, sysId);
                 if (pr.ok) {
-                    for (var k in pr.before) if (pr.before.hasOwnProperty(k)) undo.restore[k] = pr.before[k];
+                    for (var k in pr.before) {
+                        if (!pr.before.hasOwnProperty(k)) continue;
+                        undo.restore[k] = pr.before[k];
+                        if (pc) undo.set[k] = String(pc.getValue(k) || '');
+                    }
                     undo.set.priority = String(p.priority);
                     prioDone = String(p.priority);
                 } else {
-                    notes.push('priority not changed: ' + pr.why);
+                    // setPriority can give up AFTER moving impact/urgency (the
+                    // matrix route) and returns no before-values then. whatever
+                    // moved is still our write, so it must stay undoable
+                    var moved = [];
+                    for (var pk in pBefore) {
+                        if (!pBefore.hasOwnProperty(pk) || !pc) continue;
+                        var nowV = String(pc.getValue(pk) || '');
+                        if (nowV !== pBefore[pk]) { undo.restore[pk] = pBefore[pk]; undo.set[pk] = nowV; moved.push(pk); }
+                    }
+                    notes.push('priority not changed: ' + pr.why + (moved.length ? ' (' + moved.join(' and ') + ' did move - undo puts ' + (moved.length === 1 ? 'it' : 'them') + ' back)' : ''));
                 }
             }
         }
@@ -770,8 +810,17 @@ NetraMissionRunner.prototype = {
         undo.mod_after = fin ? this._int(fin.getValue('sys_mod_count')) : 0;
         var finalG = fin ? String(fin.getValue('assignment_group') || '') : '';
         if (finalG !== gid) {
+            // someone (or a rule) re-routed it right after us. restoring the
+            // group now would stomp THEIR choice - never fight a person. keep
+            // only restores for fields that still hold exactly what we set
+            var keep = {}, kept = 0;
+            for (var rf in undo.restore) {
+                if (!undo.restore.hasOwnProperty(rf) || rf === 'assignment_group' || !fin) continue;
+                if (undo.set.hasOwnProperty(rf) && String(fin.getValue(rf) || '') === String(undo.set[rf])) { keep[rf] = undo.restore[rf]; kept++; }
+            }
+            undo.restore = keep;
             return this._applyError(it, f, 'the group changed again right after my write (now ' +
-                                    (finalG && fin ? String(fin.assignment_group.getDisplayValue()) : 'empty') + ')', undo);
+                                    (finalG && fin ? String(fin.assignment_group.getDisplayValue()) : 'empty') + '), so I left the group alone', kept ? undo : null);
         }
         f.applied = { at_ms: this._now(), group: p.group, category: catDone ? p.category : '', priority: prioDone,
                       verified: true, notes: notes };
@@ -911,6 +960,15 @@ NetraMissionRunner.prototype = {
         // a 429 on a doc embed mid-search leaves thin results - redo the item later
         if (st.rate_limited) return { why: 'embedding quota hit mid-search (HTTP 429)', wait: this._quotaWait(st.rate_limited.retry_ms, st.rate_limited.quota_kind) };
         if (st.fatal) return { why: String(st.fatal), fatal: true };
+        // a blind search must not be stored as "nothing similar in the
+        // history": an unreadable vector cache stops the mission (config),
+        // a failed read is retried like any other transient error
+        var vc = st.sources && st.sources.vector_cache;
+        if (vc && vc.status === 'blocked') return { why: 'the embedding cache is not readable (' + (vc.error || 'blocked') + ')', fatal: true };
+        if (vc && vc.status === 'error') {
+            return { why: 'embedding cache read failed: ' + String(vc.error || 'error'),
+                     wait: { reason: 'embedding cache', until_ms: this._now() + this.EMBED_TROUBLE_WAIT_MS } };
+        }
         return null;
     },
 
@@ -932,12 +990,15 @@ NetraMissionRunner.prototype = {
     },
 
     _degraded: function (results) {
-        var bits = [];
+        var bits = [], failedEmbeds = 0, skipped = 0;
         for (var i = 0; i < results.length; i++) {
-            var src = results[i] && results[i].stats && results[i].stats.sources;
-            var vc = src && src.vector_cache;
-            if (vc && (vc.status === 'blocked' || vc.status === 'error')) { bits.push('vector cache ' + vc.status); break; }
+            var st = (results[i] && results[i].stats) || {};
+            failedEmbeds += st.embed_errors || 0;
+            skipped += st.skipped_uncached || 0;
         }
+        // uncached lookalikes past the live-embed budget were never scored
+        if (failedEmbeds) bits.push(this._plural(failedEmbeds, 'lookalike embed') + ' failed');
+        if (skipped) bits.push(skipped + ' uncached tickets not scored');
         return bits.join(', ');
     },
 
@@ -1051,8 +1112,13 @@ NetraMissionRunner.prototype = {
         } else if (tri && tri.evidence) {
             for (var e = 0; e < tri.evidence.length && e < 3; e++) p.evidence.push(tri.evidence[e].number);
         }
-        // no sys_id for the group = nothing we could safely write
-        p.confident = !!(tri && tri.confident && p.group_id);
+        // no sys_id for the group = nothing we could safely write. and
+        // "confident" here authorises a WRITE: triage's own flag counts
+        // unassigned lookalikes (often this very queue) toward its 3-match
+        // minimum, so one assigned ticket could route a whole batch. require
+        // three lookalikes that actually carry a group
+        p.voters = (tri && typeof tri.voters === 'number') ? tri.voters : 0;
+        p.confident = !!(tri && tri.confident && p.group_id && p.voters >= this.MIN_VOTERS);
         f.proposal = p;
 
         var dups = (dup && dup.duplicates) || [];
@@ -1091,7 +1157,12 @@ NetraMissionRunner.prototype = {
             s += ' Evidence: similar tickets ' + this._list(p.evidence) + ' were handled by ' + p.group + '.';
         }
         if (f.duplicate_of) s += ' Possible duplicate of ' + f.duplicate_of.number + ' - reported only, nothing merged.';
-        if (f.known_fix) s += ' ' + f.known_fix.number + ' looked like this and was fixed by: ' + String(f.known_fix.close_notes).substring(0, 200);
+        // quote the lookalike's close notes as ITS resolution - never as the
+        // cause or the fix of this ticket
+        if (f.known_fix) {
+            var cn = String(f.known_fix.close_notes).substring(0, 200).replace(/\s+$/, '');
+            s += ' Similar resolved ticket ' + f.known_fix.number + ' was closed with the note: "' + cn + '".';
+        }
         s += ' To reverse, say "undo mission ' + this._digits(ntNum) + '" in Netra.';
         return s;
     },
@@ -1116,7 +1187,8 @@ NetraMissionRunner.prototype = {
         var s;
         if (state === 'running') {
             s = name + ': ' + processed + ' of ' + total + ' reviewed; ' + this._findingsPhrase(c) + '.';
-            if (c.skipped) s += ' ' + c.skipped + ' skipped because someone already picked ' + (c.skipped === 1 ? 'it' : 'them') + ' up.';
+            // skips are not all pickups: closed, deleted and blank tickets too
+            if (c.skipped) s += ' ' + c.skipped + ' skipped - picked up, closed or gone before I got to ' + (c.skipped === 1 ? 'it' : 'them') + '.';
             if (c.error) s += ' ' + c.error + ' I could not review.';
         } else if (state === 'awaiting_apply') {
             s = name + ' finished reviewing all ' + total + ': ' + this._findingsPhrase(c) +
@@ -1153,7 +1225,7 @@ NetraMissionRunner.prototype = {
     reviewDoneMessage: function (nt, c) {
         var name = this._missionName(nt);
         var s = name + ' finished reviewing ' + this._plural(c.total || 0, 'unassigned incident') + ': ' + this._findingsPhrase(c) +
-                (c.skipped ? ', ' + c.skipped + ' skipped because someone picked ' + (c.skipped === 1 ? 'it' : 'them') + ' up' : '') +
+                (c.skipped ? ', ' + c.skipped + ' skipped - picked up, closed or gone before I got to ' + (c.skipped === 1 ? 'it' : 'them') : '') +
                 (c.error ? ', ' + c.error + ' I could not review' : '') + '.';
         if (c.confident_pending) s += ' Nothing has changed yet. Say read the mission report, or apply the confident ones.';
         else s += ' Nothing is confident enough to apply, so it is done. Say read the mission report to hear the proposals.';
@@ -1177,17 +1249,20 @@ NetraMissionRunner.prototype = {
         if (item.state === 'applied' && item.applied) {
             s = head + ': routed to ' + item.applied.group + ', checked and it stuck.';
         } else if (!p.group) {
-            s = head + ': nothing similar in the history, so no routing guess.';
+            s = head + (p.sample_size
+                ? ': the lookalikes I found were never assigned to a group, so no routing guess.'
+                : ': nothing similar in the history, so no routing guess.');
         } else if (p.confident) {
             s = head + ': send to ' + p.group + (p.category && p.category_share >= this.APPLY_SHARE ? ', category ' + p.category : '') +
                 (p.evidence && p.evidence.length ? ', like ' + this._list(p.evidence) : '') + '.';
         } else {
-            s = head + ': best guess ' + p.group + ', but the lookalikes are split, so I would not route it blind.';
+            // not confident = split votes OR too few lookalikes with a group
+            s = head + ': best guess ' + p.group + ', but the history behind it is too thin or too split to route it blind.';
         }
         if (item.undone) s += ' I routed it, then put it back when you said undo.';
         if (item.state === 'error' && item.error) s += ' Applying it failed: ' + item.error + '.';
         if (item.duplicate_of) s += ' Looks like a duplicate of ' + item.duplicate_of.number + '.';
-        if (item.known_fix) s += ' ' + item.known_fix.number + ' was fixed by: ' + String(item.known_fix.close_notes).substring(0, 160);
+        if (item.known_fix) s += ' A similar resolved one, ' + item.known_fix.number + ', was closed with: ' + String(item.known_fix.close_notes).substring(0, 160);
         return s;
     },
 
@@ -1400,6 +1475,7 @@ NetraMissionRunner.prototype = {
     _ntKey: function (nt) {
         var d = String(nt || '').replace(/\D/g, '');
         if (!d) return '';
+        d = String(parseInt(d, 10));   // "00014" -> "14", or NT00014 never matches NT0014
         var key = 'NT' + d;
         while (key.length < 6) key = key.substring(0, 2) + '0' + key.substring(2);
         return key;
@@ -1499,11 +1575,15 @@ NetraMissionRunner.prototype = {
 
     _log: function (task, what, extra) {
         var log = this._readLog(task);
-        var entry = { at: new GlideDateTime().toString(), at_ms: new GlideDateTime().getNumericValue(), what: what };
+        var entry = { at: new GlideDateTime().toString(), at_ms: new GlideDateTime().getNumericValue(), what: String(what).substring(0, 300) };
         if (extra) { for (var k in extra) { if (extra.hasOwnProperty(k)) entry[k] = extra[k]; } }
         log.push(entry);
         if (log.length > 40) log = log.slice(-40);
-        task.action_log = JSON.stringify(log);
+        // action_log is an 8000-char column: 40 long entries overflow it, the
+        // DB cuts the JSON mid-object and the next _readLog wipes the history
+        var s = JSON.stringify(log);
+        while (s.length > 7800 && log.length > 1) { log.shift(); s = JSON.stringify(log); }
+        task.action_log = s;
     },
 
     _notifyUser: function (userSysId, ticketNumber, message) {

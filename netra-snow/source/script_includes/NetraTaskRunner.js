@@ -105,12 +105,9 @@ NetraTaskRunner.prototype = {
 
         var closed = String(t.state) === '6' || String(t.state) === '7' || String(t.active) === 'false';
         if (closed) {
-            var g = inv.grade(cond.hyp || [], String(t.close_notes || ''));
-            var ORD = ['', 'one', 'two', 'three'];
-            var verdict;
-            if (g.outcome === 'matched') verdict = num + ' is resolved, and the close notes match my theory ' + (ORD[g.n] || g.n) + ': "' + g.snippet + '".';
-            else if (g.outcome === 'missed') verdict = num + ' is resolved, and it does not match any of my theories - I got this one wrong. The fix was: "' + g.snippet + '".';
-            else verdict = num + ' is resolved, but the close notes are too thin for me to tell whether my theories were right.';
+            // the CI name is in every theory, so it can never tell them apart
+            var g = inv.grade(cond.sig || [], String(t.close_notes || ''), { exclude: [String(anchor.ci_name || '')] });
+            var verdict = num + ' is resolved, and ' + g.text;
             task.state = 'fired';
             this._log(task, 'graded: ' + g.outcome + (g.n ? ' (theory ' + g.n + ')' : ''), { outcome: g.outcome, theory: g.n || 0 });
             task.update();
@@ -118,23 +115,31 @@ NetraTaskRunner.prototype = {
             return true;
         }
 
-        var snapNew = inv.snapshot(anchor);
         var snapOld = cond.snap || {};
+        var track = [];
+        for (var tk = 0; cond.sig && tk < cond.sig.length; tk++) if (cond.sig[tk].ref) track.push(cond.sig[tk].ref);
+        var snapNew = inv.snapshot(anchor, { since_ms: snapOld.at || 0, track: track });
+        if (!snapNew || !snapNew.ok) {
+            if (snapNew && snapNew.gone) { this._fail(task, 'the ticket I was watching is gone'); return false; }
+            this._rearm(task, 30);   // a flaky read is not news - try again next time
+            task.update();
+            return false;
+        }
         var said = [];
         var facts = inv.diffSnapshot(snapOld, snapNew) || [];
         for (var i = 0; i < facts.length && said.length < 4; i++) said.push(facts[i]);
         var sigs = inv.checkSignals(cond.sig || [], snapOld, snapNew) || [];
-        var ORD2 = ['', 'one', 'two', 'three'];
         for (var s = 0; s < sigs.length; s++) {
-            if (sigs[s].supported) said.push(sigs[s].text + ' - that supports my theory ' + (ORD2[sigs[s].n] || sigs[s].n));
+            if (sigs[s].supported) said.push(sigs[s].text);   // already ends "...supports my theory one"
         }
-        cond.snap = snapNew;
+        var compact = inv.compactSnapshot(snapNew, snapOld);
+        cond.snap = compact;
         var ser = JSON.stringify(cond);
         // condition_json is a 4000-char column - trim the snapshot lists, never the theories
-        while (ser.length > 3900 && snapNew) {
-            if (snapNew.sib && snapNew.sib.length > 3) snapNew.sib = snapNew.sib.slice(-3);
-            else if (snapNew.res && snapNew.res.length > 3) snapNew.res = snapNew.res.slice(-3);
-            else if (snapNew.chg && snapNew.chg.length > 3) snapNew.chg = snapNew.chg.slice(-3);
+        while (ser.length > 3900) {
+            if (compact.sib && compact.sib.length > 3) compact.sib = compact.sib.slice(-3);
+            else if (compact.res && compact.res.length > 3) compact.res = compact.res.slice(-3);
+            else if (compact.chg && compact.chg.length > 3) compact.chg = compact.chg.slice(-3);
             else break;
             ser = JSON.stringify(cond);
         }
