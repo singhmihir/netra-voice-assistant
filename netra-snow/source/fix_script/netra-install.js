@@ -425,6 +425,7 @@
     upsertScriptInclude('NetraInvestigator',  scopeSysId, scope, 'Evidence-first investigation: change correlation, dossier, rule theories, watch snapshots. No LLM.', SRC.NetraInvestigator);
     upsertScriptInclude('NetraSemantic',      scopeSysId, scope, 'Embedding engine for background jobs: similar resolved, triage votes, duplicates.', SRC.NetraSemantic);
     upsertScriptInclude('NetraMissionRunner', scopeSysId, scope, 'Background missions (triage the unassigned queue) with leases, apply and undo. No generate calls.', SRC.NetraMissionRunner);
+    upsertScriptInclude('NetraSelfCheck', scopeSysId, scope, 'Netra checks her own tools: key, tables, cross-scope reads, scanner heartbeat, overdue orders, quota, memory, errors. No generate calls, no writes.', SRC.NetraSelfCheck);
 
     /* ---- Business Rule ---- */
     say('');
@@ -492,7 +493,7 @@
         'sys_data_policy_rule': ['read'], 'sys_ui_policy': ['read'], 'sys_ui_policy_action': ['read'],
         'sys_db_object': ['read'], 'sys_app': ['read'], 'sys_script_include': ['read'],
         'sys_script': ['read'], 'sysauto_script': ['read'], 'sys_ws_definition': ['read'],
-        'sys_ws_operation': ['read'], 'sp_widget': ['read'],
+        'sys_ws_operation': ['read'], 'sp_widget': ['read'], 'syslog': ['read'],
         'sys_cs_message': ['read'], 'sys_cs_session': ['read'], 'sys_cs_session_member': ['read'],
         'cmdb_ci_appl': ['read'], 'sys_choice': ['read'], 'sc_cat_item': ['read'],
         'incident': ['read', 'write', 'create'],

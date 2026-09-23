@@ -31,6 +31,8 @@ function unitVec(seed) {
 function install(P, queue) {
     var log = { generate: [], embed: 0, models: [] };
     P.HTTP = function (req) {
+        // the free model list (key check) - never counts as a generate call
+        if (/\/v1beta\/models\?/.test(req.endpoint)) { log.listed = (log.listed || 0) + 1; return http(log.listStatus || 200, { models: [{ name: 'models/gemini-2.5-flash' }] }); }
         var m = /models\/([^:]+):(generateContent|embedContent|batchEmbedContents)/.exec(req.endpoint);
         if (!m) return http(404, { error: 'unknown endpoint ' + req.endpoint });
         if (m[2] !== 'generateContent') {

@@ -1,0 +1,267 @@
+/**
+ * NetraSelfCheck - Netra checks her own tools, the way a dedicated engineer
+ * checks theirs before relying on them.
+ *
+ * "Run a self check" / "are you working properly": every dependency Netra
+ * needs is tested for real - the Gemini key (against Google's free model
+ * list, never a generate call), her own tables, the cross-scope reads the
+ * investigator and missions depend on, the background scanner's heartbeat,
+ * overdue standing orders, the kill switches, the quota ledger, the
+ * semantic-memory coverage and recent errors in the log. Each finding says
+ * what is wrong AND how to fix it, in one spoken sentence.
+ *
+ * Zero generate calls. Nothing is written.
+ */
+var NetraSelfCheck = Class.create();
+
+NetraSelfCheck.prototype = {
+    initialize: function (userSysId, opts) {
+        this.SCOPE = 'x_196061_netra_v1';
+        this.user = userSysId || gs.getUserID();
+        this.opts = opts || {};
+        this.now = new GlideDateTime().getNumericValue();
+        // the job runs every 3 minutes; 15 minutes of silence means it stopped
+        this.SCANNER_STALE_MS = 15 * 60000;
+        this.ORDER_OVERDUE_MS = 20 * 60000;
+    },
+
+    /** run every check; returns { ok, checks: [...], problems, warnings, fine, ms } */
+    run: function () {
+        var t0 = new Date().getTime();
+        var checks = [];
+        var self = this;
+        var list = ['_key', '_switches', '_brain', '_ownTables', '_reads', '_scanner', '_orders', '_semantic', '_errors'];
+        for (var i = 0; i < list.length; i++) {
+            try {
+                var r = self[list[i]]();
+                if (r) checks = checks.concat(r);
+            } catch (e) {
+                checks.push({ key: list[i].substring(1), level: 'warning', say: 'my ' + list[i].substring(1) + ' check itself failed (' + String(e.message || e).substring(0, 80) + ')', fix: '' });
+            }
+        }
+        var problems = 0, warnings = 0, fine = 0;
+        for (var c = 0; c < checks.length; c++) {
+            if (checks[c].level === 'problem') problems++;
+            else if (checks[c].level === 'warning') warnings++;
+            else fine++;
+        }
+        return { ok: true, checks: checks, problems: problems, warnings: warnings, fine: fine, ms: new Date().getTime() - t0 };
+    },
+
+    /** one spoken paragraph: problems first, then warnings, never a wall of text */
+    sentence: function (res) {
+        var bad = [], warn = [];
+        for (var i = 0; i < res.checks.length; i++) {
+            var c = res.checks[i];
+            var line = c.say + (c.fix ? ' - ' + c.fix : '');
+            if (c.level === 'problem') bad.push(line);
+            else if (c.level === 'warning') warn.push(line);
+        }
+        var total = res.checks.length;
+        if (!bad.length && !warn.length) return 'Self-check done: all ' + total + ' checks are fine. My tools, my background work and my memory are all in order.';
+        var out = 'Self-check done: ' + res.fine + ' of ' + total + ' checks are fine. ';
+        if (bad.length) out += (bad.length === 1 ? 'One problem: ' : bad.length + ' problems. ') + bad.slice(0, 3).join('. ') + '. ';
+        if (warn.length) out += (warn.length === 1 ? 'One thing to watch: ' : warn.length + ' things to watch: ') + warn.slice(0, 3).join('. ') + '.';
+        if (bad.length > 3 || warn.length > 3) out += ' The Lab panel has the full list.';
+        return out.replace(/\.\./g, '.').replace(/\s+$/, '');
+    },
+
+    // ---- individual checks ------------------------------------------------
+
+    _key: function () {
+        var key = gs.getProperty(this.SCOPE + '.gemini_api_key');
+        if (!key) return [{ key: 'gemini_key', level: 'problem', say: 'my Gemini key is not set, so I am in basic mode',
+                            fix: 'an admin can set it in the ' + this.SCOPE + '.gemini_api_key property' }];
+        if (this.opts.probeKey === false) return [{ key: 'gemini_key', level: 'ok', say: 'my Gemini key is set' }];
+        // the model list is free - it never touches the 20-a-day generate quota
+        var code = 0;
+        try {
+            var rm = new sn_ws.RESTMessageV2();
+            rm.setEndpoint('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=' + encodeURIComponent(key));
+            rm.setHttpMethod('get');
+            rm.setHttpTimeout(8000);
+            code = rm.execute().getStatusCode();
+        } catch (e) { code = 0; }
+        if (code === 200) return [{ key: 'gemini_key', level: 'ok', say: 'Google accepts my Gemini key' }];
+        if (code === 400 || code === 401 || code === 403) {
+            return [{ key: 'gemini_key', level: 'problem', say: 'Google rejected my Gemini key (HTTP ' + code + ')',
+                      fix: 'it may have been revoked; an admin can put a new one in the ' + this.SCOPE + '.gemini_api_key property' }];
+        }
+        return [{ key: 'gemini_key', level: 'warning', say: 'I could not reach Google to test my key' + (code ? ' (HTTP ' + code + ')' : ''),
+                  fix: 'if this keeps happening, check the instance can reach generativelanguage.googleapis.com' }];
+    },
+
+    _switches: function () {
+        var out = [];
+        if (String(gs.getProperty(this.SCOPE + '.ticket_writes', 'true')) === 'false') {
+            out.push({ key: 'ticket_writes', level: 'warning', say: 'ticket writes are switched off, so I can read but not change tickets',
+                       fix: 'set ' + this.SCOPE + '.ticket_writes to true when you want them back' });
+        }
+        if (String(gs.getProperty(this.SCOPE + '.brain_offline', 'false')) === 'true') {
+            out.push({ key: 'brain_offline', level: 'warning', say: 'basic mode is forced on, so my reasoning is switched off',
+                       fix: 'set ' + this.SCOPE + '.brain_offline to false to turn it back on' });
+        }
+        if (!out.length) out.push({ key: 'switches', level: 'ok', say: 'writes are on and reasoning is not forced off' });
+        return out;
+    },
+
+    _brain: function () {
+        var brain = new NetraBrain();
+        var chain = String(gs.getProperty(this.SCOPE + '.model_chain', 'gemini-2.5-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3-flash-preview')).split(',');
+        for (var c = 0; c < chain.length; c++) chain[c] = chain[c].replace(/^\s+|\s+$/g, '');
+        var pick = brain.pickChain(chain, this.now);
+        if (!pick.tryList.length) {
+            var mins = pick.all_resting_until_ms ? Math.max(1, Math.round((pick.all_resting_until_ms - this.now) / 60000)) : 0;
+            return [{ key: 'quota', level: 'warning', say: 'all ' + chain.length + ' of my reasoning models are out of quota right now' + (mins ? ', the first is back in about ' + (mins >= 90 ? Math.round(mins / 60) + ' hours' : mins + ' minutes') : ''),
+                      fix: 'I keep working in basic mode until then' }];
+        }
+        return [{ key: 'quota', level: 'ok', say: pick.tryList.length + ' of ' + chain.length + ' reasoning models are available' }];
+    },
+
+    _ownTables: function () {
+        var names = ['context', 'user_pref', 'notification', 'watchlist', 'kb_embedding', 'task', 'brain', 'mission_item'];
+        var missing = [];
+        for (var i = 0; i < names.length; i++) {
+            var gr = new GlideRecord(this.SCOPE + '_' + names[i]);
+            if (!gr.isValid()) missing.push(names[i].replace(/_/g, ' '));
+        }
+        if (missing.length) {
+            return [{ key: 'own_tables', level: 'problem', say: 'my own ' + (missing.length === 1 ? 'table for ' : 'tables for ') + missing.join(', ') + (missing.length === 1 ? ' is' : ' are') + ' missing',
+                      fix: 'running the Netra Install fix script again recreates them' }];
+        }
+        return [{ key: 'own_tables', level: 'ok', say: 'all ' + names.length + ' of my tables are there' }];
+    },
+
+    _reads: function () {
+        // what the investigator, missions and approvals read across scopes
+        var want = [['incident', 'tickets'], ['change_request', 'change requests'], ['cmdb_ci', 'configuration items'],
+                    ['cmdb_rel_ci', 'CI relationships'], ['task_ci', 'affected CIs'], ['sys_journal_field', 'work notes'],
+                    ['sys_audit', 'the audit trail'], ['sysapproval_approver', 'approvals']];
+        var blocked = [];
+        for (var i = 0; i < want.length; i++) {
+            var gr = new GlideRecord(want[i][0]);
+            if (!gr.isValid()) { blocked.push(want[i][1]); continue; }
+            gr.setLimit(1);
+            gr.query();
+            if (!gr.next()) blocked.push(want[i][1]);
+        }
+        if (blocked.length) {
+            return [{ key: 'reads', level: 'warning', say: 'I can not see any ' + blocked.join(', ') + (blocked.length === 1 ? '' : ''),
+                      fix: 'if those tables have data, a cross-scope read privilege for Netra is missing - running Netra Install again restores them' }];
+        }
+        return [{ key: 'reads', level: 'ok', say: 'I can read all ' + want.length + ' tables my investigations use' }];
+    },
+
+    _scanner: function () {
+        var job = new GlideRecord('sysauto_script');
+        var jobFound = false, jobActive = false;
+        if (job.isValid()) {
+            job.addQuery('name', 'Netra Watch');
+            job.setLimit(1);
+            job.query();
+            if (job.next()) { jobFound = true; jobActive = String(job.getValue('active')) === 'true' || String(job.getValue('active')) === '1'; }
+        }
+        if (jobFound && !jobActive) {
+            return [{ key: 'scanner', level: 'problem', say: 'my background scanner is switched off, so standing orders, missions and alerts are not running',
+                      fix: 'activate the Netra Watch scheduled job' }];
+        }
+        var pref = new GlideRecord(this.SCOPE + '_user_pref');
+        pref.addQuery('user', this.user);
+        pref.setLimit(1);
+        pref.query();
+        var last = 0;
+        if (pref.next() && pref.getValue('last_scan_time')) last = new GlideDateTime(pref.getValue('last_scan_time')).getNumericValue();
+        if (!last) {
+            return [{ key: 'scanner', level: 'warning', say: 'I have no record of my background scanner running for you yet',
+                      fix: jobFound ? 'give it a few minutes; if this stays, run the Netra Watch job once by hand' : 'the Netra Watch scheduled job is missing - running Netra Install again creates it' }];
+        }
+        var age = this.now - last;
+        if (age > this.SCANNER_STALE_MS) {
+            return [{ key: 'scanner', level: 'problem', say: 'my background scanner last ran ' + this._ago(age) + ', so nothing is being watched right now',
+                      fix: 'check the Netra Watch scheduled job is active and not erroring' }];
+        }
+        return [{ key: 'scanner', level: 'ok', say: 'my background scanner ran ' + this._ago(age) }];
+    },
+
+    _orders: function () {
+        var gr = new GlideRecord(this.SCOPE + '_task');
+        if (!gr.isValid()) return [];
+        gr.addQuery('user', this.user);
+        gr.addQuery('state', 'active');
+        gr.query();
+        var active = 0, overdue = 0;
+        while (gr.next()) {
+            active++;
+            var due = gr.getValue('next_check_at') ? new GlideDateTime(gr.getValue('next_check_at')).getNumericValue() : 0;
+            if (due && this.now - due > this.ORDER_OVERDUE_MS) overdue++;
+        }
+        if (overdue) {
+            return [{ key: 'orders', level: 'problem', say: overdue + ' of your ' + active + ' standing order' + (active === 1 ? ' is' : 's are') + ' overdue for a check',
+                      fix: 'that means the background scanner is not getting to them - check the Netra Watch job' }];
+        }
+        return [{ key: 'orders', level: 'ok', say: active ? (active + ' standing order' + (active === 1 ? ' is' : 's are') + ' active and on schedule') : 'no standing orders are waiting' }];
+    },
+
+    _semantic: function () {
+        var inc = new GlideAggregate('incident');
+        inc.addAggregate('COUNT');
+        inc.query();
+        var total = inc.next() ? (parseInt(inc.getAggregate('COUNT'), 10) || 0) : 0;
+        if (!total) return [{ key: 'semantic', level: 'ok', say: 'there are no incidents to remember yet' }];
+        var vec = new GlideAggregate(this.SCOPE + '_kb_embedding');
+        vec.addQuery('source_table', 'incident');
+        vec.addAggregate('COUNT');
+        vec.query();
+        var have = vec.next() ? (parseInt(vec.getAggregate('COUNT'), 10) || 0) : 0;
+        var target = Math.min(total, 400);   // searches scan the newest 400
+        var pct = Math.round(100 * Math.min(have, target) / target);
+        if (pct < 30) {
+            return [{ key: 'semantic', level: 'warning', say: 'my memory of past tickets covers only ' + pct + ' percent of recent incidents, so "has this happened before" will miss things',
+                      fix: 'say "reindex my tickets" a few times to fill it in' }];
+        }
+        return [{ key: 'semantic', level: 'ok', say: 'my memory of past tickets covers ' + pct + ' percent of recent incidents' }];
+    },
+
+    _errors: function () {
+        var log = new GlideRecord('syslog');
+        // a log I cannot read must not be reported as "no errors"
+        var probe = new GlideRecord('syslog');
+        var readable = probe.isValid();
+        if (readable) { probe.setLimit(1); probe.query(); readable = probe.next(); }
+        if (!readable) {
+            return [{ key: 'errors', level: 'warning', say: 'I can not read the system log, so I can not tell you about recent errors',
+                      fix: 'a cross-scope read privilege on syslog for Netra restores that - running Netra Install again adds it' }];
+        }
+        log.addQuery('level', '2');   // error
+        log.addQuery('message', 'STARTSWITH', '[Netra');
+        log.addQuery('sys_created_on', '>=', new GlideDateTime(this._iso(this.now - 24 * 3600000)).getValue());
+        log.orderByDesc('sys_created_on');
+        log.setLimit(50);
+        log.query();
+        var n = 0, latest = '';
+        while (log.next()) { n++; if (!latest) latest = String(log.getValue('message') || '').replace(/\s+/g, ' ').substring(0, 90); }
+        if (n) {
+            return [{ key: 'errors', level: 'warning', say: (n >= 50 ? 'at least 50' : n) + ' Netra error' + (n === 1 ? '' : 's') + ' in the log in the last day, the latest: ' + latest,
+                      fix: 'the system log has the details' }];
+        }
+        return [{ key: 'errors', level: 'ok', say: 'no Netra errors in the log in the last day' }];
+    },
+
+    // ---- helpers ------------------------------------------------------------
+    _ago: function (ms) {
+        var m = Math.round(ms / 60000);
+        if (m < 1) return 'just now';
+        if (m < 90) return m + ' minute' + (m === 1 ? '' : 's') + ' ago';
+        var h = Math.round(m / 60);
+        if (h < 36) return 'about ' + h + ' hours ago';
+        return Math.round(h / 24) + ' days ago';
+    },
+
+    _iso: function (ms) {
+        var g = new GlideDateTime();
+        g.setNumericValue(ms);
+        return g.getValue();
+    },
+
+    type: 'NetraSelfCheck'
+};
