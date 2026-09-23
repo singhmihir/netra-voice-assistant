@@ -119,7 +119,7 @@ T.test('validator: figures and record numbers must come from the evidence', func
 });
 
 T.test('pronoun targets', function () {
-    ['it', 'this', 'that incident', 'the ticket', 'this broke', 'that one', 'my ticket'].forEach(function (x) { T.eq(f._invTarget(x), '', x); });
+    ['it', 'this', 'This', 'IT', 'that incident', 'The Ticket', 'this broke', 'that one', 'my ticket'].forEach(function (x) { T.eq(f._invTarget(x), '', x); });
     T.eq(f._invTarget('netra-lab-web01 went down'), 'netra-lab-web01');
     T.eq(f._invTarget('INC0010013'), 'INC0010013');
 });

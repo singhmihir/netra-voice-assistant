@@ -138,6 +138,9 @@ NetraBrain.prototype = {
             r.day_key = today;
             r.used_today = 0;
             r.fails_today = 0;
+            // re-learned from the day's first per-day 429; clearing it heals
+            // rows that once stored a per-minute value as a daily cap
+            r.quota_limit = 0;
             if (r.reason === 'per_day' || r.reason === 'limit') { r.state = 'ok'; r.until_ms = 0; r.reason = ''; }
             // only persist a rollover for rows that exist - just LOOKING at a
             // model we never called shouldnt insert anything

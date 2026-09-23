@@ -91,5 +91,14 @@ eq('all resting -> soonest until', b3.pickChain(['gemini-z'], now).all_resting_u
   const q2 = NetraBrain.parse429(both);
   eq('mixed violations -> per_day wins', [q2.kind, q2.limit], ['per_day', 20]);
 })();
+(function () {
+  var b = new NetraBrain(); b.rows = {};
+  var d1 = Date.UTC(2026, 8, 23, 20, 0);
+  b.recordOk('gemini-heal', 500, d1);
+  b.rows['gemini-heal'].quota_limit = 5;   // a per-minute value stored by an older build
+  var d2 = Date.UTC(2026, 8, 24, 20, 0);   // next Pacific day
+  for (var i = 0; i < 6; i++) b.recordOk('gemini-heal', 500, d2);
+  eq('stale daily cap cleared at rollover', b.pickChain(['gemini-heal'], d2).tryList, ['gemini-heal']);
+})();
 console.log(fails ? ('\n' + fails + ' FAILED') : '\nALL PASS');
 process.exit(fails ? 1 : 0);

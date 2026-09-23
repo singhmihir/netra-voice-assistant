@@ -151,4 +151,66 @@ T.test('ambiguous names ask instead of guessing', function () {
     T.eq(s.inc('INC0010017').assignment_group, 'g_net', 'an exact name wins over "Network CAB Managers"');
 });
 
+T.test('the model re-filing the same draft in one turn is still one draft, and is kept', function () {
+    var s = new S.Session();
+    var order = { kind: 'watch_ticket', ticket_number: 'INC0010015', no_movement_hours: 2, action: 'escalate_priority', priority: '2', authorized_utterance: 'x' };
+    var retry = JSON.parse(JSON.stringify(order)); retry.confirm = true;
+    s.model(gem.call('create_standing_order', order), gem.call('create_standing_order', retry), gem.text('Shall I?'));
+    var r = s.say('watch 15 and escalate if nothing moves');
+    T.notMatch(r.message, /more than one change/);
+    T.ok(s.blob().pendingOrder, 'kept');
+    T.match(s.say('yes').message, /task 1 is armed/);
+});
+
+T.test('a draft parked in an earlier round is never hidden behind a terminal tool answer', function () {
+    var s = new S.Session();
+    s.model(gem.call('make_plan', { steps: [{ tool: 'assign_ticket_to_group', args: { ticket_number: 'INC0010014', group_name: 'Database' } }] }),
+            gem.call('suspect_changes', { target: 'INC0010014' }),
+            gem.text('No changes found. Also, the plan: assign it to Database. Shall I run it?'));
+    var r = s.say('move 14 to database and check what changed on it');
+    T.eq(s.gemini.generate.length, 3, 'the model got to compose a reply that reads the plan back');
+    T.match(r.message, /Shall I run it\?/);
+});
+
+T.test('a partial answer still carries the navigation the tools asked for', function () {
+    var s = new S.Session();
+    s.model(gem.call('navigate_to_record', { ticket_number: 'INC0010013' }), { candidates: [{ finishReason: 'STOP', content: { parts: [] } }] });
+    var r = s.say('open INC0010013');
+    T.ok(r.directives && /incident/.test(String(r.directives.navigate_url)), 'navigate_url kept: ' + JSON.stringify(r.directives));
+});
+
+T.test('"no" answering an undo read-back drops the undo; it does not stop a plan', function () {
+    var s = new S.Session();
+    s.setBlob({ plan: { id: 'P1', steps: [{ tool: 'add_work_note', args: { ticket_number: 'INC0010013', note: 'x' } }, { tool: 'add_work_note', args: { ticket_number: 'INC0010013', note: 'y' } }],
+                        cursor: 1, hops: 1, confirmed: true, turn: 0, at: S.g.P.now, hop_at: S.g.P.now, hop_turn: -5, undo: [], results: [] },
+                last_action: { kind: 'field', number: 'INC0010013', table: 'incident', field: 'priority', old: '3', old_display: 'priority 3' } });
+    s.say('undo that');
+    var r = s.say('no');
+    T.match(r.message, /dropped it/);
+    T.ok(!s.blob().plan.halted, 'plan untouched');
+});
+
+T.test('plan read-backs say the words of comments and messages that can not be taken back', function () {
+    var s = new S.Session();
+    s.model(gem.call('make_plan', { steps: [{ tool: 'add_comment', args: { ticket_number: 'inc10013', text: 'Rebooting the VPN now' } },
+                                            { tool: 'send_message', args: { recipient: 'Beth Anglin', text: 'Please check the VPN' } }] }),
+            gem.quota429('day'), gem.quota429('day'), gem.quota429('day'), gem.quota429('day'));
+    var r = s.say('tell the caller we are rebooting and message Beth');
+    T.match(r.message, /add a comment the caller will see on \*\*incident ending 0 1 3\*\* saying "Rebooting the VPN now"/);
+    T.match(r.message, /message Beth Anglin: "Please check the VPN"/);
+    T.eq(s.blob().plan.steps[0].args.ticket_number, 'INC0010013', 'number normalised once, for read-back, crumb and write');
+});
+
+T.test('update_field plan steps use the spoken field name for their undo', function () {
+    var s = new S.Session();
+    s.model(gem.call('make_plan', { steps: [{ tool: 'update_field', args: { ticket_number: 'INC0010016', field: 'assignee', value: 'Beth Anglin' } }] }),
+            gem.text('Shall I run it?'));
+    s.say('assign 16 to Beth');
+    s.say('yes');
+    T.eq(s.inc('INC0010016').assigned_to, 'u_beth');
+    s.say('undo the plan');
+    T.match(s.say('yes').message, /Reversed and read back: assigned to on \*\*incident ending 0 1 6\*\*/);
+    T.eq(s.inc('INC0010016').assigned_to || '', '');
+});
+
 T.run(__filename);

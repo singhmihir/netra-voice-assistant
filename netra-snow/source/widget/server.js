@@ -417,7 +417,10 @@
     function _dropUnheardDrafts(out) {
         var parked = _brainTurn.parked || [];
         if (!parked.length) return;
-        var many = parked.length > 1;
+        // the same draft re-parked (a model retry) is still ONE draft
+        var seen = {}, distinct = 0;
+        for (var pi = 0; pi < parked.length; pi++) { if (!seen[parked[pi]]) { seen[parked[pi]] = 1; distinct++; } }
+        var many = distinct > 1;
         var unheard = (out.route_reason === 'partial' && !_brainTurn.draftHeard) || out.ok === false;
         if (!many && !unheard) return;
         var b = _ctxReadBlob(), cur = _curTurn(), dropped = 0;
@@ -613,12 +616,14 @@
         var toolsCalled = [];   // R1 - track which tools were invoked
         var turnWrites  = [];   // R17 - write-tool args for the learning hook
         var clientDirectives = {};   // R2 - navigate_url, click_button_label, etc.
+        // a partial answer still carries what the tools asked the page to do
+        function _pr(why) { var x = _partialReport(toolLog, contents, why); x.directives = clientDirectives; x.model_used = modelUsed; return x; }
         var shrunkOnce = false;   // R11 - one in-place history shrink before giving up
         var toolLog = [];         // R18 - what actually ran, for honest partial answers
         var callBudget = _turnBudget();
         for (var iter = 0; iter < 8; iter++) {
             if (_brainTurn.calls >= callBudget) {
-                return toolLog.length ? _partialReport(toolLog, contents, 'budget')
+                return toolLog.length ? _pr('budget')
                                       : _offlineAnswer(userMessage, contents, { why: 'budget' });
             }
             var resp = _callGemini(apiKey, model, contents, tools, systemInstruction);
@@ -633,7 +638,7 @@
                 // basic mode, and say when the reasoning comes back.
                 if (resp.all_resting || ecode === 429 || ecode === 0 || ecode === 404 || ecode >= 500 ||
                     err.indexOf('exhausted') >= 0 || err.indexOf('chain_deadline') >= 0) {
-                    return toolLog.length ? _partialReport(toolLog, contents, 'brain')
+                    return toolLog.length ? _pr('brain')
                                           : _offlineAnswer(userMessage, contents, { why: 'brain', resting_until_ms: resp.resting_until_ms });
                 }
                 if (ecode === 401 || ecode === 403) friendly = 'My API key is not authorised. Kindly check the configuration.';
@@ -665,16 +670,16 @@
                     friendly = 'My memory got a bit too heavy, so I compressed the older half. Could you say that again?';
                     // tools already ran this turn: say what they did, or a
                     // "try again" repeats their writes
-                    if (toolLog.length) { var pr4 = _partialReport(toolLog, contents, 'brain'); pr4.trim_history_half = true; return pr4; }
+                    if (toolLog.length) { var pr4 = _pr('brain'); pr4.trim_history_half = true; return pr4; }
                     return { ok: false, message: friendly, error_detail: err, trim_history_half: true };
                 }
-                if (toolLog.length) return _partialReport(toolLog, contents, 'brain');
+                if (toolLog.length) return _pr('brain');
                 return { ok: false, message: friendly, error_detail: err };
             }
 
             var candidate = (resp.candidates && resp.candidates[0]) || null;
             if (!candidate || !candidate.content || !candidate.content.parts) {
-                if (toolLog.length) return _partialReport(toolLog, contents, 'empty');
+                if (toolLog.length) return _pr('empty');
                 return { ok: false, message: 'I did not get an answer back. Could you say that again?' };
             }
 
@@ -693,6 +698,7 @@
 
                 // Execute each function call and append responses
                 var responseParts = [];
+                var parkedBeforeRound = (_brainTurn.parked || []).length;
                 var finalSpeech = null;
                 for (var f = 0; f < functionCalls.length; f++) {
                     var fc = functionCalls[f];
@@ -738,7 +744,7 @@
                 // paraphrase it - and could drift from the evidence
                 // only when it was the round's ONLY call: otherwise the other
                 // tools' writes, failures and drafts would go unspoken
-                if (finalSpeech && functionCalls.length === 1) {
+                if (finalSpeech && functionCalls.length === 1 && parkedBeforeRound === 0) {
                     var fr = _flReply(finalSpeech, contents, null, 'tool_final', { tools_called: toolsCalled });
                     fr.model_used = modelUsed;
                     if (clientDirectives && (clientDirectives.navigate_url || clientDirectives.open_url)) fr.directives = clientDirectives;
@@ -751,7 +757,7 @@
             // model said nothing: read back what actually ran instead
             var finalText = textChunks.join(' ').trim();
             if (!finalText) {
-                if (toolLog.length) return _partialReport(toolLog, contents, 'empty');
+                if (toolLog.length) return _pr('empty');
                 finalText = 'I did not get an answer back. Could you say that again?';
             }
             try { finalText = _fixSpokenRefs(finalText, toolLog); } catch (eRef) {}
@@ -806,7 +812,7 @@
             };
         }
 
-        return _partialReport(toolLog, contents, 'loop_cap');
+        return _pr('loop_cap');
     }
 
     /* ===================================================================
@@ -1488,7 +1494,7 @@
                 if (!u || !u.ok) return { text: 'I could not undo the plan: ' + String((u && u.error) || 'no detail') + '.', tool: 'undo_plan', extra: { undo: u } };
                 var t = (u.restored || []).length ? 'Reversed and read back: ' + _spokenRefs(u.restored.join('; ')) + '.' : 'Nothing was reversed.';
                 if ((u.problems || []).length) t += ' Not reversed: ' + _spokenRefs(u.problems.join('; ')) + '.';
-                if (u.one_way) t += ' ' + u.one_way + ' step' + (u.one_way === 1 ? ' was a comment, note or message' : 's were comments, notes or messages') + ', which I can not take back.';
+                if (u.one_way) t += ' ' + u.one_way + ' step' + (u.one_way === 1 ? '' : 's') + ' can not be put back - comments, notes and messages stay.';
                 return { text: t, tool: 'undo_plan', extra: { undo: u } };
             },
             undo_task: function (a) {
@@ -1513,6 +1519,7 @@
         }
         // "no" / "stop" while a confirmed plan is between hops stops it
         if (yn === 'no' && b.plan && b.plan.confirmed && !b.plan.finished && !b.plan.halted &&
+            b.plan.hop_turn === _curTurn() - 1 && !(b.flDraft && _draftFresh(b.flDraft)) &&
             (new GlideDateTime().getNumericValue() - (b.plan.hop_at || 0)) < 5 * 60000) {
             b.plan.halted = true;
             _ctxWriteBlob(b);
@@ -1603,9 +1610,9 @@
                     if (!b.plan || !b.plan.undo || !b.plan.undo.length) return _flReply('There is no plan on record that I can reverse.', contents, 'undo_plan');
                     _parkDraft('undo_plan', {});
                     var owN = 0;
-                    for (var owi = 0; owi < (b.plan.results || []).length; owi++) if (b.plan.results[owi].one_way) owN++;
+                    for (var owi = 0; owi < (b.plan.results || []).length; owi++) if (b.plan.results[owi].undoable === false) owN++;
                     return _flReply('That would put back ' + b.plan.undo.length + ' change' + (b.plan.undo.length === 1 ? '' : 's') + ' from the last plan, newest first' +
-                                    (owN ? ' - the ' + owN + ' comment' + (owN === 1 ? '' : 's') + ' or message' + (owN === 1 ? '' : 's') + ' can not be taken back' : '') + '. Shall I?', contents, 'undo_plan_draft');
+                                    (owN ? ' - ' + owN + ' other step' + (owN === 1 ? '' : 's') + ' can not be put back, comments, notes and messages stay' : '') + '. Shall I?', contents, 'undo_plan_draft');
                 }
                 var tm = lc.match(/^undo (?:task|order|standing order) (\w+)$/) || lc.match(/^undo (?:number |item )?(one|two|three|four|five|six|seven|eight|\d+)$/);
                 if (tm) {
@@ -1892,9 +1899,16 @@
         }
         if (res.needs_confirmation && res.read_back && res.read_back.action) {
             _brainTurn.draftHeard = true;
-            var rb = res.read_back;
-            return 'I drafted a standing order to ' + String(rb.action).replace(/_/g, ' ') + ' on ' +
-                   (/^[A-Z]+\d+$/.test(String(rb.target)) ? _spkNum(rb.target) : String(rb.target)) + '. Shall I arm it?';
+            var rb = res.read_back, cd = rb.condition || {}, when = [];
+            if (cd.no_movement_hours) when.push('if nobody touches it for ' + cd.no_movement_hours + ' hours');
+            if (cd.still_unassigned) when.push('if it is still unassigned');
+            if (cd.state_equals) when.push('while its state is ' + cd.state_equals);
+            if (cd.after_hours) when.push('in ' + cd.after_hours + ' hours');
+            var what = String(rb.action) === 'escalate_priority' ? 'raise it to priority ' + (rb.priority || '?')
+                     : String(rb.action) === 'add_comment' ? 'add the comment "' + String(rb.comment || '').substring(0, 100) + '"'
+                     : String(rb.action) === 'nudge_assignee' ? 'nudge the assignee' : 'tell you';
+            return 'I drafted a standing order: on ' + (/^[A-Z]+\d+$/.test(String(rb.target)) ? _spkNum(rb.target) : String(rb.target)) + ', ' +
+                   what + (when.length ? ' ' + when.join(' and ') : '') + ', for the next ' + (rb.expires_hours || 72) + ' hours. Shall I arm it?';
         }
         if (name === 'execute_plan') return _sayPlanHop(res);
         if (res.ok === false) return 'my ' + name.replace(/_/g, ' ') + ' step failed (' + String(res.error || 'no detail').substring(0, 80) + ')';
@@ -1908,7 +1922,7 @@
         // many tools put instructions for the MODEL in message ("read the
         // closest one out loud...") - never speak those to the user
         if (res.message && name !== 'execute_plan' &&
-            !/\b(the user|read (it|them|the|back|out)|call [a-z_]+|do not|say so|say that|ask "|shall i|mention)\b/i.test(String(res.message))) {
+            !/\b(the user|read (them|the|out)|call [a-z_]+|do not|say so|say that|ask "|shall i|mention)\b/i.test(String(res.message))) {
             return String(res.message).substring(0, 160);
         }
         return 'I ran ' + name.replace(/_/g, ' ');
@@ -2469,8 +2483,8 @@
     // anything else is returned as a candidate ticket or CI name
     function _invTarget(t) {
         var x = String(t || '').replace(/[?.!,]+$/, '').replace(/^\s+|\s+$/g, '');
-        x = x.replace(/\s+(broke|happened|started|began|failed|went down|is happening|kicked off)$/, '');
-        if (/^((it|this|that|this one|that one|ticket|incident)|((the|this|that|my) (one|ticket|incident|problem|change|request|issue|outage|server|box|machine|thing)))$/.test(x)) return '';
+        x = x.replace(/\s+(broke|happened|started|began|failed|went down|is happening|kicked off)$/i, '');
+        if (/^((it|this|that|this one|that one|ticket|incident)|((the|this|that|my) (one|ticket|incident|problem|change|request|issue|outage|server|box|machine|thing)))$/i.test(x)) return '';
         return x;
     }
 
@@ -4353,7 +4367,16 @@
         // "succeeds" and changes nothing, so write, read back, and fall back
         // to the matrix the same way standing orders do
         var pr = new NetraTaskRunner().setPriority(gr, p);
-        if (!pr.ok) return { ok: false, error: 'Priority did not change - ' + pr.why + '.' };
+        if (!pr.ok) {
+            // the matrix attempt may have moved impact/urgency (and so priority)
+            // even though the target was not reached - say what really happened
+            var rr = new GlideRecord(gr.getTableName());
+            if (rr.get(String(gr.sys_id)) && (String(rr.impact) !== oldI || String(rr.urgency) !== oldU || String(rr.priority) !== oldP)) {
+                _noteUndo({ kind: 'fields', number: num, table: gr.getTableName(), fields: { impact: oldI, urgency: oldU }, old_display: 'priority ' + oldP });
+                return { ok: false, error: 'Priority did not land on ' + p + ' - it is now ' + String(rr.priority) + ', because impact and urgency moved. Say undo that to put them back.' };
+            }
+            return { ok: false, error: 'Priority did not change - ' + pr.why + '.' };
+        }
         if (pr.via === 'matrix') {
             _noteUndo({ kind: 'fields', number: num, table: gr.getTableName(), fields: { impact: oldI, urgency: oldU }, old_display: 'priority ' + oldP });
         } else {
@@ -7154,7 +7177,7 @@
             for (var ak in args) { if (args.hasOwnProperty(ak) && ak !== 'confirm') keepArgs[ak] = args[ak]; }
             b.pendingOrder = { key: draftKey, msg: _currentUserMsg, at: now, turn: _curTurn(), args: keepArgs };
             _ctxWriteBlob(b);
-            if (_brainTurn.parked) _brainTurn.parked.push('order');
+            if (_brainTurn.parked) _brainTurn.parked.push('order:' + draftKey);
             return {
                 ok: false, needs_confirmation: true,
                 read_back: { kind: kind, target: String(args.ticket_number || 'my pending approvals'), action: action,
@@ -7571,6 +7594,7 @@
         // fails mid-plan after earlier steps already wrote
         function mv(from, to) { if (a[from] !== undefined && a[from] !== '' && (a[to] === undefined || a[to] === '')) a[to] = a[from]; }
         mv('number', 'ticket_number'); mv('ticket', 'ticket_number');
+        if (a.ticket_number) a.ticket_number = _normNum(a.ticket_number);   // read-back, crumb and write agree
         if (t === 'assign_ticket_to_user') { mv('user', 'user_name'); mv('assignee', 'user_name'); mv('assigned_to', 'user_name'); }
         if (t === 'assign_ticket_to_group') { mv('group', 'group_name'); mv('assignment_group', 'group_name'); mv('team', 'group_name'); }
         if (t === 'update_ticket') { mv('text', 'comment'); mv('note', 'comment'); mv('comments', 'comment'); }
@@ -7596,13 +7620,13 @@
         switch (String(st.tool)) {
             case 'update_field': return 'set ' + String(a.field).replace(/_/g, ' ') + ' on ' + n + ' to "' + a.value + '"';
             case 'create_ticket': return 'raise a ticket: "' + String(a.short_description).substring(0, 80) + '"';
-            case 'update_ticket': return 'add a comment on ' + n;
-            case 'add_work_note': return 'add a work note on ' + n;
-            case 'resolve_ticket': return 'resolve ' + n;
+            case 'update_ticket': return 'add a comment the caller will see on ' + n + ' saying "' + String(a.comment || '').substring(0, 120) + '"';
+            case 'add_work_note': return 'add a work note on ' + n + ' saying "' + String(a.note || '').substring(0, 120) + '"';
+            case 'resolve_ticket': return 'resolve ' + n + (a.close_notes ? ' with the notes "' + String(a.close_notes).substring(0, 100) + '"' : '');
             case 'assign_ticket_to_group': return 'assign ' + n + ' to the group ' + a.group_name;
             case 'assign_ticket_to_user': return 'assign ' + n + ' to ' + a.user_name;
             case 'change_priority': return 'set ' + n + ' to priority ' + a.priority;
-            case 'send_message_to_user': return 'message ' + a.recipient_name;
+            case 'send_message_to_user': return 'message ' + a.recipient_name + ': "' + String(a.message || '').substring(0, 120) + '"';
         }
         return String(st.say || st.tool);
     }
@@ -7680,19 +7704,27 @@
                        change_priority: ['priority', 'impact', 'urgency'], resolve_ticket: ['state', 'close_code', 'close_notes'] };
         var ONE_WAY = { update_ticket: 1, add_work_note: 1, send_message_to_user: 1 };
         plan.hop_at = new GlideDateTime().getNumericValue();
+        plan.hop_turn = _curTurn();
+        plan.halted = false;   // an explicit execute_plan on a halted plan is the resume
         while (plan.cursor < plan.steps.length && done.length < WRITE_BUDGET) {
             var st = plan.steps[plan.cursor];
             var tool = String(st.tool), sa = st.args || {};
-            var crumb = null;
+            var crumb = null, oneWay = !!ONE_WAY[tool];
             try {
-                var flds = tool === 'update_field' ? [String(sa.field || '').replace(/\s+/g, '_')] : FIELDS[tool];
-                if (flds && sa.ticket_number) {
-                    var tb = _tableForNumber(String(sa.ticket_number).toUpperCase());
+                var flds = FIELDS[tool];
+                if (tool === 'update_field') {
+                    var fn = _normFieldName(sa.field);
+                    if (fn === 'work_notes' || fn === 'comments') { flds = null; oneWay = true; }
+                    else flds = fn === 'priority' ? ['priority', 'impact', 'urgency'] : [fn];
+                }
+                var numN = _normNum(sa.ticket_number);
+                if (flds && numN) {
+                    var tb = _tableForNumber(numN);
                     var pre = tb ? new GlideRecord(tb) : null;
-                    if (pre && pre.get('number', String(sa.ticket_number).toUpperCase())) {
+                    if (pre && pre.get('number', numN)) {
                         var before = {};
                         for (var fi = 0; fi < flds.length; fi++) if (pre.isValidField(flds[fi])) before[flds[fi]] = String(pre.getValue(flds[fi]) || '');
-                        crumb = { kind: 'fields', table: tb, sys_id: String(pre.sys_id), number: String(sa.ticket_number).toUpperCase(), before: before };
+                        if (Object.keys(before).length) crumb = { kind: 'fields', table: tb, sys_id: String(pre.sys_id), number: numN, before: before };
                     }
                 }
             } catch (eU) {}
@@ -7705,7 +7737,7 @@
             }
             if (crumb) plan.undo.push(crumb);
             if (tool === 'create_ticket' && res && res.number) plan.undo.push({ kind: 'created', number: String(res.number) });
-            plan.results.push({ step: plan.cursor + 1, ok: true, one_way: !!ONE_WAY[tool] });
+            plan.results.push({ step: plan.cursor + 1, ok: true, one_way: oneWay, undoable: !!crumb || tool === 'create_ticket' });
             // speak what the tool REPORTS it did (the group it actually found,
             // the priority it read back) rather than what was planned
             done.push((plan.cursor + 1) + '. ' + String((res && res.message) || _planStepText(st)).replace(/\s+/g, ' ').replace(/[.\s]+$/, '').substring(0, 140));
@@ -7714,7 +7746,7 @@
 
         var finished = plan.cursor >= plan.steps.length;
         var oneWay = 0;
-        for (var ow = 0; ow < plan.results.length; ow++) if (plan.results[ow].one_way) oneWay++;
+        for (var ow = 0; ow < plan.results.length; ow++) if (plan.results[ow].undoable === false) oneWay++;
         var out;
         if (failed) {
             plan.halted = true;
@@ -7784,10 +7816,10 @@
         delete b.plan;
         _ctxWriteBlob(b);
         var oneWay = 0;
-        for (var ow = 0; ow < (plan.results || []).length; ow++) if (plan.results[ow].one_way) oneWay++;
+        for (var ow = 0; ow < (plan.results || []).length; ow++) if (plan.results[ow].undoable === false) oneWay++;
         return { ok: true, restored: restored, problems: problems, one_way: oneWay,
                  message: restored.length + ' change(s) reversed and read back' + (problems.length ? '; NOT reversed: ' + problems.join('; ') : '') +
-                          (oneWay ? '. ' + oneWay + ' step(s) were comments, notes or messages, which can not be taken back' : '') + '. Say exactly that.' };
+                          (oneWay ? '. ' + oneWay + ' step(s) can not be put back (comments, notes and messages stay)' : '') + '. Say exactly that.' };
     }
 
     /* ===================================================================
@@ -8034,6 +8066,18 @@
      *  because we allow-list the fields it can touch.
      * =================================================================== */
     // Map common synonyms the user might say to actual ServiceNow fields
+    // the same spoken-field mapping _updateField uses, for undo breadcrumbs
+    function _normFieldName(field) {
+        var SYN = { 'short description': 'short_description', 'title': 'short_description', 'summary': 'short_description',
+                    'desc': 'description', 'details': 'description', 'assignment group': 'assignment_group',
+                    'assigned group': 'assignment_group', 'group': 'assignment_group', 'assignee': 'assigned_to',
+                    'assigned to': 'assigned_to', 'owner': 'assigned_to', 'work note': 'work_notes', 'work notes': 'work_notes',
+                    'internal note': 'work_notes', 'close note': 'close_notes', 'close notes': 'close_notes',
+                    'configuration item': 'cmdb_ci', 'ci': 'cmdb_ci', 'comment': 'comments' };
+        var raw = String(field || '').toLowerCase().replace(/^\s+|\s+$/g, '');
+        return SYN[raw] || raw.replace(/\s+/g, '_');
+    }
+
     function _updateField(num, field, value) {
         if (!num || !field || value === undefined || value === null || value === '') {
             return { ok: false, error: 'ticket number, field, and value all required' };
