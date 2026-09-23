@@ -585,12 +585,17 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     // ---- R8.2 - local reminders (to-the-minute while the tab is open) ----
-    var _localReminderTimers = [];
+    var _localReminderTimers = {};   // reminder id -> $timeout promise
     var _recentReminderTexts = {};   // dedupe vs the scanner-promoted copy
-    function _scheduleLocalReminder(delayMs, text) {
-        var d = Math.max(1000, Math.min(12 * 3600 * 1000, delayMs || 0));
+    function _scheduleLocalReminder(delayMs, text, id) {
+        // beyond 12 hours the scanner delivers it; a clamped page timer would
+        // fire hours early and then again at the real time
+        if (!delayMs || delayMs > 12 * 3600 * 1000) return;
+        var d = Math.max(1000, delayMs);
+        var key = String(id || ('r' + Date.now()));
         logEvent('lab', 'local reminder armed in ' + Math.round(d / 60000) + ' min: ' + text);
-        _localReminderTimers.push($timeout(function () {
+        _localReminderTimers[key] = ($timeout(function () {
+            delete _localReminderTimers[key];
             _recentReminderTexts[String(text)] = Date.now();
             cue('wake');
             speak(text || 'Reminder.');
@@ -3483,6 +3488,13 @@ api.controller = function ($scope, $timeout, $window) {
                     } else if (!r.continue_plan) {
                         c._planHops = 0;
                     }
+                    // a cancelled reminder must not fire from this page, even when
+                    // the reply that confirmed the cancel is never spoken
+                    if (r.directives && r.directives.cancel_reminder_ids) {
+                        r.directives.cancel_reminder_ids.forEach(function (rid) {
+                            if (_localReminderTimers[rid]) { $timeout.cancel(_localReminderTimers[rid]); delete _localReminderTimers[rid]; }
+                        });
+                    }
                     // R2 - act on client directives from tools
                     // R6 - never act on directives from a barged (stale) turn
                     if (r.directives && !stale) {
@@ -3490,7 +3502,7 @@ api.controller = function ($scope, $timeout, $window) {
                         // announcements while the tab stays open (the scanner
                         // covers closed-tab delivery at ~5 min granularity).
                         if (r.directives.reminder_at_ms) {
-                            _scheduleLocalReminder(r.directives.reminder_at_ms, r.directives.reminder_text);
+                            _scheduleLocalReminder(r.directives.reminder_at_ms, r.directives.reminder_text, r.directives.reminder_id);
                         }
                         // R8.2 - HARD NAV LOCK on the Live stage: even if a
                         // stale prompt or history slips a directive through,

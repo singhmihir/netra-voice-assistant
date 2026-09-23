@@ -19,7 +19,9 @@ NetraKnowledge.prototype = {
         if (q.length < 2) return { ok: false, articles: [], query: q };
         var keywords = this._tokenize(q);
 
-        var gr = new GlideRecord('kb_knowledge');
+        // GlideRecordSecure: the KB read ACLs and user criteria apply, so an
+        // HR or security article is never read out to someone who can not open it
+        var gr = new GlideRecordSecure('kb_knowledge');
         gr.addQuery('workflow_state', 'published');
         gr.addQuery('active', true);
         // Build a CONTAINS query for the strongest keyword first to narrow the set
@@ -52,13 +54,18 @@ NetraKnowledge.prototype = {
 
     /** Read one article in full (returns title + plain-text body). */
     read: function (numberOrSysId) {
-        var gr = new GlideRecord('kb_knowledge');
+        var gr = new GlideRecordSecure('kb_knowledge');
         if (String(numberOrSysId).match(/^[0-9a-f]{32}$/)) {
-            if (!gr.get(numberOrSysId)) return { ok: false, error: 'Article not found.' };
+            if (!gr.get(numberOrSysId)) return { ok: false, error: 'Article not found, or it is not available to you.' };
         } else {
+            // one number can have several versions: only the current published one
             gr.addQuery('number', numberOrSysId);
+            gr.addQuery('workflow_state', 'published');
+            gr.addQuery('active', true);
+            gr.orderByDesc('sys_updated_on');
+            gr.setLimit(1);
             gr.query();
-            if (!gr.next()) return { ok: false, error: 'Article not found.' };
+            if (!gr.next()) return { ok: false, error: 'There is no published article ' + numberOrSysId + ' that you can read.' };
         }
         return {
             ok: true,

@@ -63,6 +63,7 @@ GlideDateTime.prototype.getDisplayValue = function () {
            pad(h12) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + ' ' + ap;
 };
 GlideDateTime.prototype.addSeconds = function (s) { this._ms += s * 1000; };
+GlideDateTime.prototype.add = function (ms) { this._ms += Number(ms); };
 GlideDateTime.prototype.before = function (o) { return this._ms < o._ms; };
 GlideDateTime.prototype.after = function (o) { return this._ms > o._ms; };
 GlideDateTime.prototype.compareTo = function (o) { return this._ms < o._ms ? -1 : (this._ms > o._ms ? 1 : 0); };
@@ -259,6 +260,7 @@ function GlideRecord(table) {
         },
         getRowCount: function () { return self.rows ? self.rows.length : 0; },
         insert: function () {
+            if (GlideRecord.refuseInsert[table]) return null;   // a refused insert returns null, it does not throw
             var sid = self.rec.sys_id || newId();
             self.rec.sys_id = sid;
             if (!self.rec.sys_created_on) self.rec.sys_created_on = fmtUtc(P.now);
@@ -320,6 +322,7 @@ function GlideRecord(table) {
 GlideRecord.onUpdate = {};     // table -> fn(next, old): simulate business rules
 GlideRecord.onInsert = {};
 GlideRecord.refuseDelete = {}; // table -> true: simulate cross-scope delete refusal
+GlideRecord.refuseInsert = {}; // table -> true: simulate an insert the platform refuses
 var GlideRecordSecure = GlideRecord;
 
 /* ---------------- GlideAggregate ---------------- */
@@ -327,7 +330,7 @@ function GlideAggregate(table) {
     var gr = GlideRecord(table);
     var groupBy = null, groups = null, gi = -1, all = null;
     return {
-        addQuery: function (f, op, v) { gr.addQuery(f, op, v); },
+        addQuery: function (f, op, v) { return gr.addQuery(f, op, v); },
         addEncodedQuery: function (q) { gr.addEncodedQuery(q); },
         addActiveQuery: function () { gr.addActiveQuery(); },
         addAggregate: function () {},
@@ -409,7 +412,7 @@ function reset() {
     P.STORE = {}; P.PROPS = {}; P.DISPLAY = {}; P.CHOICES = JSON.parse(JSON.stringify(DEFAULT_CHOICES)); P.INVALID_FIELDS = {}; P.UNSUPPORTED = []; P.LOG = [];
     P.HTTP = null; P.now = Date.UTC(2026, 8, 23, 20, 0, 0); P.guid = 0; P.tzOffsetMs = 0;
     P.user = { sys_id: 'u_admin', name: 'System Administrator', user_name: 'admin' };
-    GlideRecord.onUpdate = {}; GlideRecord.onInsert = {}; GlideRecord.refuseDelete = {};
+    GlideRecord.onUpdate = {}; GlideRecord.onInsert = {}; GlideRecord.refuseDelete = {}; GlideRecord.refuseInsert = {};
 }
 
 // put a record in the store (returns its sys_id)

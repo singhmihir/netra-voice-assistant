@@ -735,7 +735,11 @@
                     // R2.4 - open new tab directive
                     if (result && result.open_url)           clientDirectives.open_url           = result.open_url;
                     // R8.2 - local reminder scheduling directive
+                    if (result && result.cancel_reminder_ids && result.cancel_reminder_ids.length) {
+                        clientDirectives.cancel_reminder_ids = (clientDirectives.cancel_reminder_ids || []).concat(result.cancel_reminder_ids);
+                    }
                     if (result && result.reminder_at_ms) {
+                        clientDirectives.reminder_id = result.reminder_id;
                         clientDirectives.reminder_at_ms = result.reminder_at_ms;
                         clientDirectives.reminder_text  = result.reminder_text || 'Reminder.';
                     }
@@ -5765,13 +5769,33 @@
         if (!ctxRec) return { ok: false, error: 'I could not resolve that record or table.' };
         var chain = _tableChainOf(ctxRec.table);
         chain.push('global');
+        // the FORM button, exact name first, on the most specific table (a child
+        // table's action overrides the parent's); never a list action that
+        // merely contains the word
+        function pick(exact) {
+            var q = new GlideRecord('sys_ui_action');
+            q.addQuery('table', 'IN', chain.join(','));
+            q.addQuery('active', true);
+            q.addQuery('form_button', true);
+            if (exact) q.addQuery('name', label);
+            else q.addEncodedQuery('nameLIKE' + label + '^ORaction_nameLIKE' + label.toLowerCase().replace(/\s+/g, '_'));
+            q.setLimit(12);
+            q.query();
+            var rows = [];
+            while (q.next()) rows.push({ id: q.getUniqueValue(), name: String(q.name), rank: chain.indexOf(String(q.table)) });
+            rows.sort(function (a, b) { return a.rank - b.rank; });
+            return rows;
+        }
+        var rows = pick(true);
+        if (!rows.length) rows = pick(false);
+        if (!rows.length) return { ok: false, error: 'No form button matching "' + label + '" on ' + ctxRec.table + '.' };
+        var names = {};
+        rows.forEach(function (r0) { names[r0.name] = 1; });
+        if (Object.keys(names).length > 1 && String(rows[0].name).toLowerCase() !== String(label).toLowerCase()) {
+            return { ok: false, ambiguous: true, error: 'Several buttons match "' + label + '": ' + Object.keys(names).slice(0, 4).join(', ') + ' - which one?' };
+        }
         var ua = new GlideRecord('sys_ui_action');
-        ua.addQuery('table', 'IN', chain.join(','));
-        ua.addQuery('active', true);
-        ua.addEncodedQuery('nameLIKE' + label + '^ORaction_nameLIKE' + label.toLowerCase().replace(/\s+/g, '_'));
-        ua.setLimit(1);
-        ua.query();
-        if (!ua.next()) return { ok: false, error: 'No button matching "' + label + '" on ' + ctxRec.table + '.' };
+        ua.get(rows[0].id);
         var script = String(ua.script || '');
         var meaning = _uiActionMeanings()[String(ua.action_name || '')] || '';
         var explanation = '';
@@ -5799,8 +5823,26 @@
         if (!field) return { ok: false, error: 'Which field?' };
         var ctxRec = _tableFromArgs(num, table);
         if (!ctxRec) return { ok: false, error: 'I could not resolve that record or table.' };
-        var fieldNorm = String(field).toLowerCase().trim().replace(/\s+/g, '_');
         var chain = _tableChainOf(ctxRec.table);
+        // a spoken label ("configuration item") must become the real column
+        // (cmdb_ci), or nothing matches and we would wrongly say "it changes quietly"
+        var fieldNorm = _normFieldName(field);
+        var probe = new GlideRecord(ctxRec.table);
+        if (!probe.isValidField(fieldNorm)) {
+            var found = '';
+            try {
+                var dct = new GlideRecord('sys_dictionary');
+                dct.addQuery('name', 'IN', chain.join(','));
+                dct.addQuery('column_label', String(field).trim());
+                dct.setLimit(1);
+                dct.query();
+                if (dct.next()) found = String(dct.element);
+            } catch (eD) {}
+            if (!found) return { ok: false, error: 'I could not find a field called "' + field + '" on the ' + ctxRec.table + ' form.' };
+            fieldNorm = found;
+        }
+        // whole field name inside a condition: "category" must not match "subcategory"
+        var wholeField = new RegExp('(^|\\^(OR|NQ)?)' + fieldNorm + '(?![a-z0-9_])');
         var effects = [];
         try {
             var up = new GlideRecord('sys_ui_policy');
@@ -5810,6 +5852,7 @@
             up.setLimit(12);
             up.query();
             while (up.next()) {
+                if (!wholeField.test(String(up.conditions || ''))) continue;
                 var acts = [];
                 var pa = new GlideRecord('sys_ui_policy_action');
                 pa.addQuery('ui_policy', String(up.sys_id));
@@ -5857,6 +5900,22 @@
         };
     }
 
+    // epoch ms of a date-time field (0 when empty) - never the raw UTC string
+    function _msOfField(gr, f) {
+        var v = gr.getValue(f);
+        return v ? new GlideDateTime(v).getNumericValue() : 0;
+    }
+
+    function _countWhere(table, field, value) {
+        try {
+            var ga = new GlideAggregate(table);
+            ga.addQuery(field, value);
+            ga.addAggregate('COUNT');
+            ga.query();
+            return ga.next() ? (parseInt(ga.getAggregate('COUNT'), 10) || 0) : 0;
+        } catch (e) { return 0; }
+    }
+
     function _activeFlows(num) {
         var rec = _recFor(num);
         if (!rec) return { ok: false, error: 'Record not found: ' + num };
@@ -5869,8 +5928,9 @@
             wf.setLimit(6);
             wf.query();
             while (wf.next()) {
+                var wms = _msOfField(wf, 'started') || _msOfField(wf, 'sys_created_on');
                 flows.push({ engine: 'workflow', name: String(wf.workflow_version.getDisplayValue() || wf.name || 'workflow'),
-                             state: String(wf.state), started: String(wf.started || wf.sys_created_on) });
+                             state: String(wf.state), started: _ago(wms), started_at: _clockAt(wms) });
             }
         } catch (eW) {}
         try {
@@ -5880,8 +5940,9 @@
             fc.setLimit(6);
             fc.query();
             while (fc.next()) {
+                var fms = _msOfField(fc, 'sys_created_on');
                 flows.push({ engine: 'flow', name: String(fc.name || fc.getDisplayValue() || 'flow'),
-                             state: String(fc.state), started: String(fc.sys_created_on) });
+                             state: String(fc.state), started: _ago(fms), started_at: _clockAt(fms) });
             }
         } catch (eF) {}
         var running = flows.filter(function (f) { return /executing|running|in_progress|waiting/i.test(f.state); });
@@ -5898,17 +5959,27 @@
         var ap = new GlideRecord('sysapproval_approver');
         ap.addQuery('sysapproval', sid).addOrCondition('document_id', sid);
         ap.orderByDesc('sys_created_on');
-        ap.setLimit(15);
+        ap.setLimit(15);   // names for the first few; the counts below are exact
         ap.query();
-        var pending = 0;
         while (ap.next()) {
-            var st = String(ap.state);
-            if (st === 'requested') pending++;
-            out.push({ approver: String(ap.approver.getDisplayValue() || ''), state: st, since: String(ap.sys_created_on) });
+            var ams = _msOfField(ap, 'sys_created_on');
+            out.push({ approver: String(ap.approver.getDisplayValue() || ''), state: String(ap.state), since: _ago(ams), since_clock: _clockAt(ams) });
         }
-        return { ok: true, number: num, pending: pending, approvals: out,
-                 message: pending ? (pending + ' approval(s) still pending on ' + num + '.')
-                                  : (out.length ? 'No pending approvals on ' + num + ' - ' + out.length + ' already decided.' : 'No approvals exist on ' + num + '.') };
+        var byState = {};
+        try {
+            var ga = new GlideAggregate('sysapproval_approver');
+            ga.addQuery('sysapproval', sid).addOrCondition('document_id', sid);
+            ga.groupBy('state');
+            ga.addAggregate('COUNT');
+            ga.query();
+            while (ga.next()) byState[String(ga.getValue('state'))] = parseInt(ga.getAggregate('COUNT'), 10) || 0;
+        } catch (eA) {}
+        var pending = byState.requested || 0, waiting = byState.not_yet_requested || 0;
+        var decided = (byState.approved || 0) + (byState.rejected || 0);
+        return { ok: true, number: num, pending: pending, waiting_their_turn: waiting, decided: decided, approvals: out,
+                 message: pending ? (pending + ' approval(s) still pending on ' + num + (waiting ? ', and ' + waiting + ' waiting their turn' : '') + '.')
+                                  : waiting ? ('Nothing is pending right now on ' + num + ', but ' + waiting + ' approval(s) are waiting their turn.')
+                                  : (decided ? 'No pending approvals on ' + num + ' - ' + decided + ' already decided.' : 'No approvals exist on ' + num + '.') };
     }
 
     function _relatedRecords(num, kind) {
@@ -5976,19 +6047,22 @@
         } catch (eJ) {}
         var att = attachments(5), sl = slas(5), ct = childTasks(5), ciList = cis(5);
         var apr = _approvalsForRecord(num);
+        // the lists are samples of five; the spoken counts must be totals
+        var nAtt = _countWhere('sys_attachment', 'table_sys_id', sid), nSla = _countWhere('task_sla', 'task', sid),
+            nTask = _countWhere('task', 'parent', sid), nCi = _countWhere('task_ci', 'task', sid);
         return {
             ok: true,
             number: num,
             table: rec.table,
             linked: links,
-            attachments_count: att.length, attachments: att,
-            slas: sl,
-            child_tasks: ct,
-            affected_cis: ciList,
+            attachments_count: nAtt, attachments: att,
+            sla_count: nSla, slas: sl,
+            child_task_count: nTask, child_tasks: ct,
+            affected_ci_count: nCi, affected_cis: ciList,
             pending_approvals: apr.pending || 0,
             journal_counts: journal,
-            message: 'Related picture for ' + num + ': ' + att.length + ' attachments, ' + sl.length + ' SLAs, ' +
-                     ct.length + ' child tasks, ' + ciList.length + ' affected CIs, ' + (apr.pending || 0) + ' pending approvals, ' +
+            message: 'Related picture for ' + num + ': ' + nAtt + ' attachments, ' + nSla + ' SLAs, ' +
+                     nTask + ' child tasks, ' + nCi + ' affected CIs, ' + (apr.pending || 0) + ' pending approvals, ' +
                      journal.comments + ' comments and ' + journal.work_notes + ' work notes. Drill in with kind=attachments|slas|tasks|cis|approvals.'
         };
     }
@@ -5997,7 +6071,17 @@
         var rec = _recFor(num);
         if (!rec) return { ok: false, error: 'Record not found: ' + num };
         var mandInfo = _describeForm(num, '');
-        var buttons = _formButtonRows(rec.table).slice(0, 8).map(function (b) { return b.label; });
+        // which buttons SHOW depends on each action's condition and the user's
+        // roles, which we do not evaluate - so say "defined", never "available"
+        var seenBtn = {}, buttons = [];
+        _formButtonRows(rec.table).forEach(function (b) {
+            if (/^sysverb_insert/.test(String(b.action_name || ''))) return;   // new records only
+            var key = String(b.action_name || b.label);
+            if (seenBtn[key]) return;
+            seenBtn[key] = 1;
+            buttons.push(b.label);
+        });
+        buttons = buttons.slice(0, 8);
         var flows = _activeFlows(num);
         var apr = _approvalsForRecord(num);
         var dataPolicies = 0;
@@ -6012,7 +6096,7 @@
             ok: true,
             number: num,
             missing_mandatory: mandInfo.missing_mandatory || [],
-            buttons_available: buttons,
+            buttons_defined: buttons,
             running_flows: flows.running_count || 0,
             pending_approvals: apr.pending || 0,
             data_policies_enforcing: dataPolicies,
@@ -6020,7 +6104,7 @@
             message: (mandInfo.missing_mandatory && mandInfo.missing_mandatory.length
                         ? 'Before submitting ' + num + ', fill these mandatory fields: ' + mandInfo.missing_mandatory.join(', ') + '. '
                         : 'All mandatory fields on ' + num + ' are filled. ') +
-                     'Buttons available: ' + buttons.join(', ') + '. ' +
+                     'Form buttons defined for this kind of record (which ones show depends on the record and your roles): ' + buttons.join(', ') + '. ' +
                      (flows.running_count ? flows.running_count + ' flow(s) currently running. ' : '') +
                      (apr.pending ? apr.pending + ' approval(s) pending. ' : '') +
                      'Remember: work notes are internal, additional comments reach the caller.'
@@ -6041,9 +6125,10 @@
                 gr.setLimit(5);
                 gr.query();
                 while (gr.next()) {
+                    var cms = _msOfField(gr, 'sys_created_on');
                     found.push({ number: String(gr.number), table: tables[i],
                                  short_description: String(gr.short_description).substring(0, 90),
-                                 created: String(gr.sys_created_on) });
+                                 created: _ago(cms), created_clock: _clockAt(cms) });
                 }
             } catch (eT) {}
         }
@@ -6079,7 +6164,10 @@
         if (!sid) return { ok: false, error: 'Could not save the reminder.' };
         return {
             ok: true,
-            reminder_at_ms: mins * 60 * 1000,     // client directive: schedule locally too
+            reminder_id: String(sid),
+            // the page times it to the minute while open, up to 12 hours; longer
+            // ones are the scanner's (a page timer would fire early or twice)
+            reminder_at_ms: mins <= 720 ? mins * 60 * 1000 : 0,
             reminder_text: 'Reminder: ' + text,
             due: String(due.getDisplayValue()),
             message: 'Reminder set for ' + mins + ' minutes from now: ' + text
@@ -6105,16 +6193,31 @@
     }
     function _cancelReminder(text) {
         if (!text) return { ok: false, error: 'Which reminder should I cancel?' };
+        // match on what the reminder is about, not on the word "reminder"
+        var want = String(text).toLowerCase().replace(/^\s*(the|my|that|this)\s+/, '').replace(/\s*reminders?\s*$/, '').replace(/^\s*(to|about)\s+/, '').trim();
+        var generic = !want || /^(all|every|any|one|it|them)$/.test(want);
         var n = new GlideRecord(SCOPE + '_notification');
         n.addQuery('user', gs.getUserID());
         n.addQuery('kind', 'reminder_scheduled');
-        n.addEncodedQuery('messageLIKE' + text);
         n.query();
-        var killed = 0;
-        while (n.next()) { n.deleteRecord(); killed++; }
-        return { ok: killed > 0, cancelled: killed,
-                 message: killed ? ('Cancelled ' + killed + ' reminder(s) matching "' + text + '".')
-                                 : ('No pending reminder matches "' + text + '".') };
+        var hits = [];
+        while (n.next()) {
+            var about = String(n.message || '').replace(/^Reminder: /, '');
+            if (generic || about.toLowerCase().indexOf(want) >= 0) hits.push({ id: String(n.sys_id), about: about });
+        }
+        if (!hits.length) return { ok: false, cancelled: 0, error: 'No pending reminder matches "' + text + '".' };
+        if (hits.length > 1 && !/^(all|every)$/.test(want)) {
+            return { ok: false, ambiguous: true, reminders: hits.map(function (h) { return h.about; }),
+                     error: hits.length + ' reminders match - ' + hits.slice(0, 3).map(function (h) { return '"' + h.about + '"'; }).join(', ') + '. Which one?' };
+        }
+        var ids = [];
+        for (var i = 0; i < hits.length; i++) {
+            var d = new GlideRecord(SCOPE + '_notification');
+            if (d.get(hits[i].id) && d.deleteRecord()) ids.push(hits[i].id);
+        }
+        return { ok: ids.length > 0, cancelled: ids.length, cancel_reminder_ids: ids,
+                 message: ids.length ? ('Cancelled ' + (ids.length === 1 ? 'the reminder to ' + hits[0].about : ids.length + ' reminders') + '.')
+                                     : 'I could not cancel it - it may have just fired.' };
     }
 
     /* ===================================================================
@@ -6127,7 +6230,9 @@
     function _readKnowledgeArticle(query) {
         if (!query) return { ok: false, error: 'KB number or sys_id is required.' };
         try {
-            var r = new NetraKnowledge().read(String(query).trim());
+            var kq = String(query).trim();
+            if (!/^[0-9a-f]{32}$/i.test(kq)) kq = _normNum(kq);   // "kb 10023" -> KB0010023
+            var r = new NetraKnowledge().read(kq);
             if (!r.ok) return r;
             return {
                 ok: true,
@@ -6175,7 +6280,26 @@
             justification: String(gr.justification || '').substring(0, 500),
             backout_plan: String(gr.backout_plan || '').substring(0, 400),
             description: String(gr.description || '').substring(0, 500),
-            recent_comments: String(gr.comments || '').substring(0, 400)
+            // journal entries live in sys_journal_field; gr.comments is always
+            // empty on a loaded record, which read as "no comments yet"
+            journal: (function () {
+                var out = [];
+                try {
+                    var j = new GlideRecord('sys_journal_field');
+                    j.addQuery('element_id', gr.getUniqueValue());
+                    j.addQuery('element', 'IN', 'comments,work_notes');
+                    j.orderByDesc('sys_created_on');
+                    j.setLimit(3);
+                    j.query();
+                    while (j.next()) {
+                        var cv = j.getValue('sys_created_on');
+                        out.push({ kind: String(j.element) === 'work_notes' ? 'work note' : 'comment', author: String(j.sys_created_by),
+                                   text: String(j.value || '').replace(/\s+/g, ' ').substring(0, 300),
+                                   when: cv ? _ago(new GlideDateTime(cv).getNumericValue()) : '' });
+                    }
+                } catch (eJ) {}
+                return out;
+            })()
         };
     }
 
@@ -6196,98 +6320,56 @@
             return { ok: false, error: 'Recipient and message are both required.' };
         }
         try {
-            // Resolve recipient
-            var u = new GlideRecord('sys_user');
-            u.addQuery('active', true);
-            u.addEncodedQuery('nameLIKE' + recipientName + '^ORuser_nameLIKE' + recipientName + '^ORemailLIKE' + recipientName);
-            u.setLimit(1);
-            u.query();
-            if (!u.next()) return { ok: false, error: 'No active user matching "' + recipientName + '"' };
-            var recipientId = u.getUniqueValue();
-            var recipientDisplay = String(u.name);
+            // exact name first; several partial matches are a question, never a guess
+            var pu = _pickByName('sys_user', recipientName, 'nameLIKE' + recipientName + '^ORuser_nameLIKE' + recipientName + '^ORemailLIKE' + recipientName);
+            if (pu.error) return { ok: false, error: pu.error, ambiguous: !!pu.ambiguous };
+            var recipientId = pu.gr.getUniqueValue();
+            var recipientDisplay = String(pu.gr.getValue('name') || recipientName);
             var senderId = gs.getUserID();
-            var senderDisplay = gs.getUserDisplayName();
+            var subj = subject || ('Message from ' + gs.getUserDisplayName());
 
-            var subj = subject || ('Message from ' + senderDisplay);
-
-            // Try the modern sys_sidebar_discussion table first
-            var disc, discId;
-            try {
-                disc = new GlideRecord('sys_sidebar_discussion');
-                disc.initialize();
-                disc.setValue('name',    subj);
-                disc.setValue('subject', subj);
-                disc.setValue('private', true);
-                discId = disc.insert();
-            } catch (eDisc) {
-                disc = null;
+            var disc = new GlideRecord('sys_sidebar_discussion');
+            if (!disc.isValid()) {
+                return { ok: false, error: 'Sidebar chats are not available on this instance, so nothing was sent. I can send it as a tracked message instead.' };
             }
+            disc.initialize();
+            disc.setValue('name', subj);
+            disc.setValue('subject', subj);
+            disc.setValue('private', true);
+            var discId = disc.insert();
+            if (!discId) return { ok: false, error: 'I could not start a sidebar chat with ' + recipientDisplay + ', so nothing was sent.' };
 
-            // Add participants (sender + recipient)
-            if (discId) {
-                try {
-                    var p1 = new GlideRecord('sys_sidebar_discussion_participant');
-                    p1.initialize();
-                    p1.setValue('discussion', discId);
-                    p1.setValue('user', senderId);
-                    p1.insert();
+            var p1 = new GlideRecord('sys_sidebar_discussion_participant');
+            p1.initialize();
+            p1.setValue('discussion', discId);
+            p1.setValue('user', senderId);
+            var p1id = p1.insert();
+            var p2 = new GlideRecord('sys_sidebar_discussion_participant');
+            p2.initialize();
+            p2.setValue('discussion', discId);
+            p2.setValue('user', recipientId);
+            var p2id = p2.insert();
+            var m = new GlideRecord('sys_sidebar_discussion_message');
+            m.initialize();
+            m.setValue('discussion', discId);
+            m.setValue('sender', senderId);
+            m.setValue('message', message);
+            m.setValue('body', message);
+            var mid = m.insert();
 
-                    var p2 = new GlideRecord('sys_sidebar_discussion_participant');
-                    p2.initialize();
-                    p2.setValue('discussion', discId);
-                    p2.setValue('user', recipientId);
-                    p2.insert();
-                } catch (ePart) { /* best-effort */ }
-
-                // Insert the first message
-                try {
-                    var m = new GlideRecord('sys_sidebar_discussion_message');
-                    m.initialize();
-                    m.setValue('discussion', discId);
-                    m.setValue('sender',     senderId);
-                    m.setValue('message',    message);
-                    m.setValue('body',       message);
-                    m.insert();
-                } catch (eMsg) { /* best-effort */ }
-
-                return { ok: true, discussion_id: discId, recipient: recipientDisplay,
-                         message: 'Started a Sidebar Discussion with ' + recipientDisplay + ' and sent your message.' };
+            // read it back: an insert refused by the platform does not throw
+            var chk = new GlideRecord('sys_sidebar_discussion_message');
+            var stored = (mid && chk.get(mid)) ? String(chk.getValue('message') || chk.getValue('body') || '') : '';
+            if (!p1id || !p2id || !stored) {
+                try { var dd = new GlideRecord('sys_sidebar_discussion'); if (dd.get(discId)) dd.deleteRecord(); } catch (eD) {}
+                return { ok: false, error: 'I could not deliver the message to ' + recipientDisplay + ' - nothing was sent. I can send it as a tracked message instead.' };
             }
-
-            // Fallback: live_message / live_group_member chain (older Now Experience)
-            try {
-                var lg = new GlideRecord('live_group');
-                lg.initialize();
-                lg.setValue('name',  subj);
-                lg.setValue('group_type', 'direct_message');
-                var lgId = lg.insert();
-                if (lgId) {
-                    // R4.5 - renamed lp1/lp2 to avoid var-hoist collision with
-                    // the modern path's p1/p2 above; removed dead forEach no-op.
-                    var lp1 = new GlideRecord('live_group_profile');
-                    lp1.initialize();
-                    lp1.setValue('group',   lgId);
-                    lp1.setValue('profile', senderId);
-                    lp1.insert();
-                    var lp2 = new GlideRecord('live_group_profile');
-                    lp2.initialize();
-                    lp2.setValue('group',   lgId);
-                    lp2.setValue('profile', recipientId);
-                    lp2.insert();
-                    var lm = new GlideRecord('live_message');
-                    lm.initialize();
-                    lm.setValue('group',     lgId);
-                    lm.setValue('profile',   senderId);
-                    lm.setValue('field',     message);
-                    lm.insert();
-                    return { ok: true, live_group_id: lgId, recipient: recipientDisplay,
-                             message: 'Sent live chat to ' + recipientDisplay + '.' };
-                }
-            } catch (eLive) {}
-
-            return { ok: false, error: 'Could not create a sidebar discussion - tables not available on this instance.' };
+            return { ok: true, verified: true, discussion_id: discId, recipient: recipientDisplay,
+                     message: 'Started a Sidebar Discussion with ' + recipientDisplay + ' and sent your message - I checked it is there.' };
         } catch (e) {
-            return { ok: false, error: 'Sidebar message failed: ' + (e.message || e) };
+            var why = '';
+            try { why = String(e.message || e); } catch (e2) { why = 'access denied'; }
+            return { ok: false, error: 'Sidebar message failed, nothing was sent: ' + why.substring(0, 120) };
         }
     }
 
@@ -6671,7 +6753,7 @@
         } catch (eCache) { gs.warn('[NetraRAG] cache preload failed: ' + (eCache.message || eCache)); }
 
         // Iterate published KB articles, score against the cache, embed lazily
-        var gr = new GlideRecord('kb_knowledge');
+        var gr = new GlideRecordSecure('kb_knowledge');   // KB user criteria apply
         gr.addQuery('workflow_state', 'published');
         gr.addQuery('active', true);
         gr.setLimit(200);   // safety cap for very large KBs
@@ -8582,7 +8664,7 @@
 
         // Recent published KB titles
         try {
-            var gk = new GlideRecord('kb_knowledge');
+            var gk = new GlideRecordSecure('kb_knowledge');
             gk.addQuery('workflow_state', 'published');
             gk.orderByDesc('sys_updated_on');
             gk.setLimit(40);

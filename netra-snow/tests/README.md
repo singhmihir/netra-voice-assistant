@@ -32,6 +32,8 @@ node:
 | `confirm-gate.test.js` | a "yes" only runs what was just read back, in the next turn; stale, auto-turn, multi-draft, partial-answer and plan cases; plan undo |
 | `routing.test.js` | which utterances the zero-call fast lane answers and which go to the model; basic mode without a key |
 | `investigation.test.js` | evidence first, one model call, invented facts dropped, thin-evidence honesty, CI-vs-ticket guards |
+| `records.test.js` | who a message really reached, true attachment/SLA/CI/approval counts, current KB versions, reminder cancels, real field names, change journals |
+| `selfcheck.test.js` | the self-check finds and explains a stopped scanner, a rejected key, overdue orders, thin memory, switched-off writes |
 | `speech.test.js` | spoken ticket numbers, sys_id tails, dates and clock times |
 | `client.test.js` | the page's local replies never swallow an awaited answer; "repeat" replays the real reply |
 | `static.test.js` | everything parses, no secrets ship, the hoisting trap stays closed, every declared tool has a handler, installer/packager know every script include |
