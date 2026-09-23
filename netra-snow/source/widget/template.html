@@ -901,6 +901,23 @@
         </div>
       </section>
 
+      <!-- R18 - BRAIN: the quota governor's ledger - which model is up, how
+           much of its free daily pool is gone, and when resting ones return -->
+      <section class="netra-lab-sec">
+        <div class="netra-lab-sec-title">BRAIN
+          <span class="netra-lab-chip">{{c.brain.alive}} of {{c.brain.models.length}} up</span>
+          <span class="netra-lab-chip" ng-if="c.brain.mode !== 'full'">{{c.brain.mode}}</span>
+          <span class="netra-lab-chip">last turn: {{c.brain.calls}} call{{c.brain.calls === 1 ? '' : 's'}}</span>
+        </div>
+        <div class="netra-lab-feed" role="list" aria-label="Reasoning model quota">
+          <div class="netra-lab-feed-row" role="listitem" ng-repeat="m in c.brain.models track by m.model">
+            <span class="netra-lab-feed-t">{{m.model.replace('gemini-','')}}</span>
+            <span class="netra-lab-feed-k" ng-class="{'lk-warn': m.resting, 'lk-mem': !m.resting}">{{m.resting ? 'resting' : 'up'}}</span>
+            <span class="netra-lab-feed-m">{{m.used_today}}{{m.limit ? ' / ' + m.limit : ''}} today<span ng-if="m.resting"> &middot; {{m.reason.replace('_',' ')}}, back in {{c.brainUntil(m.until_ms)}}</span></span>
+          </div>
+        </div>
+      </section>
+
       <!-- R17 - AGENCY: what she is doing on her own, and what she has
            learned about you - the transparency card for the autonomy tier -->
       <section class="netra-lab-sec">

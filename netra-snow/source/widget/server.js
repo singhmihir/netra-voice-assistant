@@ -92,6 +92,8 @@
     var _currentUserMsg = '';        // R17 - set by _chat each turn; the standing-order
                                      // confirm gate uses it to prove two calls came from
                                      // two DIFFERENT user turns, not one tool loop
+    var _brainTurn = { calls: 0, attempts: [], skipped: 0, mode: 'full', brain: null };   // R18 - per-request
+                                            // quota governor state; mutated, never reassigned
     var _planContinueFlag = { v: false };   // R17 - execute_plan sets this when steps remain;
                                             // the chat response carries it so the client can
                                             // auto-resubmit a [continue plan] turn
@@ -175,6 +177,7 @@
             data.away_pending = awayGa.next() ? parseInt(awayGa.getAggregate('COUNT'), 10) : 0;
         } catch (eAw) { data.away_pending = 0; }
         try { data.agency = _agencyTelemetry(); } catch (eAg) { data.agency = null; }
+        try { data.brain = _brainTelemetry(); } catch (eBr) { data.brain = null; }
         try {
             var trainSnap = _trainingRead();
             data.training = {
@@ -368,7 +371,31 @@
     /* ===================================================================
      *  Gemini chat with tool use
      * =================================================================== */
+    /**
+     * R18 - every turn goes through here: bump the turn counter (the yes/no
+     * guard needs it), run the real turn, then ALWAYS flush the quota
+     * ledger and attach the brain telemetry - on every return path,
+     * including errors, so the Lab and the tests can see what it cost.
+     */
     function _chat(userMessage, history, liveMode, prosody) {
+        _brainTurn.calls = 0; _brainTurn.attempts = []; _brainTurn.skipped = 0;
+        _brainTurn.mode = 'full'; _brainTurn.blobWritten = false;
+        var tb = null;
+        try { tb = _ctxReadBlob(); tb.turn = (tb.turn || 0) + 1; } catch (eT) {}
+        var out;
+        try {
+            out = _chatCore(userMessage, history, liveMode, prosody);
+        } finally {
+            try { _brain().flush(); } catch (eF) { gs.warn('[NetraBrain] flush failed: ' + (eF.message || eF)); }
+            try { if (tb && !_brainTurn.blobWritten) _ctxWriteBlob(tb); } catch (eW) {}
+        }
+        if (out && typeof out === 'object') {
+            try { out.brain = _brainTelemetry(); } catch (eB) {}
+        }
+        return out;
+    }
+
+    function _chatCore(userMessage, history, liveMode, prosody) {
         if (!userMessage) {
             return { ok: false, message: 'I did not catch that. Kindly say it again.' };
         }
@@ -535,6 +562,11 @@
         }
         contents.push({ role: 'user', parts: userParts });
 
+        // R18 - zero-call fast lane first; forced basic mode for testing
+        var fast = _fastLane(userMessage, contents);
+        if (fast) return fast;
+        if (_brainOfflineForced()) return _offlineAnswer(userMessage, contents, { why: 'forced' });
+
         var systemInstruction = _systemPrompt(liveMode);
         var tools = _toolDeclarations(liveMode);
 
@@ -545,16 +577,30 @@
         var turnWrites  = [];   // R17 - write-tool args for the learning hook
         var clientDirectives = {};   // R2 - navigate_url, click_button_label, etc.
         var shrunkOnce = false;   // R11 - one in-place history shrink before giving up
+        var toolLog = [];         // R18 - what actually ran, for honest partial answers
+        var callBudget = _turnBudget();
         for (var iter = 0; iter < 8; iter++) {
+            if (_brainTurn.calls >= callBudget) {
+                return toolLog.length ? _partialReport(toolLog, contents, 'budget')
+                                      : _offlineAnswer(userMessage, contents, { why: 'budget' });
+            }
             var resp = _callGemini(apiKey, model, contents, tools, systemInstruction);
             if (resp._model_used) modelUsed = resp._model_used;
             if (resp.error) {
                 gs.error('[NetraGemini] API error: ' + resp.error);
                 var friendly = 'Sorry, the AI service is busy right now. Kindly try again in a moment.';
                 var err = String(resp.error);
-                if (err.indexOf('429') >= 0)        friendly = 'I have hit the rate limit. Kindly wait a minute and try again.';
-                else if (err.indexOf('401') >= 0 || err.indexOf('403') >= 0) friendly = 'My API key is not authorised. Kindly check the configuration.';
-                else if (err.indexOf('400') >= 0) {
+                var ecode = resp.code;
+                // R18 - brain unavailable (quota, overload, timeout, all resting):
+                // never go quiet. Tell them what already ran, or answer in
+                // basic mode, and say when the reasoning comes back.
+                if (resp.all_resting || ecode === 429 || ecode === 0 || ecode === 404 || ecode >= 500 ||
+                    err.indexOf('exhausted') >= 0 || err.indexOf('chain_deadline') >= 0) {
+                    return toolLog.length ? _partialReport(toolLog, contents, 'brain')
+                                          : _offlineAnswer(userMessage, contents, { why: 'brain', resting_until_ms: resp.resting_until_ms });
+                }
+                if (ecode === 401 || ecode === 403) friendly = 'My API key is not authorised. Kindly check the configuration.';
+                else if (ecode === 400 || err.indexOf('400') >= 0) {
                     // R11 - 400 after a long session usually means payload too
                     // large. The old behaviour nuked the WHOLE memory
                     // (force_history_reset) which felt like amnesia. Now:
@@ -582,8 +628,6 @@
                     friendly = 'My memory got a bit too heavy, so I compressed the older half. Could you say that again?';
                     return { ok: false, message: friendly, error_detail: err, trim_history_half: true };
                 }
-                else if (err.indexOf('404') >= 0)   friendly = 'The AI model is not available right now.';
-                else if (err.indexOf('exhausted') >= 0) friendly = 'All AI models are busy at the moment. Kindly try again in a few seconds.';
                 return { ok: false, message: friendly, error_detail: err };
             }
 
@@ -607,9 +651,19 @@
 
                 // Execute each function call and append responses
                 var responseParts = [];
+                var finalSpeech = null;
                 for (var f = 0; f < functionCalls.length; f++) {
                     var fc = functionCalls[f];
+                    // R18 - at most 6 tool calls per round; a model spraying
+                    // calls is burning quota and time, not being thorough
+                    if (f >= 6) {
+                        responseParts.push({ functionResponse: { name: fc.name,
+                            response: { result: { ok: false, skipped: 'per-round cap of 6 tool calls - call it again next round if still needed' } } } });
+                        continue;
+                    }
                     var result = _runTool(fc.name, fc.args || {});
+                    toolLog.push({ name: fc.name, args: fc.args || {}, result: result });
+                    if (result && result.final_speech && !finalSpeech) finalSpeech = String(result.final_speech);
                     toolsCalled.push(fc.name);   // R1 - record tool call
                     // R17 - the learning hook wants the ARGS of writes, not
                     // just the names, to spot overrides of our own advice
@@ -637,6 +691,15 @@
                     });
                 }
                 contents.push({ role: 'user', parts: responseParts });
+                // R18 - terminal tools (the investigator) already composed a
+                // verified spoken answer; another model round would only
+                // paraphrase it - and could drift from the evidence
+                if (finalSpeech) {
+                    var fr = _flReply(finalSpeech, contents, null, 'tool_final', { tools_called: toolsCalled });
+                    fr.model_used = modelUsed;
+                    if (clientDirectives && (clientDirectives.navigate_url || clientDirectives.open_url)) fr.directives = clientDirectives;
+                    return fr;
+                }
                 continue;
             }
 
@@ -693,7 +756,7 @@
             };
         }
 
-        return { ok: false, message: 'I am thinking too much, kindly try again with a simpler request.' };
+        return _partialReport(toolLog, contents, 'loop_cap');
     }
 
     /* ===================================================================
@@ -838,117 +901,1303 @@
     }
 
     function _callGemini(apiKey, requestedModel, contents, tools, systemInstruction) {
-        // R2.12.5 - SPEED-FIRST chain, empirically calibrated May 2026:
-        //   gemini-flash-lite-latest:  ~1.0s  <-- alias to Google's current
-        //                                         best lite (3.1 / 2.5)
-        //   gemini-3.1-flash-lite:     ~1.7s
-        //   gemini-2.5-flash-lite:     ~3-5s  (variable, latest preview)
-        //   gemini-2.5-flash:          ~2-4s  (has thinking-token overhead
-        //                                     even with thinkingBudget=0)
-        // Pro models dropped — too slow for an interactive voice loop.
-        var chain = [requestedModel];
-        // R3.6 - trimmed from 7 to 3 alternates. With 12s timeout each, the
-        // old worst case was 7x12=84s (which felt like a server hang).
-        // Now: 3 attempts max + 20s total deadline -> never exceeds ~22s.
-        // R17 - explicit pinned ids only. 2.0 ids are DEAD (404 since June),
-        // -latest is alias roulette, and 2.5-lite stays as the bridge
-        // fallback until Google actually turns it off.
-        // Measured Sept 23 2026 with a full-size request: 2.5-flash-lite
-        // 0.5s, 3.6-flash 6s, 3.5-flash-lite 30s(!) - so the old lite stays
-        // primary while Google keeps it alive, and the gen-3 Flash is both
-        // the complex brain and the day-after-retirement fallback.
-        ['gemini-2.5-flash-lite',
-         'gemini-3.6-flash',
-         'gemini-3-flash-preview'].forEach(function (m) {
-            if (chain.indexOf(m) < 0) chain.push(m);
-        });
-
-        var lastErr = null;
+        // R18 - every generate call goes through the quota governor. The
+        // chain is the requested model then the property model_chain; the
+        // governor drops anything resting (daily quota gone, per-minute
+        // limit, timeout cool-down, retired) with ZERO http - so a dead
+        // model costs nothing instead of a round trip on every tool round.
+        var brain = _brain();
+        var nowMs = new GlideDateTime().getNumericValue();
+        var pick = brain.pickChain(_modelChain(requestedModel), nowMs);
+        _brainTurn.skipped += pick.skipped.length;
+        if (!pick.tryList.length) {
+            return { error: 'all_resting', all_resting: true, code: 429,
+                     resting_until_ms: pick.all_resting_until_ms };
+        }
+        var lastErr = null, lastCode = null;
         var omitThinkingRetry = false;   // R16 - only burn one no-thinking retry per call
         var chainStartedAt = Date.now();
-        var CHAIN_DEADLINE_MS = 20000;   // R3.6 - hard cap, no matter how many models left
-        // 404 on a deprecated model is NOT a real "stop the chain" signal -
-        // the model just doesnt exist. Keep going. We only stop on auth (401/403),
-        // quota (RESOURCE_EXHAUSTED with quota), or actual permission errors.
-        for (var i = 0; i < chain.length; i++) {
+        var CHAIN_DEADLINE_MS = 20000;
+        for (var i = 0; i < pick.tryList.length; i++) {
+            var m = pick.tryList[i];
             if (Date.now() - chainStartedAt > CHAIN_DEADLINE_MS) {
                 gs.warn('[NetraGemini] chain deadline hit after ' + i + ' attempts - giving up');
-                return { error: 'chain_deadline: ' + (lastErr || 'no model returned in 20s') };
+                return { error: 'chain_deadline: ' + (lastErr || 'no model returned in 20s'), code: 0 };
             }
-            var result = _callGeminiOnce(apiKey, chain[i], contents, tools, systemInstruction);
+            var t0 = Date.now();
+            var result = _callGeminiOnce(apiKey, m, contents, tools, systemInstruction);
+            var tookMs = Date.now() - t0;
             if (!result.error) {
-                if (i > 0) {
-                    gs.info('[NetraGemini] fallback succeeded on ' + chain[i] + ' after ' + i + ' failures');
-                    data.last_model_used = chain[i];
-                }
-                result._model_used = chain[i];
+                brain.recordOk(m, tookMs, new GlideDateTime().getNumericValue());
+                _brainTurn.calls++;
+                _brainTurn.attempts.push({ model: m, code: 200, ms: tookMs });
+                if (i > 0) data.last_model_used = m;
+                result._model_used = m;
                 return result;
             }
             lastErr = result.error;
-            var transient = lastErr.indexOf('HTTP 0') >= 0 ||   // timeout/conn-drop: NEXT model, dont give up
-                            lastErr.indexOf('503') >= 0 ||
-                            lastErr.indexOf('429') >= 0 ||
-                            lastErr.indexOf('500') >= 0 ||
-                            lastErr.indexOf('UNAVAILABLE') >= 0 ||
-                            lastErr.indexOf('overloaded') >= 0 ||
-                            lastErr.indexOf('high demand') >= 0 ||
-                            // 404 "model not found" is treated as transient (skip and continue)
-                            // because we always want to try the next model, not abort.
-                            (lastErr.indexOf('404') >= 0 && lastErr.indexOf('not found') >= 0) ||
-                            (lastErr.indexOf('404') >= 0 && lastErr.indexOf('is not supported') >= 0);
-            if (!transient) {
-                // R16 - SELF HEAL. A 400 on a request we know is well formed is
-                // nearly always a knob this model has stopped accepting (that
-                // is exactly how the thinkingConfig breakage arrived). Retry
-                // the same model once with the optional knobs stripped before
-                // writing the turn off.
-                if (lastErr.indexOf('400') >= 0 && !omitThinkingRetry) {
+            lastCode = (typeof result.code === 'number') ? result.code : 0;
+            _brainTurn.attempts.push({ model: m, code: lastCode, ms: tookMs });
+            if (lastCode === 400) {
+                // R16 - a 400 on a well-formed request is nearly always a
+                // knob this model stopped accepting. Retry once, bare.
+                if (!omitThinkingRetry) {
                     omitThinkingRetry = true;
-                    gs.warn('[NetraGemini] 400 on ' + chain[i] + ' - retrying once without thinkingConfig');
-                    var retry = _callGeminiOnce(apiKey, chain[i], contents, tools, systemInstruction, true);
+                    gs.warn('[NetraGemini] 400 on ' + m + ' - retrying once without thinkingConfig');
+                    var retry = _callGeminiOnce(apiKey, m, contents, tools, systemInstruction, true);
                     if (!retry.error) {
-                        retry._model_used = chain[i];
-                        gs.info('[NetraGemini] recovered on ' + chain[i] + ' without thinkingConfig');
+                        brain.recordOk(m, Date.now() - t0, new GlideDateTime().getNumericValue());
+                        _brainTurn.calls++;
+                        retry._model_used = m;
                         return retry;
                     }
                     lastErr = retry.error;
                 }
-                gs.warn('[NetraGemini] non-transient error on ' + chain[i] + ': ' + lastErr.substring(0, 200));
-                // R16 - a 400 tells us nothing on its own, so dump the SHAPE of
-                // what we sent (never the content) to make these debuggable.
-                if (lastErr.indexOf('400') >= 0) {
-                    try {
-                        var _dbg = [];
-                        for (var _c = 0; _c < (contents || []).length; _c++) {
-                            var _e = contents[_c] || {};
-                            var _kinds = [];
-                            for (var _p = 0; _p < (_e.parts || []).length; _p++) {
-                                var _pt = _e.parts[_p] || {};
-                                _kinds.push(_pt.text !== undefined ? ('text:' + String(_pt.text).length)
-                                          : _pt.functionCall ? ('call:' + _pt.functionCall.name)
-                                          : _pt.functionResponse ? ('resp:' + _pt.functionResponse.name)
-                                          : _pt.inlineData ? 'inlineData' : 'EMPTY_PART');
-                            }
-                            _dbg.push((_e.role || 'NOROLE') + '[' + _kinds.join(',') + ']');
-                        }
-                        var _sysLen = -1;
-                        try { _sysLen = JSON.stringify(systemInstruction || {}).length; } catch (eS0) {}
-                        var _toolN = -1;
-                        try { _toolN = tools && tools[0] && tools[0].functionDeclarations ? tools[0].functionDeclarations.length : -1; } catch (eT0) {}
-                        gs.warn('[NetraGemini] 400 shape: sysInstr=' + _sysLen + 'B tools=' + _toolN +
-                                ' turns=' + (contents || []).length + ' -> ' + _dbg.join(' | ').substring(0, 700));
-                    } catch (eDbg) { gs.warn('[NetraGemini] 400 shape dump failed: ' + eDbg); }
-                }
+                gs.warn('[NetraGemini] non-transient error on ' + m + ': ' + String(lastErr).substring(0, 200));
+                _log400Shape(contents, tools, systemInstruction);
                 return result;
             }
-            // For 404 vs busy, log differently so debugging stays clear
-            if (lastErr.indexOf('404') >= 0) {
-                gs.info('[NetraGemini] ' + chain[i] + ' is retired/missing, trying next model');
+            brain.recordFail(m, lastCode, result.raw || result.error, new GlideDateTime().getNumericValue());
+            if (lastCode === 401 || lastCode === 403) return result;   // the key is the problem, not the model
+            gs.info('[NetraGemini] ' + m + ' unavailable (HTTP ' + lastCode + '), trying the next model');
+        }
+        return { error: 'All fallback models exhausted. Last: ' + lastErr, code: lastCode };
+    }
+
+    // R16 - a 400 tells us nothing on its own, so dump the SHAPE of what we
+    // sent (never the content) to make these debuggable.
+    function _log400Shape(contents, tools, systemInstruction) {
+        try {
+            var dbg = [];
+            for (var c = 0; c < (contents || []).length; c++) {
+                var e = contents[c] || {};
+                var kinds = [];
+                for (var p = 0; p < (e.parts || []).length; p++) {
+                    var pt = e.parts[p] || {};
+                    kinds.push(pt.text !== undefined ? ('text:' + String(pt.text).length)
+                              : pt.functionCall ? ('call:' + pt.functionCall.name)
+                              : pt.functionResponse ? ('resp:' + pt.functionResponse.name)
+                              : pt.inlineData ? 'inlineData' : 'EMPTY_PART');
+                }
+                dbg.push((e.role || 'NOROLE') + '[' + kinds.join(',') + ']');
+            }
+            var sysLen = -1, toolN = -1;
+            try { sysLen = JSON.stringify(systemInstruction || {}).length; } catch (eS) {}
+            try { toolN = tools && tools[0] && tools[0].functionDeclarations ? tools[0].functionDeclarations.length : -1; } catch (eT) {}
+            gs.warn('[NetraGemini] 400 shape: sysInstr=' + sysLen + 'B tools=' + toolN +
+                    ' turns=' + (contents || []).length + ' -> ' + dbg.join(' | ').substring(0, 700));
+        } catch (eD) { gs.warn('[NetraGemini] 400 shape dump failed: ' + eD); }
+    }
+
+    /**
+     * R18 - model order. Measured Sept 23 2026 on a full-size request:
+     * 2.5-flash-lite 0.5s, 3.6-flash ~6s, 3-flash-preview ok, 3.5-flash-lite
+     * 30s (parked). Each has its OWN free-tier daily pool (2.5-flash-lite:
+     * 20/day), so listing more of them multiplies how long Netra stays smart
+     * on a free key - the governor makes the dead ones free to skip.
+     */
+    function _modelChain(requested) {
+        var csv = gs.getProperty(SCOPE + '.model_chain',
+            'gemini-2.5-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3-flash-preview');
+        var chain = [];
+        if (requested) chain.push(String(requested));
+        var parts = String(csv).split(',');
+        for (var i = 0; i < parts.length; i++) {
+            var m = parts[i].replace(/^\s+|\s+$/g, '');
+            if (m && chain.indexOf(m) < 0) chain.push(m);
+        }
+        return chain;
+    }
+
+    function _brain() {
+        if (!_brainTurn.brain) _brainTurn.brain = new NetraBrain();
+        return _brainTurn.brain;
+    }
+
+    function _turnBudget() {
+        var n = parseInt(gs.getProperty(SCOPE + '.turn_call_budget', '5'), 10);
+        return isNaN(n) ? 5 : Math.max(0, n);
+    }
+
+    function _brainTelemetry() {
+        var nowMs = new GlideDateTime().getNumericValue();
+        var snap = [];
+        try { snap = _brain().snapshot(_modelChain(null), nowMs); } catch (e) {}
+        var alive = 0, soonest = 0;
+        for (var i = 0; i < snap.length; i++) {
+            if (!snap[i].resting) alive++;
+            else if (!soonest || snap[i].until_ms < soonest) soonest = snap[i].until_ms;
+        }
+        return { calls: _brainTurn.calls, attempts: _brainTurn.attempts, skipped_resting: _brainTurn.skipped,
+                 mode: _brainTurn.mode, alive: alive, models: snap, next_revival_ms: soonest };
+    }
+
+    /* ===================================================================
+     *  R18 - FAST LANE, OFFLINE BRAIN, HONEST PARTIAL ANSWERS
+     *
+     *  Free-tier reality: 20 generate calls a day per model, and every
+     *  ordinary turn used to cost two of them - one to pick the tool, one
+     *  to phrase the answer. "What's the status of INC0010013" does not
+     *  need a language model. So a deterministic layer runs FIRST and
+     *  answers the frequent, unambiguous things with zero model calls:
+     *  ticket status, my tickets, my approvals, the away debrief, the work
+     *  board, quota status, repeat, plan hops and yes/no on anything Netra
+     *  parked in the previous turn. Everything anchored and length-capped,
+     *  so a compound or subtle sentence still goes to the real brain.
+     *
+     *  And when the brain is genuinely unavailable - every model resting,
+     *  or the call fails - she does not go quiet. The offline brain answers
+     *  what it can, raises a ticket with a read-back and a yes, refuses
+     *  other writes WITH a reason, and says when her reasoning comes back.
+     *  If the brain dies halfway through a turn, she tells you what she
+     *  already found instead of "I am thinking too much".
+     * =================================================================== */
+    function _cleanMsg(msg) {
+        return String(msg || '')
+            .replace(/\s*\[voice delivery:[^\]]*\]\s*$/i, '')
+            .replace(/^\s+|\s+$/g, '');
+    }
+
+    function _numWordDigit(w) {
+        var M = { zero: '0', oh: '0', o: '0', nought: '0', one: '1', two: '2', three: '3', four: '4',
+                  five: '5', six: '6', seven: '7', eight: '8', nine: '9' };
+        if (/^\d+$/.test(w)) return w;
+        return M.hasOwnProperty(w) ? M[w] : null;
+    }
+
+    /**
+     * "i n c zero zero one zero zero one three", "inc 10013", "incident
+     * 10013" -> INC0010013. Everything else comes back lowercased; ticket
+     * tokens come back UPPERCASE so they are easy to spot.
+     */
+    function _normSpoken(text) {
+        var t = ' ' + String(text || '').toLowerCase() + ' ';
+        t = t.replace(/\bs\s+c\s+t\s+a\s+s\s+k\b/g, 'sctask')
+             .replace(/\br\s+i\s+t\s+m\b/g, 'ritm')
+             .replace(/\bi\s+n\s+c\b/g, 'inc')
+             .replace(/\bc\s+h\s+g\b/g, 'chg')
+             .replace(/\bp\s+r\s+b\b/g, 'prb')
+             .replace(/\br\s+e\s+q\b/g, 'req');
+        var toks = t.replace(/^\s+|\s+$/g, '').split(/[\s,]+/);
+        var out = [];
+        for (var i = 0; i < toks.length; i++) {
+            var m = toks[i].match(/^(inc|chg|prb|ritm|req|sctask|incident)-?(\d*)$/);
+            if (m) {
+                var digits = m[2], j = i + 1;
+                while (j < toks.length && digits.length < 7) {
+                    var dgt = _numWordDigit(toks[j].replace(/-/g, ''));
+                    if (dgt === null) break;
+                    digits += dgt;
+                    j++;
+                }
+                if (digits.length >= 1 && digits.length <= 7) {
+                    while (digits.length < 7) digits = '0' + digits;
+                    out.push((m[1] === 'incident' ? 'INC' : m[1].toUpperCase()) + digits);
+                    i = j - 1;
+                    continue;
+                }
+            }
+            out.push(toks[i]);
+        }
+        return out.join(' ');
+    }
+
+    function _findNums(norm) {
+        return String(norm || '').match(/\b(INC|CHG|PRB|RITM|REQ|SCTASK)\d{7}\b/g) || [];
+    }
+
+    // R8.2 house style: record type + last three digits, stressed
+    function _spkNum(num) {
+        var n = String(num || '');
+        var m = n.match(/^([A-Z]+)(\d+)$/);
+        if (!m) return n;
+        var W = { INC: 'incident', CHG: 'change', PRB: 'problem', RITM: 'requested item', REQ: 'request', SCTASK: 'catalog task', KB: 'article', NT: 'task' };
+        var last = m[2].substring(m[2].length - 3).split('').join(' ');
+        return '**' + (W[m[1]] || m[1]) + ' ending ' + last + '**';
+    }
+
+    function _ago(ms) {
+        if (!ms) return '';
+        var mins = Math.round((new GlideDateTime().getNumericValue() - ms) / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return mins + ' minute' + (mins === 1 ? '' : 's') + ' ago';
+        var h = Math.round(mins / 60);
+        if (h < 24) return 'about ' + h + ' hour' + (h === 1 ? '' : 's') + ' ago';
+        var d = Math.round(h / 24);
+        return d + ' day' + (d === 1 ? '' : 's') + ' ago';
+    }
+
+    function _until(ms) {
+        if (!ms) return '';
+        var mins = Math.round((ms - new GlideDateTime().getNumericValue()) / 60000);
+        if (mins <= 1) return 'in a minute';
+        if (mins < 60) return 'in about ' + mins + ' minutes';
+        var h = Math.round(mins / 60);
+        return 'in about ' + h + ' hour' + (h === 1 ? '' : 's');
+    }
+
+    function _clockAt(ms) {
+        // the user's own timezone, via the display value
+        try {
+            var g = new GlideDateTime();
+            g.setNumericValue(ms);
+            var dv = String(g.getDisplayValue());   // e.g. 2026-09-24 00:30:00
+            var hm = dv.split(' ')[1] || '';
+            var hh = parseInt(hm.split(':')[0], 10), mm = hm.split(':')[1] || '00';
+            var ap = hh >= 12 ? 'PM' : 'AM';
+            hh = hh % 12; if (hh === 0) hh = 12;
+            return hh + ':' + mm + ' ' + ap;
+        } catch (e) { return ''; }
+    }
+
+    function _curTurn() { return _ctxReadBlob().turn || 0; }
+
+    function _draftFresh(d) {
+        if (!d || typeof d.turn !== 'number') return false;
+        var age = new GlideDateTime().getNumericValue() - (d.at || 0);
+        return d.turn === _curTurn() - 1 && age < 10 * 60 * 1000;
+    }
+
+    // ---- speech templates over real tool results -----------------------
+    function _sayTicketList(res) {
+        var t = (res && res.tickets) || [];
+        if (!t.length) return 'You have no open tickets. Clean slate.';
+        var bits = [];
+        for (var i = 0; i < t.length && i < 3; i++) {
+            bits.push(_spkNum(t[i].number) + ', ' + String(t[i].short_description || '').substring(0, 70) +
+                      (t[i].state ? ' - ' + t[i].state : ''));
+        }
+        return 'You have ' + t.length + ' open ticket' + (t.length === 1 ? '' : 's') + '. ' +
+               (t.length > 3 ? 'The newest three: ' : '') + bits.join('; ') + '.' +
+               (t.length > 3 ? ' Shall I read the rest?' : '');
+    }
+
+    function _sayApprovals(res) {
+        var a = (res && res.approvals) || [];
+        if (!a.length) return 'Nothing is waiting on your approval.';
+        var bits = [];
+        for (var i = 0; i < a.length && i < 3; i++) {
+            var subj = String(a[i].subject || '');
+            var num = a[i].ref_number || '';
+            bits.push(num ? (_spkNum(num) + ', ' + subj.replace(num + ' - ', '').substring(0, 70)) : subj.substring(0, 80));
+        }
+        return a.length + ' approval' + (a.length === 1 ? ' is' : 's are') + ' waiting on you: ' + bits.join('; ') + '.' +
+               (a.length > 3 ? ' There are more - shall I go on?' : '');
+    }
+
+    function _saySummary(res) {
+        if (!res || res.ok === false) return 'I could not find that record' + (res && res.error ? ' - ' + res.error : '') + '.';
+        var who = res.assigned_to || res.assignment_group || '';
+        var s = _spkNum(res.number) + ': ' + String(res.short_description || '').substring(0, 110) + '. ' +
+                'It is ' + String(res.state || 'in an unknown state').toLowerCase() +
+                (res.priority ? ', priority ' + String(res.priority).replace(/^\d+ - /, '').toLowerCase() : '') +
+                (who ? ', with ' + who : ', and nobody has picked it up yet') + '.';
+        var j = res.journal || [];
+        if (j.length) {
+            var last = j[0];
+            s += ' Latest ' + (last.element === 'work_notes' ? 'work note' : 'comment') + ' from ' + last.author +
+                 (last.created_ms ? ', ' + _ago(last.created_ms) : '') + ': "' + String(last.body || '').substring(0, 140) + '".';
+        } else {
+            s += ' No comments or work notes yet.';
+        }
+        return s;
+    }
+
+    function _sayAway(res) {
+        var items = (res && res.items) || [];
+        if (!items.length) return 'Nothing happened while you were away - no standing orders fired.';
+        var words = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'];
+        var bits = [], undoable = false;
+        for (var i = 0; i < items.length; i++) {
+            var at = items[i].at ? _clockAt(new GlideDateTime(items[i].at).getNumericValue()) : '';
+            bits.push((words[i] || String(i + 1)) + ': ' + (at ? 'at ' + at + ', ' : '') + items[i].what);
+            if (items[i].undoable) undoable = true;
+        }
+        return 'While you were away I did ' + items.length + ' thing' + (items.length === 1 ? '' : 's') + '. ' +
+               bits.join('. ') + '.' + (undoable ? ' Say undo and the number if I got any of it wrong.' : '');
+    }
+
+    function _sayPlanHop(out) {
+        if (!out) return 'Something went wrong running the plan.';
+        if (out.ok === false && out.halted_at_step) {
+            return 'The plan stopped at step ' + out.halted_at_step + ': ' + out.step_error + '. ' +
+                   out.completed + ' of ' + out.total + ' steps are done. Say "undo the plan" if you want those reversed.';
+        }
+        if (out.ok === false) return String(out.error || 'I could not run the plan.');
+        if (out.done) return 'Plan complete - all ' + out.total + ' steps ran and checked out. Say "undo the plan" if anything looks wrong.';
+        var left = out.total - out.completed;
+        return out.completed + ' done, ' + left + ' to go.';
+    }
+
+    function _sayQuota() {
+        var t = _brainTelemetry();
+        var models = t.models || [];
+        var resting = [], alive = [];
+        for (var i = 0; i < models.length; i++) {
+            var mm = models[i];
+            var nm = mm.model.replace(/^gemini-/, '');
+            if (mm.resting) {
+                var why = mm.reason === 'per_day' || mm.reason === 'limit' ? "out of today's free quota"
+                        : mm.reason === 'per_minute' ? 'catching its breath (per-minute limit)'
+                        : mm.reason === 'retired' ? 'retired by Google'
+                        : mm.reason === 'timeout' ? 'timing out' : 'overloaded';
+                resting.push(nm + ' is ' + why + (mm.until_ms ? ', back ' + _until(mm.until_ms) + ' (' + _clockAt(mm.until_ms) + ')' : ''));
             } else {
-                gs.info('[NetraGemini] ' + chain[i] + ' is busy, falling through to next model');
+                alive.push(nm + (mm.limit ? ' (' + mm.used_today + ' of ' + mm.limit + ' calls used today)' : (mm.used_today ? ' (' + mm.used_today + ' calls today)' : '')));
             }
         }
-        return { error: 'All fallback models exhausted. Last: ' + lastErr };
+        var s = '';
+        if (!alive.length) s = 'All ' + models.length + ' of my reasoning models are resting, so I am in basic mode. ';
+        else s = alive.length + ' of my ' + models.length + ' reasoning models ' + (alive.length === 1 ? 'is' : 'are') + ' available: ' + alive.join(', ') + '. ';
+        if (resting.length) s += resting.join('. ') + '. ';
+        s += 'Simple lookups like ticket status, my tickets, approvals and the debrief cost me nothing either way.';
+        return s;
+    }
+
+    // ---- the work board: Netra's own to-do list ---------------------------
+    function _workBoard() {
+        var lines = [];
+        try {
+            var b = _ctxReadBlob();
+            if (b.plan && !b.plan.finished && b.plan.steps) {
+                lines.push('a plan, ' + b.plan.cursor + ' of ' + b.plan.steps.length + ' steps done' + (b.plan.confirmed ? '' : ', waiting for your go-ahead'));
+            }
+        } catch (eP) {}
+        try {
+            var gr = new GlideRecord(SCOPE + '_task');
+            gr.addQuery('user', user);
+            gr.addEncodedQuery('stateINactive,running,paused,awaiting_apply,applying');
+            gr.orderByDesc('sys_updated_on');
+            gr.setLimit(8);
+            gr.query();
+            while (gr.next()) {
+                var kind = String(gr.kind), num = String(gr.nt_number), st = String(gr.state);
+                var n = parseInt(num.replace(/\D/g, ''), 10);
+                if (kind === 'mission') {
+                    var mc = {};
+                    try { mc = JSON.parse(String(gr.condition_json || '{}')); } catch (eMc) {}
+                    try { lines.push(new NetraMissionRunner().boardSentence(num, st, mc.phase, mc.counts || {}, null).replace(/\.$/, '')); }
+                    catch (eB) { lines.push('mission ' + n + ' (' + st.replace('_', ' ') + ')' + _missionCountsLine(gr)); }
+                } else if (kind === 'investigate_watch') {
+                    lines.push('task ' + n + ', still digging on ' + _spkNum(String(gr.target_number)));
+                } else if (kind === 'chase_approvals') {
+                    lines.push('task ' + n + ', chasing approvals' + (gr.target_number ? ' on ' + _spkNum(String(gr.target_number)) : ''));
+                } else {
+                    lines.push('task ' + n + ', watching ' + _spkNum(String(gr.target_number)) + ' to ' + String(gr.action).replace(/_/g, ' '));
+                }
+            }
+        } catch (eT) {}
+        if (!lines.length) return 'Nothing running right now - no plans, standing orders or missions. Give me something to chew on.';
+        return 'Here is what I am working on: ' + lines.join('; ') + '.';
+    }
+
+    function _missionCountsLine(gr) {
+        try {
+            var c = JSON.parse(String(gr.condition_json || '{}')).counts || null;
+            if (!c) return '';
+            return ', ' + (c.reviewed || 0) + ' of ' + (c.total || 0) + ' reviewed';
+        } catch (e) { return ''; }
+    }
+
+    // ---- response plumbing --------------------------------------------------
+    function _flReply(text, contents, intent, route, extra) {
+        contents.push({ role: 'model', parts: [{ text: text }] });
+        try {
+            var b = _ctxReadBlob();
+            b.last_spoken = String(text).substring(0, 1000);
+            _ctxWriteBlob(b);
+        } catch (eB) {}
+        try { _memAppend(_currentUserMsg, text); } catch (eM) {}
+        _setPauseState();
+        var r = {
+            ok: true, message: text, history: contents, paused: data.paused,
+            model_used: null, route_reason: route || 'fast_lane',
+            tools_called: intent ? [intent] : [],
+            continue_plan: _planContinueFlag.v,
+            directives: {}, sentiment: null,
+            memory: { prompts: 0, digested: 0, entries: contents.length },
+            agency: _agencyTelemetry()
+        };
+        if (extra) { for (var k in extra) { if (extra.hasOwnProperty(k)) r[k] = extra[k]; } }
+        return r;
+    }
+
+    function _lastModelText(contents) {
+        for (var i = contents.length - 1; i >= 0; i--) {
+            var e = contents[i];
+            if (e && e.role === 'model' && e.parts) {
+                for (var p = 0; p < e.parts.length; p++) if (e.parts[p].text) return e.parts[p].text;
+            }
+        }
+        return '';
+    }
+
+    function _yesNo(lc) {
+        if (/^(yes|yeah|yep|yup|yes please|sure|ok|okay|do it|go ahead|go for it|confirm|confirmed|please do|absolutely|correct|that'?s right|yes do it|yes go ahead|run it|yes run it|apply them|please)$/.test(lc)) return 'yes';
+        if (/^(no|nope|cancel|cancel that|don'?t|do not|stop|never mind|nevermind|not now|hold off|no thanks|leave it|forget it|scratch that|forget that)$/.test(lc)) return 'no';
+        return null;
+    }
+
+    // other features register confirm handlers here: kind -> function(args)
+    function _flDraftHandlers() {
+        return {
+            offline_create: function (a) { return _offlineCreateConfirmed(a); },
+            inv_note: function () { return _invWriteNoteConfirmed(); },
+            link_change: function (a) { return _invLinkChangeConfirmed(a); },
+            inv_watch: function () { return _invWatchConfirmed(); },
+            mission_launch: function () {
+                var r = new NetraMissionRunner().launch(user, String(_cleanMsg(_currentUserMsg)));
+                return { text: String(r.message || r.error), tool: 'mission_launch', extra: { nt_number: r.nt_number || null } };
+            },
+            mission_apply: function (a) {
+                var r = new NetraMissionRunner().requestApply(a.nt, user);
+                return { text: String(r.message || r.error), tool: 'mission_apply' };
+            },
+            mission_undo: function (a) {
+                var r = new NetraMissionRunner().undo(a.nt, user);
+                return { text: String(r.message || r.error), tool: 'mission_undo' };
+            },
+            undo_last: function () {
+                var u = _undoLastAction();
+                var um = String((u && u.message) || '');
+                return { text: u && u.ok ? (/^undone/i.test(um) ? um : ('Undone. ' + um)) : ('I could not undo it: ' + String((u && (u.error || u.message)) || 'no detail') + '.'), tool: 'undo_last_action', extra: { undo: u } };
+            },
+            undo_plan: function () {
+                var u = _undoPlan();
+                return { text: u && u.ok ? ('Reversed ' + (u.restored || []).length + ' plan step' + ((u.restored || []).length === 1 ? '' : 's') + ((u.problems || []).length ? ', but ' + u.problems.length + ' could not be reversed' : '') + '.') : ('I could not undo the plan: ' + String((u && u.error) || 'no detail') + '.'), tool: 'undo_plan', extra: { undo: u } };
+            },
+            undo_task: function (a) {
+                var u = _undoTaskAction(String(a.nt || ''));
+                return { text: u && u.ok ? ('Done - ' + u.restored + '.') : ('I could not undo that task: ' + String((u && u.error) || 'no detail')), tool: 'undo_task_action', extra: { undo: u } };
+            }
+        };
+    }
+
+    function _flConfirm(yn, contents) {
+        var b = _ctxReadBlob();
+        // standing order parked by create_standing_order
+        if (b.pendingOrder && b.pendingOrder.args && _draftFresh(b.pendingOrder)) {
+            if (yn === 'no') { delete b.pendingOrder; _ctxWriteBlob(b); return _flReply('Okay, no standing order.', contents, 'confirm_no'); }
+            var a = {}, src = b.pendingOrder.args;
+            for (var k in src) { if (src.hasOwnProperty(k)) a[k] = src[k]; }
+            a.confirm = true;
+            var so = _createStandingOrder(a);
+            if (!so.ok) return _flReply('I could not arm it: ' + (so.error || so.message || 'unknown problem') + '.', contents, 'create_standing_order');
+            var n = parseInt(String(so.nt_number).replace(/\D/g, ''), 10);
+            return _flReply('Done - task ' + n + ' is armed. I check it every five minutes and I will tell you what I did when you are back.', contents, 'create_standing_order', 'fast_lane', { nt_number: so.nt_number });
+        }
+        // plan filed in the previous turn
+        if (b.plan && !b.plan.confirmed && !b.plan.finished && _draftFresh(b.plan)) {
+            if (yn === 'no') { delete b.plan; _ctxWriteBlob(b); return _flReply('Okay, I dropped the plan. Nothing was changed.', contents, 'confirm_no'); }
+            var out = _executePlan();
+            return _flReply(_sayPlanHop(out), contents, 'execute_plan', 'fast_lane', { plan: out });
+        }
+        // generic drafts (offline create, investigation write-up, links, missions...)
+        if (b.flDraft && _draftFresh(b.flDraft)) {
+            var d = b.flDraft;
+            delete b.flDraft;
+            _ctxWriteBlob(b);
+            if (yn === 'no') return _flReply('Okay, dropped it. Nothing was changed.', contents, 'confirm_no');
+            var h = _flDraftHandlers()[d.kind];
+            if (!h) return null;
+            var said = h(d.args || {});
+            return _flReply(said.text, contents, said.tool || d.kind, 'fast_lane', said.extra || null);
+        }
+        return null;
+    }
+
+    function _parkDraft(kind, args) {
+        var b = _ctxReadBlob();
+        b.flDraft = { kind: kind, args: args, turn: _curTurn(), at: new GlideDateTime().getNumericValue() };
+        _ctxWriteBlob(b);
+    }
+
+    /**
+     * Ordered list of deterministic intents. Each gets (lc, norm, contents)
+     * and returns a full reply or null. Later features push their own.
+     */
+    function _fastIntents() {
+        return [
+            // quota / health - honest, from the ledger, free
+            function (lc, norm, contents) {
+                if (!/^(quota status|quota|brain status|model status|how'?s your brain|how is your brain|are you (ok|okay|alright)|are you in basic mode|how are your models|health check|what'?s your quota|how much quota( do you have)?( left)?)$/.test(lc)) return null;
+                return _flReply(_sayQuota(), contents, 'quota_status');
+            },
+            // repeat
+            function (lc, norm, contents) {
+                if (!/^(repeat|repeat that|say that again|come again|pardon|what did you say|say again)$/.test(lc)) return null;
+                var prev = _lastModelText(contents.slice(0, contents.length - 1));
+                return _flReply(prev || 'I have not said anything yet.', contents, 'repeat');
+            },
+            // my tickets
+            function (lc, norm, contents) {
+                if (!/^((list|show|read|tell me|give me|what are)( me)?( all)? )?my( open)? tickets( please)?$|^what'?s on my plate$|^any (new |open )?tickets( for me)?$/.test(lc)) return null;
+                return _flReply(_sayTicketList(_runTool('list_tickets', {})), contents, 'list_tickets');
+            },
+            // my approvals
+            function (lc, norm, contents) {
+                if (!/^((list|show|read|any|what are|tell me|give me)( me)?( all)? )?(my )?(pending )?approvals( for me| waiting( for me)?)?( please)?$|^what'?s waiting (for|on) my approval$|^anything to approve$/.test(lc)) return null;
+                return _flReply(_sayApprovals(_runTool('list_approvals', {})), contents, 'list_approvals');
+            },
+            // away debrief
+            function (lc, norm, contents) {
+                if (!/^(what did you do|what happened|what have you done)( while i was (away|gone|out)| overnight| since i left)?$|^debrief( me)?$|^(any news|give me the debrief|what did i miss)$/.test(lc)) return null;
+                var ar = _awayReport(true);
+                return _flReply(_sayAway(ar), contents, 'away_report');
+            },
+            // work board
+            function (lc, norm, contents) {
+                if (!/^(what are you working on|what are you doing( for me)?|(show |read )?(me )?(your|the) (work ?board|to-?do list|todo list)|what'?s (running|in progress)|what are you busy with|status report)$/.test(lc)) return null;
+                return _flReply(_workBoard(), contents, 'work_board');
+            },
+            // undo - read back what would be reversed, then wait for a yes
+            function (lc, norm, contents) {
+                var b = _ctxReadBlob();
+                if (/^undo (the |that |my )?plan$|^undo all (of )?(that|those)$|^reverse the plan$/.test(lc)) {
+                    if (!b.plan || !b.plan.undo || !b.plan.undo.length) return _flReply('There is no plan on record that I can reverse.', contents, 'undo_plan');
+                    _parkDraft('undo_plan', {});
+                    return _flReply('That would reverse ' + b.plan.undo.length + ' change' + (b.plan.undo.length === 1 ? '' : 's') + ' from the last plan, newest first. Shall I?', contents, 'undo_plan_draft');
+                }
+                var tm = lc.match(/^undo (?:task|order|standing order|number) (\w+)$/) || lc.match(/^undo (one|two|three|four|five|six|seven|eight|\d+)$/);
+                if (tm) {
+                    var WN = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
+                    var n = WN[tm[1]] || parseInt(tm[1], 10);
+                    if (!n) return null;
+                    var nt = 'NT' + ('0000' + n).slice(-4);
+                    // "undo two" right after a debrief means debrief item two
+                    if (/^undo (one|two|three|four|five|six|seven|eight|\d+)$/.test(lc) && b.awayMap && b.awayMap[String(n)]) nt = b.awayMap[String(n)];
+                    _parkDraft('undo_task', { nt: nt });
+                    return _flReply('That would reverse what task ' + parseInt(nt.replace(/\D/g, ''), 10) + ' changed. Shall I?', contents, 'undo_task_draft');
+                }
+                if (/^undo( that| it| the last (thing|action|one|change)| what you (just )?did)?$/.test(lc)) {
+                    var a = b.last_action;
+                    if (!a) return _flReply('There is nothing on record for me to undo.', contents, 'undo_last_action');
+                    var what = a.kind === 'created' ? ('delete ' + _spkNum(a.number) + ' that I just created')
+                             : a.kind === 'resolved' ? ('reopen ' + _spkNum(a.number))
+                             : ('put ' + String(a.field || 'the field').replace(/_/g, ' ') + ' back on ' + _spkNum(a.number));
+                    _parkDraft('undo_last', {});
+                    return _flReply('That would ' + what + '. Shall I?', contents, 'undo_last_draft');
+                }
+                return null;
+            },
+            // ticket status by number (anchored phrasings or the bare number)
+            function (lc, norm, contents) {
+                var nums = _findNums(norm);
+                if (nums.length !== 1) return null;
+                var rest = norm.replace(nums[0], '#').replace(/[.?!]+$/, '').replace(/^\s+|\s+$/g, '');
+                if (!/^((what'?s|what is)( the)? status (of|on) |status (of|on) |status |read( me)? |read out |tell me about |summari[sz]e |details (on|of|for) |what'?s (up|happening|going on) with |how is |where are we (on|with) |give me |check )?(the )?(ticket |incident |change |problem )?#( status| please)?$/.test(rest)) return null;
+                var res = _summarizeTicket(nums[0]);
+                if (res && res.ok) { try { _setFocusTicket(nums[0]); } catch (eF) {} }
+                return _flReply(_saySummary(res), contents, 'summarize_ticket');
+            }
+        ];
+    }
+
+    function _allFastIntents() {
+        return _fastIntents().concat(_investigationIntents()).concat(_missionIntents());
+    }
+
+    /* ===================================================================
+     *  R18 - MISSIONS: real multi-hour work, done in the background
+     *
+     *  "Work through the unassigned queue" -> read-back -> yes -> the
+     *  5-minute scanner reviews a few tickets per pass (routing, likely
+     *  duplicate, known fix - embeddings only, never a generate call),
+     *  reports back, and applies ONLY what you then say yes to. Every
+     *  write re-checks the kill switch, skips anything a human touched
+     *  since the review, verifies by re-reading, and can be undone.
+     * =================================================================== */
+    function _missionDigits(s) {
+        var W = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+        if (!s) return '';
+        return W[s] ? String(W[s]) : String(s).replace(/\D/g, '');
+    }
+
+    function _liveMissionNt() {
+        try {
+            var bd = new NetraMissionRunner().board(user);
+            for (var i = 0; i < bd.length; i++) {
+                if (/^(running|paused|awaiting_apply|applying)$/.test(bd[i].state)) return bd[i].nt_number;
+            }
+            return bd.length ? bd[0].nt_number : '';
+        } catch (e) { return ''; }
+    }
+
+    function _missionIntents() {
+        return [
+            function (lc, norm, contents) {
+                var mr;
+                // launch
+                if (/^(?:please )?(?:work through|go through|triage|work|clean up|process|review|sort out) (?:the |my |our )?(?:unassigned|triage) (?:queue|tickets|incidents)(?: for me)?$/.test(lc)) {
+                    mr = new NetraMissionRunner();
+                    var pv = mr.preview(user);
+                    if (!pv.ok || !pv.count) return _flReply(String(pv.message || 'I could not look at the queue.'), contents, 'mission_preview');
+                    _parkDraft('mission_launch', {});
+                    return _flReply(pv.message, contents, 'mission_preview');
+                }
+                // board
+                var bm = lc.match(/^(?:how'?s|how is) (?:the )?mission(?: (\w+))?(?: going)?$|^mission status$|^(?:mission|missions) progress$/);
+                if (bm) {
+                    var board = new NetraMissionRunner().board(user);
+                    if (!board.length) return _flReply('No missions yet. Say "work through the unassigned queue" to start one.', contents, 'mission_board');
+                    var want = _missionDigits(bm[1]);
+                    for (var b = 0; b < board.length; b++) {
+                        if (!want || parseInt(board[b].nt_number.replace(/\D/g, ''), 10) === parseInt(want, 10)) return _flReply(board[b].sentence, contents, 'mission_board');
+                    }
+                    return _flReply('I have no mission ' + want + '.', contents, 'mission_board');
+                }
+                // pause / resume / cancel
+                var cm = lc.match(/^(pause|resume|cancel|stop) (?:the )?mission(?: (\w+))?$/);
+                if (cm) {
+                    var nt = cm[2] ? _missionDigits(cm[2]) : _liveMissionNt();
+                    if (!nt) return _flReply('There is no mission to ' + cm[1] + '.', contents, 'mission_control');
+                    var r = new NetraMissionRunner().control(nt, user, cm[1] === 'stop' ? 'cancel' : cm[1]);
+                    return _flReply(String(r.message || r.error), contents, 'mission_control');
+                }
+                // report, five at a time
+                var rm = lc.match(/^(?:read|give me|read me|what'?s in) (?:the )?mission report(?: (\w+))?$|^mission report(?: (\w+))?$/);
+                var bl = _ctxReadBlob();
+                if (rm || (/^(next|next page|more|go on|read more)$/.test(lc) && bl.missionReport && _draftFresh(bl.missionReport))) {
+                    var ntr = rm ? (_missionDigits(rm[1] || rm[2]) || _liveMissionNt()) : bl.missionReport.nt;
+                    var page = rm ? 1 : bl.missionReport.page + 1;
+                    var rep = new NetraMissionRunner().report(ntr, user, page);
+                    if (rep.ok && rep.page < rep.pages) { bl.missionReport = { nt: ntr, page: rep.page, turn: _curTurn(), at: new GlideDateTime().getNumericValue() }; _ctxWriteBlob(bl); }
+                    return _flReply(String(rep.message || rep.error), contents, 'mission_report');
+                }
+                // apply the confident ones (read-back first)
+                var am = lc.match(/^apply (?:the )?(?:confident ones|confident routings|confident|them|mission(?: (\w+))?)$/);
+                if (am) {
+                    var nta = _missionDigits(am[1]) || _liveMissionNt();
+                    if (!nta) return _flReply('There is no mission to apply.', contents, 'mission_apply');
+                    var bdd = new NetraMissionRunner().board(user), cc = null;
+                    for (var k = 0; k < bdd.length; k++) if (parseInt(bdd[k].nt_number.replace(/\D/g, ''), 10) === parseInt(nta, 10)) cc = bdd[k];
+                    if (!cc) return _flReply('I have no mission ' + nta + '.', contents, 'mission_apply');
+                    if (cc.state !== 'awaiting_apply') return _flReply(cc.sentence, contents, 'mission_apply');
+                    var n = cc.counts.confident_pending || cc.counts.confident || 0;
+                    if (!n) return _flReply('Mission ' + parseInt(nta, 10) + ' found nothing confident enough to apply.', contents, 'mission_apply');
+                    _parkDraft('mission_apply', { nt: nta });
+                    return _flReply('I will route ' + n + ' ticket' + (n === 1 ? '' : 's') + ' the way the history suggests - group, category and priority - re-reading each one, adding a work note, and skipping any that someone touched since my review. Duplicates I only report, never merge. Shall I?', contents, 'mission_apply_draft');
+                }
+                // undo a mission (read-back first)
+                var um = lc.match(/^undo (?:the )?mission(?: (\w+))?$/);
+                if (um) {
+                    var ntu = _missionDigits(um[1]) || _liveMissionNt();
+                    if (!ntu) return _flReply('There is no mission to undo.', contents, 'mission_undo');
+                    _parkDraft('mission_undo', { nt: ntu });
+                    return _flReply('I will put back every ticket mission ' + parseInt(ntu, 10) + ' changed - except any that someone has changed since, which I will leave alone. Shall I?', contents, 'mission_undo_draft');
+                }
+                return null;
+            }
+        ];
+    }
+
+    function _fastLane(rawMsg, contents) {
+        if (String(gs.getProperty(SCOPE + '.fast_lane', 'true')) === 'false') return null;
+        var clean = _cleanMsg(rawMsg);
+        if (!clean || clean.length > 180) return null;
+        if (input && input.image_b64) return null;   // a picture always needs the real brain
+        var norm = _normSpoken(clean);
+        var lc = norm.replace(/[.!?]+$/, '').replace(/^(hey |ok |okay |hi )?netra[,!.]*\s+/, '').replace(/^\s+|\s+$/g, '');
+        // plan hops: already decided, already confirmed - never spend a call
+        if (lc === '[continue plan]') {
+            var out = _executePlan();
+            return _flReply(_sayPlanHop(out), contents, 'execute_plan', 'fast_lane', { plan: out });
+        }
+        var yn = _yesNo(lc);
+        if (yn) {
+            var c = _flConfirm(yn, contents);
+            if (c) return c;
+            // nothing parked: if Netra's last line asked a question, the
+            // brain needs the context to know what this answers
+            var prevText = _lastModelText(contents.slice(0, contents.length - 1));
+            if (/\?\s*["']?\s*$/.test(prevText)) return null;
+            return _flReply(yn === 'yes' ? 'Anything else I can do?' : 'Okay.', contents, 'ack');
+        }
+        var intents = _allFastIntents();
+        for (var i = 0; i < intents.length; i++) {
+            var r = null;
+            try { r = intents[i](lc, norm, contents); } catch (eI) {
+                gs.warn('[NetraFast] intent ' + i + ' threw: ' + (eI.message || eI));
+                r = null;
+            }
+            if (r) return r;
+        }
+        return null;
+    }
+
+    // ---- offline brain ----------------------------------------------------
+    function _offlineWhen(restingUntilMs) {
+        var ms = restingUntilMs || _brainTelemetry().next_revival_ms;
+        return ms ? ('My reasoning should be back ' + _until(ms) + ', around ' + _clockAt(ms) + '.') : 'My reasoning should be back shortly.';
+    }
+
+    function _offlineAnswer(rawMsg, contents, why) {
+        _brainTurn.mode = 'offline';
+        var clean = _cleanMsg(rawMsg);
+        var norm = _normSpoken(clean);
+        var lc = norm.replace(/[.!?]+$/, '').replace(/^\s+|\s+$/g, '');
+        var b = _ctxReadBlob();
+        var first = !b.offlineNoticeAt || (new GlideDateTime().getNumericValue() - b.offlineNoticeAt) > 30 * 60 * 1000;
+        var notice = '';
+        if (first) {
+            notice = (why && why.why === 'budget') ? 'I have used this turn\'s thinking budget, so I will answer the simple way. '
+                   : 'Heads up: my reasoning models are unavailable right now, so I am in basic mode. ';
+            b.offlineNoticeAt = new GlideDateTime().getNumericValue();
+            _ctxWriteBlob(b);
+        }
+        // raise a ticket: read back, park, wait for yes (the only offline write)
+        var cm = lc.match(/^(?:please )?(?:create|raise|open|log|file|submit)(?: me)? (?:a |an )?(?:new )?(?:ticket|incident)(?: for| about| saying| that)?[:,\-]?\s+(.{4,})$/);
+        if (cm) {
+            var desc = cm[1].replace(/^(that|saying)\s+/, '');
+            var dupLine = '';
+            try {
+                var dup = _checkDuplicates(desc, '');
+                if (dup && dup.ok && dup.count) dupLine = ' Careful - ' + _spkNum(dup.duplicates[0].number) + ' looks like the same thing: "' + String(dup.duplicates[0].short_description || '').substring(0, 70) + '".';
+            } catch (eD) {}
+            _parkDraft('offline_create', { description: desc.substring(0, 160) });
+            return _flReply(notice + 'I can still raise that. An incident for "' + desc.substring(0, 120) + '".' + dupLine + ' Shall I?', contents, 'offline_create_draft', 'offline');
+        }
+        // writes we deliberately do not do without the real brain
+        if (/^(resolve|close|approve|reject|assign|reassign|update|change|set|delete|cancel) /.test(lc) || /\b(escalate|reassign)\b/.test(lc)) {
+            return _flReply(notice + 'I will not make that kind of change in basic mode - I want my full reasoning for anything beyond raising a ticket. ' + _offlineWhen(why && why.resting_until_ms) + ' I can still read tickets, list your work, and give you the debrief.', contents, 'offline_refuse', 'offline');
+        }
+        // a described problem: search by meaning (separate embedding quota)
+        if (clean.split(/\s+/).length >= 4) {
+            try {
+                var sr = _findSimilarResolved(clean, 1);
+                var kb = _semanticSearchKnowledge(clean, 1);
+                var bits = [];
+                if (sr && sr.ok && sr.count) {
+                    var m0 = sr.matches[0];
+                    bits.push(_spkNum(m0.number) + ' looked like this' + (m0.close_notes ? ' and was fixed with: "' + String(m0.close_notes).substring(0, 140) + '"' : ''));
+                }
+                if (kb && kb.ok && kb.count) bits.push('the closest knowledge article is ' + _spkNum(kb.articles[0].number) + ', "' + String(kb.articles[0].title || '').substring(0, 80) + '"');
+                if (bits.length) {
+                    return _flReply(notice + 'I can not reason about that fully right now, but I searched by meaning: ' + bits.join('; and ') + '. ' + _offlineWhen(why && why.resting_until_ms), contents, 'offline_search', 'offline');
+                }
+            } catch (eS) {}
+        }
+        return _flReply(notice + 'I can not work that one out without my reasoning models. ' + _offlineWhen(why && why.resting_until_ms) +
+                        ' Meanwhile I can still give you ticket status by number, your tickets, your approvals, the debrief, my work board, raise a ticket, and keep running plans and standing orders.', contents, 'offline_help', 'offline');
+    }
+
+    function _offlineCreateConfirmed(a) {
+        var tools = new NetraTools();
+        var res = tools.createTicket(String(a.description || ''), '3');
+        if (!res || res.ok === false) return { text: 'I could not raise it: ' + ((res && (res.error || res.message)) || 'unknown problem') + '.', tool: 'create_ticket' };
+        _noteUndoCreated(res, 'incident');
+        var chk = new GlideRecord('incident');
+        var verified = chk.get('number', String(res.number));
+        return { text: 'Raised ' + _spkNum(res.number) + (verified ? ' - I checked, it is there.' : ', but I could not read it back to confirm - worth a look.') + ' Say "undo that" if it was a mistake.',
+                 tool: 'create_ticket', extra: { number: res.number, verified: verified } };
+    }
+
+    // ---- honest partial answer when the brain stops mid-turn ---------------
+    function _sayToolResult(name, res) {
+        if (!res) return '';
+        if (res.ok === false) return 'my ' + name.replace(/_/g, ' ') + ' step failed (' + String(res.error || 'no detail').substring(0, 80) + ')';
+        if (name === 'list_tickets') return _sayTicketList(res);
+        if (name === 'list_approvals') return _sayApprovals(res);
+        if (name === 'summarize_ticket') return _saySummary(res);
+        if (name === 'get_ticket_status' && res.number) return _spkNum(res.number) + ' is ' + String(res.state || '').toLowerCase();
+        if (name === 'find_similar_resolved' && res.count) return _spkNum(res.matches[0].number) + ' looked similar' + (res.matches[0].close_notes ? ', fixed with "' + String(res.matches[0].close_notes).substring(0, 100) + '"' : '');
+        if (name === 'away_report') return _sayAway(res);
+        if (name === 'suspect_changes' && res.suspects && res.suspects.length) return res.suspects[0].sentence;
+        if (res.message && name !== 'execute_plan') return String(res.message).substring(0, 160);
+        return 'I ran ' + name.replace(/_/g, ' ');
+    }
+
+    function _partialReport(toolLog, contents, why) {
+        _brainTurn.mode = 'partial';
+        var bits = [];
+        for (var i = 0; i < toolLog.length && i < 6; i++) {
+            var s = _sayToolResult(toolLog[i].name, toolLog[i].result);
+            if (s) bits.push(s);
+        }
+        var lead = why === 'budget' ? 'I hit my thinking budget for this turn before I could put it all together, so here is what I found. '
+                 : why === 'loop_cap' ? 'That took more steps than I allow myself in one go, so here is where I got to. '
+                 : 'My reasoning model stopped before I could put this together, so here is what I found. ';
+        var text = lead + (bits.length ? bits.join('. ') + '.' : 'Nothing useful came back yet.') + ' Ask me again and I will pick up from here.';
+        return _flReply(text, contents, toolLog.length ? toolLog[toolLog.length - 1].name : 'partial', 'partial',
+                        { tools_called: (function () { var n = []; for (var j = 0; j < toolLog.length; j++) n.push(toolLog[j].name); return n; })() });
+    }
+
+    function _brainOfflineForced() {
+        return String(gs.getProperty(SCOPE + '.brain_offline', 'false')) === 'true';
+    }
+
+    /* ===================================================================
+     *  R18 - INVESTIGATE LIKE AN ENGINEER
+     *
+     *  "Investigate INC0010013" / "why is this happening" / "what's going
+     *  on with netra-lab-web01". The work is split the way a good engineer
+     *  splits it: gather EVERYTHING first (journal, audit trail, the CI and
+     *  its neighbours, changes that landed just before, siblings on the
+     *  same box, open problems, KB, similar resolved tickets) - all plain
+     *  GlideRecord in NetraInvestigator, zero model calls - then spend ONE
+     *  call to rank theories, each of which must cite numbered evidence.
+     *
+     *  The model does not get the last word. Code validates every theory:
+     *  no citation, or a citation to evidence that does not exist, or a
+     *  record number that never appeared in the evidence -> dropped.
+     *  Confidence is capped by how strong the cited evidence is. And the
+     *  spoken answer is COMPOSED here from the evidence fields, so times,
+     *  minutes and record numbers can not drift. If the brain is resting,
+     *  rule-based theories from the same evidence, said honestly.
+     * =================================================================== */
+    function _focusNumber() {
+        try {
+            var ctx = _ctxLoadGr();
+            return ctx.isValidRecord() ? String(ctx.focus_number || '') : '';
+        } catch (e) { return ''; }
+    }
+
+    function _invSchema() {
+        return {
+            type: 'object',
+            properties: {
+                headline: { type: 'string', description: 'one sentence, plain words, no record numbers the evidence does not contain' },
+                hypotheses: { type: 'array', items: { type: 'object', properties: {
+                    statement:   { type: 'string' },
+                    confidence:  { type: 'string', enum: ['high', 'medium', 'low'] },
+                    cites:       { type: 'array', items: { type: 'string' }, description: 'evidence ids like E3' },
+                    confirm_by:  { type: 'string' },
+                    rule_out_by: { type: 'string' },
+                    signal: { type: 'object', properties: {
+                        type:     { type: 'string', enum: ['change_backed_out', 'sibling_resolved_with', 'new_siblings', 'ci_status_change', 'none'] },
+                        ref:      { type: 'string' },
+                        keywords: { type: 'array', items: { type: 'string' } }
+                    }, required: ['type'] }
+                }, required: ['statement', 'confidence', 'cites', 'confirm_by', 'rule_out_by', 'signal'] } },
+                unknowns: { type: 'array', items: { type: 'string' } }
+            },
+            required: ['headline', 'hypotheses']
+        };
+    }
+
+    function _invValidate(hyps, dossier) {
+        var ids = {}, weight = {}, refs = {};
+        for (var i = 0; i < dossier.items.length; i++) {
+            var it = dossier.items[i];
+            ids[it.id] = true;
+            weight[it.id] = it.weight;
+            if (it.ref) refs[String(it.ref).toUpperCase()] = true;
+            var inText = String(it.text || '').match(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK)\d{5,}\b/g) || [];
+            for (var t = 0; t < inText.length; t++) refs[inText[t].toUpperCase()] = true;
+        }
+        if (dossier.anchor && dossier.anchor.number) refs[String(dossier.anchor.number).toUpperCase()] = true;
+        var kept = [], dropped = 0;
+        for (var h = 0; h < (hyps || []).length && kept.length < 3; h++) {
+            var hy = hyps[h] || {};
+            var cites = hy.cites || [];
+            var ok = cites.length > 0;
+            for (var c = 0; c < cites.length && ok; c++) if (!ids[String(cites[c]).toUpperCase()]) ok = false;
+            var said = String(hy.statement || '') + ' ' + String(hy.confirm_by || '') + ' ' + String(hy.rule_out_by || '');
+            var named = said.match(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK)\d{5,}\b/g) || [];
+            for (var n = 0; n < named.length && ok; n++) if (!refs[named[n].toUpperCase()]) ok = false;
+            if (!ok || !hy.statement) { dropped++; continue; }
+            // confidence can not exceed the strength of what it cites
+            var strong = false, allWeak = true;
+            for (var w = 0; w < cites.length; w++) {
+                var wt = weight[String(cites[w]).toUpperCase()];
+                if (wt === 'strong') strong = true;
+                if (wt !== 'weak') allWeak = false;
+            }
+            var conf = hy.confidence;
+            if (allWeak) conf = 'low';
+            else if (conf === 'high' && !strong) conf = 'medium';
+            var sig = hy.signal || { type: 'none' };
+            if (sig.ref && !refs[String(sig.ref).toUpperCase()]) sig = { type: 'none' };
+            kept.push({ statement: String(hy.statement).substring(0, 300), confidence: conf,
+                        cites: cites.slice(0, 5), confirm_by: String(hy.confirm_by || '').substring(0, 240),
+                        rule_out_by: String(hy.rule_out_by || '').substring(0, 240),
+                        signal: { type: sig.type || 'none', ref: sig.ref || '', keywords: (sig.keywords || []).slice(0, 4) } });
+        }
+        return { hypotheses: kept, dropped: dropped };
+    }
+
+    function _invItem(dossier, id) {
+        for (var i = 0; i < dossier.items.length; i++) if (dossier.items[i].id === String(id).toUpperCase()) return dossier.items[i];
+        return null;
+    }
+
+    function _invCompose(res, dossier) {
+        var WORD = { high: 'most likely', medium: 'possible', low: 'a long shot' };
+        var ORD = ['one', 'two', 'three'];
+        var a = dossier.anchor || {};
+        var subject = a.number ? _spkNum(a.number) : ('**' + (a.ci_name || 'that configuration item') + '**');
+        var parts = [];
+        if (!res.hypotheses.length) {
+            var missing = [];
+            if (!a.ci_sys_id) missing.push('which server or service it is on (the configuration item is empty)');
+            if (dossier.items.length < 4) missing.push('more history on the ticket');
+            return 'I looked into ' + subject + ' but there is not enough evidence for an honest theory yet' +
+                   (missing.length ? ' - what would help most is ' + missing.join(', and ') : '') + '. ' +
+                   _invSourcesLine(dossier);
+        }
+        parts.push('Here is what I found on ' + subject + '.');
+        if (res.headline && res.mode === 'llm') parts.push(String(res.headline));
+        for (var i = 0; i < res.hypotheses.length; i++) {
+            var h = res.hypotheses[i];
+            var because = [];
+            for (var c = 0; c < h.cites.length && because.length < 2; c++) {
+                var it = _invItem(dossier, h.cites[c]);
+                if (it) because.push(it.text);
+            }
+            parts.push('Theory ' + ORD[i] + ', ' + WORD[h.confidence] + ': ' + h.statement +
+                       (because.length ? ' Evidence: ' + because.join('; ') + '.' : ''));
+        }
+        if (res.hypotheses[0].confirm_by) parts.push('To confirm the first: ' + res.hypotheses[0].confirm_by);
+        if (res.mode === 'rules') parts.push('My reasoning model was not available, so these come from rules over the evidence.');
+        parts.push(_invSourcesLine(dossier));
+        parts.push('Say "evidence for one" to hear why, or "write it up" to put this in a work note.');
+        return parts.join(' ');
+    }
+
+    function _invSourcesLine(dossier) {
+        var src = dossier.sources || {}, ok = 0, bad = [];
+        for (var k in src) {
+            if (!src.hasOwnProperty(k)) continue;
+            if (src[k].status === 'blocked' || src[k].status === 'error') bad.push(k.replace(/_/g, ' '));
+            else ok++;
+        }
+        return 'I checked ' + ok + ' source' + (ok === 1 ? '' : 's') + (bad.length ? '; I could not read ' + bad.join(', ') : '') + '.';
+    }
+
+    function _investigate(target) {
+        var t0 = new Date().getTime();
+        var callsBefore = _brainTurn.calls;
+        var inv = new NetraInvestigator();
+        var tgt = String(target || '').replace(/^\s+|\s+$/g, '');
+        if (!tgt || /^(this|it|that|this one|this ticket|that ticket|this incident)$/i.test(tgt)) tgt = _focusNumber();
+        if (!tgt) return { ok: false, error: 'Which ticket or server should I look into?', final_speech: 'Which ticket or server should I look into?' };
+        var anchor = inv.resolveAnchor(_normSpoken(tgt).toUpperCase().match(/\b(INC|CHG|PRB|RITM|REQ|SCTASK)\d{7}\b/) ? _findNums(_normSpoken(tgt))[0] : tgt);
+        if (!anchor || !anchor.ok) {
+            var why = 'I could not find a ticket or configuration item called "' + tgt + '"' + (anchor && anchor.reason ? ' (' + anchor.reason + ')' : '') + '.';
+            return { ok: false, error: why, final_speech: why };
+        }
+        if (anchor.kind === 'ticket') { try { _setFocusTicket(anchor.number); } catch (eF) {} }
+        var dossier = inv.gatherDossier(anchor, { deadlineMs: 6000 });
+        // similar resolved incidents - the embedding API has its own quota
+        try {
+            var q = String(anchor.short_description || anchor.ci_name || '');
+            if (q) {
+                var sim = _semanticIncidents(q, { resolved: true, excludeSysId: anchor.sys_id || '', limit: 2, scanLimit: 200, maxLive: 2 });
+                if (sim && sim.ok) {
+                    for (var s = 0; s < sim.matches.length; s++) {
+                        var m = sim.matches[s];
+                        inv.appendItem(dossier, { kind: 'similar', ref: m.number,
+                            at_ms: m.resolved_at ? new GlideDateTime(m.resolved_at).getNumericValue() : 0,
+                            text: m.number + ' was a lookalike (resolved)' + (m.close_notes ? ', fixed with: ' + String(m.close_notes).substring(0, 120) : ', no fix recorded'),
+                            weight: m.score >= 0.75 && m.close_notes ? 'medium' : 'weak' });
+                    }
+                    dossier.sources.similar = { rows: sim.matches.length, ms: 0, status: sim.matches.length ? 'ok' : 'empty' };
+                }
+            }
+        } catch (eS) { dossier.sources.similar = { rows: 0, ms: 0, status: 'error' }; }
+
+        var b = _ctxReadBlob();
+        var anchorKey = String(anchor.number || anchor.ci_sys_id);
+        var cached = b.investigation;
+        var res;
+        if (cached && cached.anchor_key === anchorKey && cached.fingerprint === dossier.fingerprint &&
+            (new GlideDateTime().getNumericValue() - cached.at) < 2 * 3600000) {
+            res = cached.result;
+            res.mode = 'cached';
+        } else {
+            var rules = inv.ruleHypotheses(dossier);
+            var useLlm = String(gs.getProperty(SCOPE + '.investigate_llm', 'true')) !== 'false' && dossier.items.length >= 3;
+            res = null;
+            if (useLlm) {
+                var lines = [];
+                for (var i = 0; i < dossier.items.length; i++) {
+                    var it = dossier.items[i];
+                    lines.push(it.id + ' [' + it.kind + ', ' + it.weight + '] ' + it.text);
+                }
+                var ruleLines = [];
+                for (var r = 0; r < rules.length; r++) ruleLines.push('- ' + rules[r].statement + ' (cites ' + rules[r].cites.join(',') + ')');
+                var sys = 'You are a senior ITSM engineer ranking root-cause theories from numbered evidence. ' +
+                          'Use ONLY the evidence given. Every hypothesis MUST cite evidence ids. Never name a record number that is not in the evidence. ' +
+                          'Correlation is not causation: say "lines up with", never "caused by", unless the evidence says so. ' +
+                          'Merge and rank the rule-based candidates; you may add at most one new cited hypothesis. At most three. ' +
+                          'confirm_by / rule_out_by are concrete checks an engineer can do in minutes. signal is how the evidence would later prove it (keywords from a likely fix).';
+                var payload = 'The user asked: ' + String(_cleanMsg(_currentUserMsg)).substring(0, 200) + '\n\nEVIDENCE:\n' + lines.join('\n') +
+                              '\n\nRULE-BASED CANDIDATES:\n' + (ruleLines.join('\n') || '(none)');
+                var rr = _reason(sys, payload, _invSchema(), 900, gs.getProperty(SCOPE + '.investigate_model', 'gemini-3-flash-preview'), 10000);
+                if (rr && rr.error && rr.code === 400) {
+                    rr = _reason(sys + ' Reply with ONLY a JSON object with keys headline, hypotheses, unknowns.', payload, null, 900, gs.getProperty(SCOPE + '.investigate_model', 'gemini-3-flash-preview'), 10000);
+                    if (rr && rr.ok && rr.text) {
+                        try { rr.json = JSON.parse(String(rr.text).replace(/^[^{]*/, '').replace(/[^}]*$/, '')); } catch (eJ) { rr = { error: 'unparseable' }; }
+                    }
+                }
+                if (rr && rr.ok && rr.json) {
+                    var v = _invValidate(rr.json.hypotheses, dossier);
+                    if (v.hypotheses.length) {
+                        res = { mode: 'llm', model: rr.model, headline: String(rr.json.headline || '').substring(0, 240),
+                                hypotheses: v.hypotheses, dropped: v.dropped, unknowns: (rr.json.unknowns || []).slice(0, 3) };
+                    }
+                }
+            }
+            if (!res) {
+                var vr = _invValidate(rules, dossier);
+                res = { mode: 'rules', model: null, headline: '', hypotheses: vr.hypotheses, dropped: vr.dropped, unknowns: [] };
+            }
+        }
+        var speech = _invCompose(res, dossier);
+        // keep a slim dossier for "evidence for two", write-ups and watches
+        b.investigation = {
+            anchor_key: anchorKey, fingerprint: dossier.fingerprint, at: new GlideDateTime().getNumericValue(),
+            anchor: { number: anchor.number || '', table: anchor.table || '', sys_id: anchor.sys_id || '', ci_sys_id: anchor.ci_sys_id || '', ci_name: anchor.ci_name || '', kind: anchor.kind },
+            result: res, items: dossier.items, sources: dossier.sources,
+            suspects: (dossier.suspects || []).slice(0, 5)
+        };
+        _ctxWriteBlob(b);
+        var timing = {};
+        for (var sk in dossier.sources) { if (dossier.sources.hasOwnProperty(sk)) timing[sk] = dossier.sources[sk].ms; }
+        timing.total_ms = new Date().getTime() - t0;
+        return {
+            ok: true, final_speech: speech,
+            investigation: { mode: res.mode, model: res.model || null, gemini_calls: _brainTurn.calls - callsBefore,
+                             evidence: dossier.items.length, hypotheses: res.hypotheses, sources: dossier.sources, timing: timing }
+        };
+    }
+
+    function _suspectChangesFor(target, hours) {
+        var inv = new NetraInvestigator();
+        var tgt = String(target || '').replace(/^\s+|\s+$/g, '');
+        if (!tgt || /^(this|it|that)$/i.test(tgt)) tgt = _focusNumber();
+        var nums = _findNums(_normSpoken(tgt));
+        var anchor = inv.resolveAnchor(nums.length ? nums[0] : tgt);
+        if (!anchor || !anchor.ok) return { ok: false, error: 'No ticket or configuration item matches "' + tgt + '".' };
+        if (!anchor.ci_sys_id) {
+            return { ok: true, no_ci: true, suspects: [],
+                     final_speech: _spkNum(anchor.number) + ' has no configuration item set, so I can not tell what changed underneath it. Tell me the server name and I will check.' };
+        }
+        var t0 = anchor.opened_ms ? inv.firstTicketMs(anchor.ci_sys_id, anchor.opened_ms) : new GlideDateTime().getNumericValue();
+        var sc = inv.suspectChanges(anchor.ci_sys_id, t0, { hours: hours || 72 });
+        if (!sc || !sc.ok) return { ok: false, error: (sc && sc.error) || 'change lookup failed' };
+        var speech;
+        if (!sc.suspects.length) {
+            speech = 'Nothing changed on **' + (sc.ci ? sc.ci.name : anchor.ci_name) + '** or its direct neighbours in the three days before the first ticket.';
+        } else {
+            var bits = [];
+            for (var i = 0; i < sc.suspects.length && i < 3; i++) bits.push(sc.suspects[i].sentence);
+            speech = (sc.suspects.length === 1 ? 'One change lines up: ' : sc.suspects.length + ' changes line up, strongest first: ') + bits.join(' ') +
+                     ' That is timing, not proof - say "investigate" and I will weigh it against everything else.';
+        }
+        return { ok: true, suspects: sc.suspects, sources: sc.sources, final_speech: speech };
+    }
+
+    // ---- show your work (zero calls, from the stored dossier) --------------
+    function _invFresh() {
+        var inv = _ctxReadBlob().investigation;
+        return (inv && (new GlideDateTime().getNumericValue() - inv.at) < 2 * 3600000) ? inv : null;
+    }
+
+    function _invEvidenceFor(n) {
+        var inv = _invFresh();
+        if (!inv) return 'I have not investigated anything in the last two hours - say "investigate" and a ticket number.';
+        var h = inv.result.hypotheses[n - 1];
+        if (!h) return 'There is no theory number ' + n + ' - I had ' + inv.result.hypotheses.length + '.';
+        var lines = [];
+        for (var c = 0; c < h.cites.length; c++) {
+            for (var i = 0; i < inv.items.length; i++) {
+                if (inv.items[i].id === String(h.cites[c]).toUpperCase()) {
+                    var it = inv.items[i];
+                    lines.push(it.text + (it.at_ms ? ' (' + _ago(it.at_ms) + ')' : ''));
+                }
+            }
+        }
+        return 'Theory ' + n + ' rests on: ' + lines.join('; ') + '. ' + (h.rule_out_by ? 'It would be ruled out if ' + h.rule_out_by.replace(/^(if|by)\s+/i, '') + '. ' : '') +
+               'That is as of ' + _ago(inv.at) + ' - say "investigate again" to refresh.';
+    }
+
+    function _invChecked() {
+        var inv = _invFresh();
+        if (!inv) return 'I have not investigated anything recently.';
+        var bits = [];
+        for (var k in inv.sources) {
+            if (!inv.sources.hasOwnProperty(k)) continue;
+            var sr = inv.sources[k];
+            bits.push(k.replace(/_/g, ' ') + (sr.status === 'ok' ? ' (' + sr.rows + ')' : sr.status === 'empty' ? ' (nothing there)' : ' (could not read)'));
+        }
+        return 'I checked: ' + bits.join(', ') + '. As of ' + _ago(inv.at) + '.';
+    }
+
+    function _invNoteText(inv) {
+        var clock = _clockAt(new GlideDateTime().getNumericValue());
+        var lines = ['[Netra investigation ' + clock + ']'];
+        var hs = inv.result.hypotheses;
+        if (hs.length) lines.push('Top theory: ' + hs[0].statement);
+        for (var i = 0; i < hs.length; i++) {
+            lines.push((i + 1) + '. (' + hs[i].confidence + ') ' + hs[i].statement + ' [evidence ' + hs[i].cites.join(', ') + ']');
+            if (hs[i].confirm_by) lines.push('   confirm by: ' + hs[i].confirm_by);
+        }
+        var ev = [];
+        for (var e = 0; e < inv.items.length && ev.length < 8; e++) {
+            var it = inv.items[e], used = false;
+            for (var h = 0; h < hs.length; h++) if (hs[h].cites.join(',').toUpperCase().indexOf(it.id) >= 0) used = true;
+            if (used) ev.push(it.id + ': ' + it.text);
+        }
+        if (ev.length) lines.push('Evidence:\n' + ev.join('\n'));
+        var bad = [];
+        for (var k in inv.sources) if (inv.sources.hasOwnProperty(k) && (inv.sources[k].status === 'blocked' || inv.sources[k].status === 'error')) bad.push(k);
+        if (bad.length) lines.push('Not checked (no access): ' + bad.join(', '));
+        lines.push('Mode: ' + inv.result.mode + '. Correlation, not proof.');
+        return lines.join('\n').substring(0, 3500);
+    }
+
+    function _invWriteNoteConfirmed() {
+        var inv = _invFresh();
+        if (!inv || !inv.anchor.sys_id) return { text: 'The investigation has gone stale, so I will not write it up - say "investigate" again first.' };
+        if (!_ticketWritesEnabled()) return { text: 'Ticket writes are switched off by the admin, so I can not add the note. The theories are still here if you want them read out.' };
+        var gr = new GlideRecord(inv.anchor.table || 'incident');
+        if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone.' };
+        var startMs = new GlideDateTime().getNumericValue() - 2000;
+        gr.work_notes = _invNoteText(inv);
+        gr.update();
+        var j = new GlideRecord('sys_journal_field');
+        j.addQuery('element_id', inv.anchor.sys_id);
+        j.addQuery('element', 'work_notes');
+        j.addQuery('value', 'CONTAINS', 'Netra investigation');
+        j.orderByDesc('sys_created_on');
+        j.setLimit(1);
+        j.query();
+        var verified = j.next() && new GlideDateTime(j.getValue('sys_created_on')).getNumericValue() >= startMs;
+        return { text: verified ? 'Written up on ' + _spkNum(inv.anchor.number) + ' as a work note - I read it back, it is there.'
+                                : 'I wrote the note on ' + _spkNum(inv.anchor.number) + ' but could not read it back to confirm - worth a glance.',
+                 tool: 'investigation_write_up', extra: { verified: !!verified } };
+    }
+
+    function _invLinkChangeConfirmed(a) {
+        var inv = _invFresh();
+        if (!inv) return { text: 'The investigation has gone stale - say "investigate" again first.' };
+        if (!_ticketWritesEnabled()) return { text: 'Ticket writes are switched off by the admin, so I can not link it.' };
+        var chg = null;
+        for (var i = 0; i < inv.suspects.length; i++) if (inv.suspects[i].number === a.number) chg = inv.suspects[i];
+        if (!chg) return { text: String(a.number) + ' was not one of the suspect changes, so I will not link it.' };
+        var gr = new GlideRecord(inv.anchor.table || 'incident');
+        if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone.' };
+        if (!gr.isValidField('caused_by')) return { text: 'This instance has no "caused by" field on that table, so there is nowhere to link it.' };
+        var old = String(gr.getValue('caused_by') || '');
+        var oldDisp = old ? String(gr.caused_by.getDisplayValue()) : 'empty';
+        gr.setValue('caused_by', chg.sys_id);
+        gr.work_notes = 'Linked "caused by" to ' + chg.number + ' via Netra (suspect change: ' + chg.sentence + ') - authorised by ' + gs.getUserDisplayName() + '.';
+        gr.update();
+        var chk = new GlideRecord(inv.anchor.table || 'incident');
+        chk.get(inv.anchor.sys_id);
+        var ok = String(chk.getValue('caused_by') || '') === String(chg.sys_id);
+        if (ok) _noteUndo({ kind: 'field', number: inv.anchor.number, table: inv.anchor.table || 'incident', field: 'caused_by', old: old, old_display: oldDisp });
+        return { text: ok ? ('Linked - ' + _spkNum(inv.anchor.number) + ' now shows ' + _spkNum(chg.number) + ' as the cause. I read it back. Say "undo that" to unlink.')
+                          : ('I set it but the link did not stick when I read it back - something on the platform put it back.'),
+                 tool: 'link_change', extra: { verified: ok } };
+    }
+
+    // R18 - "keep digging on this while I'm away" -> investigate_watch order
+    function _invWatchConfirmed() {
+        var inv = _invFresh();
+        if (!inv || !inv.anchor.sys_id) return { text: 'The investigation has gone stale - say "investigate" again first.' };
+        var sig = [], hyp = [];
+        var hs = inv.result.hypotheses;
+        for (var i = 0; i < hs.length; i++) {
+            if (hs[i].signal && hs[i].signal.type && hs[i].signal.type !== 'none') {
+                sig.push({ n: i + 1, type: hs[i].signal.type, ref: hs[i].signal.ref || '', kw: (hs[i].signal.keywords || []).slice(0, 4) });
+            }
+            hyp.push({ n: i + 1, statement: String(hs[i].statement).substring(0, 160), keywords: (hs[i].signal && hs[i].signal.keywords || []).slice(0, 4) });
+        }
+        var snap = {};
+        try { snap = new NetraInvestigator().snapshot(inv.anchor.kind === 'ticket' ? new NetraInvestigator().resolveAnchor(inv.anchor.number) : inv.anchor); } catch (eS) {}
+        var row = new GlideRecord(SCOPE + '_task');
+        row.initialize();
+        row.user = user;
+        row.nt_number = _ntNext();
+        row.kind = 'investigate_watch';
+        row.state = 'active';
+        row.action = 'report_evidence';
+        row.target_table = inv.anchor.table || 'incident';
+        row.target_sys_id = inv.anchor.sys_id;
+        row.target_number = inv.anchor.number;
+        row.max_fires = 5;
+        row.fire_count = 0;
+        row.authorized_utterance = String(_cleanMsg(_currentUserMsg)).substring(0, 1000);
+        row.condition_json = JSON.stringify({ snap: snap, sig: sig, hyp: hyp }).substring(0, 3990);
+        row.action_params = '{}';
+        row.action_log = '[]';
+        var nowMs = new GlideDateTime().getNumericValue();
+        row.next_check_at.setDateNumericValue(nowMs + 30 * 60000);
+        row.expires_at.setDateNumericValue(nowMs + 24 * 3600000);
+        row.insert();
+        var n = parseInt(String(row.nt_number).replace(/\D/g, ''), 10);
+        return { text: 'Task ' + n + ' is on it. Every half hour for the next day I will re-check ' + _spkNum(inv.anchor.number) +
+                       ' and its server, tell you only what is new, and when it gets resolved I will tell you whether my theories were right.',
+                 tool: 'investigate_watch', extra: { nt_number: String(row.nt_number) } };
+    }
+
+    function _investigationIntents() {
+        return [
+            // investigate
+            function (lc, norm, contents) {
+                var m = lc.match(/^(?:please )?(?:investigate|diagnose|troubleshoot|root cause|look into|dig into|debug)(?: the)?(?: ticket| incident| server)? (.+)$/) ||
+                        lc.match(/^why is (.+?) (?:happening|broken|failing|down|slow|not working)$/) ||
+                        lc.match(/^what'?s (?:going on|happening|wrong) with (.+)$/) ||
+                        lc.match(/^(investigate) again$/);
+                if (!m) return null;
+                var target = m[1] === 'investigate' ? '' : m[1];
+                if (/^(it|this|that|this one)$/.test(target)) target = '';
+                if (!target) { var fi = _invFresh(); target = (fi && (fi.anchor.number || fi.anchor.ci_name)) || _focusNumber(); }
+                var nums = _findNums(norm);
+                if (nums.length === 1) target = nums[0];
+                if (/^VIT/i.test(target)) return null;   // vulnerability items belong to the VR tools
+                var r = _investigate(target);
+                return _flReply(r.final_speech || r.error || 'I could not investigate that.', contents, 'investigate', 'investigate', { investigation: r.investigation || null });
+            },
+            // what changed
+            function (lc, norm, contents) {
+                var m = lc.match(/^(?:what|anything|any changes?) (?:changed|change) (?:on|before|to|with) (.+?)(?: before (?:these|this|the|those) (?:tickets?|incidents?))?$/) ||
+                        lc.match(/^(?:any|were there any) changes (?:on|before|to) (.+?)(?: before (?:these|this|the|those) (?:tickets?|incidents?))?$/);
+                if (!m) return null;
+                var nums = _findNums(norm);
+                var r = _suspectChangesFor(nums.length === 1 ? nums[0] : m[1], 72);
+                return _flReply(r.final_speech || r.error || 'I could not check the changes.', contents, 'suspect_changes', 'fast_lane');
+            },
+            // show your work
+            function (lc, norm, contents) {
+                if (!_invFresh()) return null;
+                var W = { one: 1, two: 2, three: 3, first: 1, second: 2, third: 3, '1': 1, '2': 2, '3': 3 };
+                var m = lc.match(/^(?:what'?s the )?evidence (?:for )?(?:theory |number |the )?(one|two|three|first|second|third|1|2|3)(?: one| theory)?$/);
+                if (m) return _flReply(_invEvidenceFor(W[m[1]]), contents, 'investigation_evidence');
+                if (/^(why do you think (that|so)|how do you know( that)?|show (me )?your work|why( though)?)$/.test(lc)) return _flReply(_invEvidenceFor(1), contents, 'investigation_evidence');
+                if (/^(what did you check|what sources did you (check|use)|what did you look at)$/.test(lc)) return _flReply(_invChecked(), contents, 'investigation_checked');
+                if (/^how (would|can|do) (i|we) (confirm|verify|check|rule (it|that) out)( (it|that|this))?$/.test(lc)) {
+                    var inv = _invFresh(), h = inv.result.hypotheses[0];
+                    return _flReply(h ? ('To confirm theory one: ' + h.confirm_by + '. To rule it out: ' + h.rule_out_by + '.') : 'I did not have a theory to confirm.', contents, 'investigation_confirm_how');
+                }
+                if (/^(write (it|that|this) up|add (it|that|this) to the ticket|put (it|that|this) in a work note|log (it|that|this)|note (it|that) on the ticket)$/.test(lc)) {
+                    var inv2 = _invFresh();
+                    if (!inv2.anchor.sys_id) return _flReply('That investigation was on a configuration item, not a ticket - tell me which ticket to note it on.', contents, 'investigation_write_up');
+                    var note = _invNoteText(inv2);
+                    _parkDraft('inv_note', {});
+                    return _flReply('I will add a work note to ' + _spkNum(inv2.anchor.number) + ' with the top theory, ' + inv2.result.hypotheses.length + ' theor' + (inv2.result.hypotheses.length === 1 ? 'y' : 'ies') +
+                                    ' with their evidence numbers, how to confirm, and what I could not check - about ' + note.split('\n').length + ' lines. Shall I?', contents, 'investigation_write_up_draft');
+                }
+                if (/^(keep digging|keep investigating|keep an eye on (it|this|that))( on (it|this|that))?( while i'?m (away|gone|out))?( for me)?$/.test(lc)) {
+                    var inv4 = _invFresh();
+                    if (!inv4.anchor.sys_id) return _flReply('I can only keep digging on a ticket - that investigation was on a configuration item.', contents, 'investigate_watch');
+                    _parkDraft('inv_watch', {});
+                    return _flReply('I will keep digging on ' + _spkNum(inv4.anchor.number) + ' for the next 24 hours - checking every half hour, telling you only what is new, and grading my ' +
+                                    inv4.result.hypotheses.length + ' theor' + (inv4.result.hypotheses.length === 1 ? 'y' : 'ies') + ' when it resolves. No changes to the ticket. Shall I?', contents, 'investigate_watch_draft');
+                }
+                var lm = lc.match(/^link (?:that|the|this) change$/) || norm.match(/^link (CHG\d{7})(?: to (?:it|this|the ticket))?$/i);
+                if (lm) {
+                    var inv3 = _invFresh();
+                    var num = lm[1] ? String(lm[1]).toUpperCase() : (inv3.suspects[0] && inv3.suspects[0].number);
+                    if (!num) return _flReply('There was no suspect change in that investigation to link.', contents, 'link_change');
+                    _parkDraft('link_change', { number: num });
+                    return _flReply('I will set "caused by" on ' + _spkNum(inv3.anchor.number) + ' to ' + _spkNum(num) + ' - remember that is correlation, not proof. Shall I?', contents, 'link_change_draft');
+                }
+                return null;
+            }
+        ];
     }
 
     /**
@@ -1064,11 +2313,16 @@
             var code = r.getStatusCode();
             var rb = r.getBody();
             if (code !== 200) {
-                return { error: 'HTTP ' + code + ': ' + String(rb || '').substring(0, 400) };
+                // R18 - the governor needs the FULL body: the quota detail
+                // that says per-day vs per-minute sits past character 600
+                return { error: 'HTTP ' + code + ': ' + String(rb || '').substring(0, 400),
+                         code: code, raw: String(rb || '').substring(0, 6000) };
             }
             return JSON.parse(rb);
         } catch (e) {
-            return { error: 'Could not call Gemini: ' + String(e.message || e) };
+            // a thrown execute() is how some timeouts surface - treat it like
+            // HTTP 0 so the chain moves on instead of giving up
+            return { error: 'HTTP 0: could not call Gemini: ' + String(e.message || e), code: 0, raw: '' };
         }
     }
 
@@ -1091,82 +2345,93 @@
      *  - Higher maxOutputTokens (2048) for reasoning tasks vs 512 for chat
      *  - Verbose system text that forces explicit reasoning before answer
      * =================================================================== */
-    function _reason(systemText, userPayload, responseSchema, maxOutputTokens) {
+    function _reason(systemText, userPayload, responseSchema, maxOutputTokens, preferredModel, timeoutMs) {
         var apiKey = gs.getProperty(SCOPE + '.gemini_api_key');
         if (!apiKey) return { error: 'no_gemini_key' };
-        // R4.7 - PERF: reasoning calls (sentiment, triage) also default to the
-        // fast lite model. These run on the request path, so 2.5-flash's
-        // thinking overhead was pure added latency.
-        var model = _defaultModel();
+        // R18 - reasoning calls used to be pinned to _defaultModel() with no
+        // fallback, so the day that model ran out of quota, approval triage,
+        // script narration, query building and button explanations all died
+        // while a perfectly good model sat idle. Same governed chain as chat.
+        var brain = _brain();
+        var pick = brain.pickChain(_modelChain(preferredModel || _defaultModel()), new GlideDateTime().getNumericValue());
+        _brainTurn.skipped += pick.skipped.length;
+        if (!pick.tryList.length) return { error: 'all_resting', all_resting: true, resting_until_ms: pick.all_resting_until_ms };
 
-        // Wrap the system text with a chain-of-thought preamble. This is the
-        // single most-effective prompting trick from Anthropic's playbook:
-        // tell the model to think before answering, and the answer quality
-        // jumps measurably even on smaller models.
+        // Chain-of-thought preamble: tell the model to think before it
+        // answers - measurably better answers even on the small models.
         var coT = 'Think step by step. First, analyse the user payload carefully. ' +
                   'Identify the relevant entities, relationships, and constraints. ' +
                   'Then construct your answer.\n\n' + (systemText || '');
-
-        var body = {
-            contents: [{ role: 'user', parts: [{ text: String(userPayload) }] }],
-            systemInstruction: { parts: [{ text: coT }] },
-            generationConfig: {
-                temperature: _temperatureFor(model, 0.3),   // low temp for structured output; gen-3 insists on 1.0
-                maxOutputTokens: maxOutputTokens || 2048,
-                topP: 0.9
-            },
-            safetySettings: [
-                { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
-                { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_ONLY_HIGH' },
-                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-            ]
-        };
-        // Thinking tokens otherwise eat the maxOutputTokens budget and the
-        // visible reply gets truncated mid sentence - our chain-of-thought
-        // scaffolding is in the system prompt anyway. Send whichever knob
-        // this generation accepts (see _thinkingConfigFor).
-        var rThink = _thinkingConfigFor(model);
-        if (rThink) body.generationConfig.thinkingConfig = rThink;
-        // Structured output: when responseSchema is provided, Gemini guarantees
-        // the output is a valid JSON object matching that schema. This is the
-        // same idea as strict tool-input JSON schema enforcement.
-        if (responseSchema) {
-            body.generationConfig.responseMimeType = 'application/json';
-            body.generationConfig.responseSchema   = responseSchema;
-        }
-
-        var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
-                  encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
-        try {
-            var rm = new sn_ws.RESTMessageV2();
-            rm.setEndpoint(url);
-            rm.setHttpMethod('POST');
-            rm.setRequestHeader('Content-Type', 'application/json');
-            rm.setRequestBody(JSON.stringify(body));
-            // R2.12.5 - 45s -> 15s. Reasoning calls are slightly larger
-            // than chat (more tokens) but still shouldn't sit forever.
-            rm.setHttpTimeout(15000);
-            var r = rm.execute();
-            var code = r.getStatusCode();
-            var rb = r.getBody();
-            if (code !== 200) {
-                return { error: 'HTTP ' + code + ': ' + String(rb || '').substring(0, 300) };
+        var lastErr = 'no model tried';
+        var startedAt = Date.now();
+        for (var i = 0; i < pick.tryList.length; i++) {
+            var model = pick.tryList[i];
+            if (Date.now() - startedAt > 20000) break;
+            // temperature + thinking knob are PER MODEL - gen-3 wants 1.0 and
+            // thinkingLevel, 2.5 wants thinkingBudget, lite wants neither
+            var body = {
+                contents: [{ role: 'user', parts: [{ text: String(userPayload) }] }],
+                systemInstruction: { parts: [{ text: coT }] },
+                generationConfig: {
+                    temperature: _temperatureFor(model, 0.3),
+                    maxOutputTokens: maxOutputTokens || 2048,
+                    topP: 0.9
+                },
+                safetySettings: [
+                    { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
+                    { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_ONLY_HIGH' },
+                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+                ]
+            };
+            var rThink = _thinkingConfigFor(model);
+            if (rThink) body.generationConfig.thinkingConfig = rThink;
+            if (responseSchema) {
+                body.generationConfig.responseMimeType = 'application/json';
+                body.generationConfig.responseSchema   = responseSchema;
             }
-            var parsed = JSON.parse(rb);
+            var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+                      encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
+            var t0 = Date.now(), code = 0, rb = '';
+            try {
+                var rm = new sn_ws.RESTMessageV2();
+                rm.setEndpoint(url);
+                rm.setHttpMethod('POST');
+                rm.setRequestHeader('Content-Type', 'application/json');
+                rm.setRequestBody(JSON.stringify(body));
+                rm.setHttpTimeout(timeoutMs || 15000);
+                var r = rm.execute();
+                code = r.getStatusCode();
+                rb = String(r.getBody() || '');
+            } catch (eX) { code = 0; rb = String(eX.message || eX); }
+            var tookMs = Date.now() - t0;
+            var nowMs = new GlideDateTime().getNumericValue();
+            if (code !== 200) {
+                _brainTurn.attempts.push({ model: model, code: code, ms: tookMs, via: 'reason' });
+                lastErr = 'HTTP ' + code + ': ' + rb.substring(0, 300);
+                if (code === 400) return { error: lastErr, code: 400, model: model };   // request-shaped: another model wont help
+                brain.recordFail(model, code, rb, nowMs);
+                if (code === 401 || code === 403) return { error: lastErr, code: code };
+                continue;
+            }
+            brain.recordOk(model, tookMs, nowMs);
+            _brainTurn.calls++;
+            _brainTurn.attempts.push({ model: model, code: 200, ms: tookMs, via: 'reason' });
             var text = '';
             try {
-                text = parsed.candidates[0].content.parts.map(function(p){ return p.text || ''; }).join('').trim();
-            } catch (e) { return { error: 'no_candidate_text' }; }
-            if (!text) return { error: 'empty_text' };
+                var parsed = JSON.parse(rb);
+                var ps = parsed.candidates[0].content.parts;
+                for (var k = 0; k < ps.length; k++) if (ps[k].text && !ps[k].thought) text += ps[k].text;
+                text = text.replace(/^\s+|\s+$/g, '');
+            } catch (eP) { return { error: 'no_candidate_text', model: model }; }
+            if (!text) return { error: 'empty_text', model: model };
             if (responseSchema) {
-                try { return { ok: true, json: JSON.parse(text), raw: text }; }
-                catch (eP) { return { error: 'invalid_json', raw: text }; }
+                try { return { ok: true, json: JSON.parse(text), raw: text, model: model }; }
+                catch (eJ) { return { error: 'invalid_json', raw: text, model: model }; }
             }
-            return { ok: true, text: text };
-        } catch (e) {
-            return { error: 'Reason call threw: ' + (e.message || e) };
+            return { ok: true, text: text, model: model };
         }
+        return { error: 'All reasoning models unavailable. Last: ' + lastErr };
     }
 
     // Convenience wrapper for free-form narration tasks
@@ -1382,6 +2647,14 @@
 '\n' +
 '3. WHEN UNSURE, SAY NO. Better to ask "I am not sure I followed - did you mean X or Y?" than to do the wrong write. Refuse politely if intent is unclear.\n' +
 '\n' +
+'R18 - MISSIONS (dedicated background work):\n' +
+'- "work through / triage the unassigned queue" -> mission preview; it returns the read-back to speak. Progress, pause, report, apply and undo all go through the mission tool. Apply and undo need the user\'s yes.\n' +
+'\n' +
+'R18 - INVESTIGATE (evidence first, like an engineer):\n' +
+'- "investigate / why is this happening / what is going on with <server> / root cause" -> call investigate. Its answer is final and already worded - never add theories of your own on top.\n' +
+'- "what changed before this broke" -> suspect_changes. It is correlation, never say a change CAUSED anything.\n' +
+'- Follow-ups about that investigation -> investigation_followup. Write-ups and links need the user\'s yes; the tool gives you the read-back.\n' +
+'\n' +
 'R17 - PLANS (compound commands that actually finish):\n' +
 '- A request with SEVERAL writes in it ("resolve these three...", "comment on all of those and bump the last one") -> make_plan with one step per write, using the exact tool args. Read the numbered steps back, ask "Shall I run it?", and on their yes call execute_plan.\n' +
 '- A turn that says [continue plan] is the page bringing you back mid-plan: call execute_plan immediately, speak only the short progress line.\n' +
@@ -1582,10 +2855,44 @@
                         required: ['ref_number','decision']
                     }
                 },
+                // ------- R18 - investigate like an engineer -------
+                {
+                    name: 'investigate',
+                    description: 'Deep investigation of a ticket or configuration item: gathers the journal, audit trail, CI and neighbours, changes that landed just before, sibling incidents, open problems, KB and similar resolved tickets, then ranks cited root-cause theories. The reply it returns is FINAL and already worded for speech - do not rephrase it. Use for "investigate", "why is this happening", "what is going on with <server>", "root cause".',
+                    parameters: { type: 'object', properties: {
+                        target: { type: 'string', description: 'ticket number, configuration item name, or "this" for the ticket in focus' }
+                    }, required: ['target'] }
+                },
+                {
+                    name: 'suspect_changes',
+                    description: 'Change correlation: which changes landed on this ticket\'s server (or its direct neighbours) shortly before the problem started, ranked, with minutes-before. Correlation, not proof. The reply is FINAL speech.',
+                    parameters: { type: 'object', properties: {
+                        target: { type: 'string', description: 'ticket number or configuration item name' },
+                        hours:  { type: 'number', description: 'look-back window, default 72' }
+                    }, required: ['target'] }
+                },
+                {
+                    name: 'investigation_followup',
+                    description: 'Follow-ups on the most recent investigation (last 2 hours): evidence for a theory, what was checked, how to confirm. Writes (write_up, link_change) never happen here - they need the user\'s spoken yes, so this returns a read-back to speak.',
+                    parameters: { type: 'object', properties: {
+                        action: { type: 'string', enum: ['evidence', 'checked', 'confirm_how', 'write_up', 'link_change'] },
+                        n: { type: 'number', description: 'theory number for evidence, 1-3' },
+                        change_number: { type: 'string', description: 'for link_change: the suspect CHG number' }
+                    }, required: ['action'] }
+                },
+                {
+                    name: 'mission',
+                    description: 'Background MISSIONS that keep working while the user is away (template: triage the unassigned queue - review each ticket, propose routing, flag likely duplicates and known fixes; nothing changes until the user says apply). Actions: preview (read-back before starting), board (progress), pause, resume, cancel, report (5 items a page), apply_request and undo_request (both return a read-back - the user must say yes).',
+                    parameters: { type: 'object', properties: {
+                        action: { type: 'string', enum: ['preview', 'board', 'pause', 'resume', 'cancel', 'report', 'apply_request', 'undo_request'] },
+                        nt_number: { type: 'string', description: 'mission number or digits; omit for the current mission' },
+                        page: { type: 'number' }
+                    }, required: ['action'] }
+                },
                 // ------- R17 - plan / execute / verify -------
                 {
                     name: 'make_plan',
-                    description: 'File a multi-step PLAN for a compound request ("resolve these three with note X, then bump that one to P2"). Each step is one tool call. The plan does NOT run - read the returned numbered steps back and ask. Steps may use: update_field, create_ticket, add_comment, add_work_note, resolve_ticket, reassign_ticket, send_message.',
+                    description: 'File a multi-step PLAN for a compound request ("resolve these three with note X, then bump that one to P2"). Each step is one tool call. The plan does NOT run - read the returned numbered steps back and ask. Steps may use exactly these tools: update_field, create_ticket, update_ticket (customer comment), add_work_note, resolve_ticket, assign_ticket_to_group, assign_ticket_to_user, change_priority, send_message_to_user. Use each tool\'s own argument names.',
                     parameters: { type: 'object', properties: {
                         steps: { type: 'array', description: 'ordered steps', items: { type: 'object', properties: {
                             tool: { type: 'string', description: 'tool name to run' },
@@ -2429,6 +3736,38 @@
                     return _reviewDraft();
                 case 'confirm_and_create':
                     return _noteUndoCreated(_confirmAndCreate());
+                // ------- R18 investigation -------
+                case 'investigate':
+                    return _investigate(String(args.target || ''));
+                case 'suspect_changes':
+                    return _suspectChangesFor(String(args.target || ''), parseInt(args.hours, 10) || 72);
+                case 'investigation_followup': {
+                    var act = String(args.action || '');
+                    if (!_invFresh()) return { ok: false, error: 'No investigation in the last two hours - run investigate first.' };
+                    if (act === 'evidence') return { ok: true, final_speech: _invEvidenceFor(parseInt(args.n, 10) || 1) };
+                    if (act === 'checked') return { ok: true, final_speech: _invChecked() };
+                    if (act === 'confirm_how') { var h1 = _invFresh().result.hypotheses[0]; return { ok: true, final_speech: h1 ? ('To confirm theory one: ' + h1.confirm_by + '. To rule it out: ' + h1.rule_out_by + '.') : 'There was no theory to confirm.' }; }
+                    if (act === 'write_up') { _parkDraft('inv_note', {}); return { ok: true, final_speech: 'I will add the investigation as a work note on ' + _spkNum(_invFresh().anchor.number) + '. Shall I?' }; }
+                    if (act === 'link_change') {
+                        var cn = String(args.change_number || '').toUpperCase() || (_invFresh().suspects[0] && _invFresh().suspects[0].number);
+                        if (!cn) return { ok: false, error: 'No suspect change to link.' };
+                        _parkDraft('link_change', { number: cn });
+                        return { ok: true, final_speech: 'I will set "caused by" to ' + _spkNum(cn) + ' - correlation, not proof. Shall I?' };
+                    }
+                    return { ok: false, error: 'Unknown follow-up.' };
+                }
+                case 'mission': {
+                    var mact = String(args.action || ''), mnt = _missionDigits(String(args.nt_number || '')) || _liveMissionNt();
+                    var runner = new NetraMissionRunner();
+                    if (mact === 'preview') { var pv2 = runner.preview(user); if (pv2.ok && pv2.count) _parkDraft('mission_launch', {}); return { ok: pv2.ok, final_speech: String(pv2.message) }; }
+                    if (mact === 'board') { var bd2 = runner.board(user); return { ok: true, final_speech: bd2.length ? bd2[0].sentence : 'No missions yet.' }; }
+                    if (!mnt) return { ok: false, error: 'There is no mission.' };
+                    if (mact === 'pause' || mact === 'resume' || mact === 'cancel') { var c2 = runner.control(mnt, user, mact); return { ok: c2.ok, final_speech: String(c2.message || c2.error) }; }
+                    if (mact === 'report') { var r2 = runner.report(mnt, user, parseInt(args.page, 10) || 1); return { ok: r2.ok, final_speech: String(r2.message || r2.error) }; }
+                    if (mact === 'apply_request') { _parkDraft('mission_apply', { nt: mnt }); return { ok: true, final_speech: 'I will apply the confident routings from mission ' + parseInt(mnt, 10) + ', re-reading each one and skipping anything someone touched since. Shall I?' }; }
+                    if (mact === 'undo_request') { _parkDraft('mission_undo', { nt: mnt }); return { ok: true, final_speech: 'I will put back every ticket mission ' + parseInt(mnt, 10) + ' changed, except ones someone changed since. Shall I?' }; }
+                    return { ok: false, error: 'Unknown mission action.' };
+                }
                 // ------- R17 plan / execute / verify -------
                 case 'make_plan':
                     return _makePlan(args);
@@ -2791,8 +4130,26 @@
             caller_id: dv('caller_id'),
             opened_at: String(gr.opened_at),
             updated_at: String(gr.sys_updated_on),
-            recent_comments: String(gr.comments || '').substring(0, 400),
-            recent_work_notes: String(gr.work_notes || '').substring(0, 400)
+            journal: (function () {
+                // R18 - String(gr.comments) is empty on a loaded record, so the
+                // old recent_comments field was always blank
+                var out = [];
+                try {
+                    var j = new GlideRecord('sys_journal_field');
+                    j.addQuery('element_id', String(gr.sys_id));
+                    j.addQuery('element', 'IN', 'comments,work_notes');
+                    j.orderByDesc('sys_created_on');
+                    j.setLimit(3);
+                    j.query();
+                    while (j.next()) {
+                        var cv = j.getValue('sys_created_on');
+                        out.push({ element: String(j.element), author: String(j.sys_created_by),
+                                   body: String(j.value || '').replace(/\s+/g, ' ').substring(0, 300),
+                                   created_ms: cv ? new GlideDateTime(cv).getNumericValue() : 0 });
+                    }
+                } catch (eJ) {}
+                return out;
+            })()
         };
     }
 
@@ -3074,8 +4431,10 @@
             ctx.focus_number  = num;
             ctx.focus_sys_id  = gr.getUniqueValue();
             ctx.focus_set_at  = new GlideDateTime();
-            ctx.last_utterance = num;
-            ctx.update();
+            // R18 - never touch last_utterance here: that column holds the
+            // whole CTX blob (memory, plans, habits). Writing the bare number
+            // used to wipe it, masked only by a later blob write in the turn.
+            if (ctx.isNewRecord()) ctx.insert(); else ctx.update();
             return { ok: true, message: 'Focused on ' + num + '. Subsequent commands will act on this ticket.', table: table, number: num };
         } catch (e) { return { ok: false, error: String(e.message || e) }; }
     }
@@ -3464,6 +4823,7 @@
     }
     function _ctxWriteBlob(blob) {
         _ctxBlobCache = blob;   // write-through: later reads in this request see it
+        _brainTurn.blobWritten = true;
         var ctx = _ctxLoadGr();
         // serialise EVERY key the callers put on the blob (see note in
         // _ctxReadBlob), just guarantee the core ones exist
@@ -4991,7 +6351,7 @@
                 try { vec = JSON.parse(hit.embedding); cachedHits++; } catch (eP) { vec = null; }
             }
             if (!vec) {
-                if (liveEmbeds >= INC_EMBED_MAX_LIVE) { skipped++; continue; }
+                if (liveEmbeds >= (typeof opts.maxLive === 'number' ? opts.maxLive : INC_EMBED_MAX_LIVE)) { skipped++; continue; }
                 var er = _lazyEmbedIncident(gr, null);
                 if (!er.ok) continue;
                 vec = er.vec; liveEmbeds++;
@@ -5329,7 +6689,9 @@
                     draft.msg !== _currentUserMsg &&
                     (now - (draft.at || 0)) < 10 * 60 * 1000;
         if (!armed) {
-            b.pendingOrder = { key: draftKey, msg: _currentUserMsg, at: now };
+            var keepArgs = {};
+            for (var ak in args) { if (args.hasOwnProperty(ak) && ak !== 'confirm') keepArgs[ak] = args[ak]; }
+            b.pendingOrder = { key: draftKey, msg: _currentUserMsg, at: now, turn: _curTurn(), args: keepArgs };
             _ctxWriteBlob(b);
             return {
                 ok: false, needs_confirmation: true,
@@ -5707,9 +7069,23 @@
      *    "undo task N"      -> standing order N
      * =================================================================== */
     function _planToolAllowed(name) {
-        var OK = { update_field: 1, create_ticket: 1, add_comment: 1, add_work_note: 1,
-                   resolve_ticket: 1, reassign_ticket: 1, set_priority: 1, send_message: 1 };
+        // R18 - these are REAL _runTool cases. The old list advertised
+        // add_comment / reassign_ticket / set_priority / send_message, none
+        // of which exist - a plan using them halted with "Unknown tool".
+        var OK = { update_field: 1, create_ticket: 1, update_ticket: 1, add_work_note: 1,
+                   resolve_ticket: 1, assign_ticket_to_group: 1, assign_ticket_to_user: 1,
+                   change_priority: 1, send_message_to_user: 1 };
         return !!OK[name];
+    }
+
+    function _planToolAlias(step) {
+        var t = String(step.tool || '');
+        var a = step.args || {};
+        if (t === 'add_comment') return 'update_ticket';
+        if (t === 'set_priority') return 'change_priority';
+        if (t === 'send_message') return 'send_message_to_user';
+        if (t === 'reassign_ticket') return (a.user || a.user_name || a.assignee) ? 'assign_ticket_to_user' : 'assign_ticket_to_group';
+        return t;
     }
 
     function _makePlan(args) {
@@ -5718,6 +7094,7 @@
         if (steps.length > 12) return { ok: false, error: 'Twelve steps max - break bigger jobs up.' };
         for (var i = 0; i < steps.length; i++) {
             var st = steps[i];
+            if (st && st.tool) st.tool = _planToolAlias(st);
             if (!st || !st.tool || !_planToolAllowed(String(st.tool))) {
                 return { ok: false, error: 'Step ' + (i + 1) + ' uses "' + (st && st.tool) + '" which plans may not run. Plans stick to ticket writes and messages.' };
             }
@@ -5725,7 +7102,7 @@
         var b = _ctxReadBlob();
         b.plan = {
             id: 'P' + new GlideDateTime().getNumericValue(),
-            steps: steps, cursor: 0, hops: 0, confirmed: false,
+            steps: steps, cursor: 0, hops: 0, confirmed: false, turn: _curTurn(),
             msg: _currentUserMsg, at: new GlideDateTime().getNumericValue(),
             undo: [], results: []
         };

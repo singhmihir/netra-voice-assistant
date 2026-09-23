@@ -78,7 +78,78 @@ NetraTaskRunner.prototype = {
             return false;
         }
         if (String(task.kind) === 'chase_approvals') return this._chaseApprovals(task, cond);
+        // R18 - MUST be explicit: _watchTicket starts from met=true, so any
+        // new kind that fell through to it would fire on the very first pass
+        if (String(task.kind) === 'investigate_watch') return this._investigateWatch(task, cond);
+        if (String(task.kind) !== 'watch_ticket') {
+            this._fail(task, 'unknown standing order kind ' + task.kind);
+            return false;
+        }
         return this._watchTicket(task, cond);
+    },
+
+    // ---- kind: investigate_watch (R18) --------------------------------
+    // "keep digging on this while I'm away". Each pass re-snapshots the
+    // ticket and its CI, reports ONLY what is new, checks each theory's
+    // signal ("a sibling was fixed by rolling back the patch - that
+    // supports theory one"), and when the ticket resolves, grades the
+    // theories against the real close notes - including saying plainly
+    // when it got it wrong. Zero model calls, like everything in here.
+    _investigateWatch: function (task, cond) {
+        var num = String(task.target_number);
+        var t = new GlideRecord(String(task.target_table || 'incident'));
+        if (!t.get(String(task.target_sys_id))) { this._fail(task, 'target record is gone'); return false; }
+        var inv = new NetraInvestigator();
+        var anchor = inv.resolveAnchor(num);
+        if (!anchor || !anchor.ok) { this._fail(task, 'could not re-open the investigation on ' + num); return false; }
+
+        var closed = String(t.state) === '6' || String(t.state) === '7' || String(t.active) === 'false';
+        if (closed) {
+            var g = inv.grade(cond.hyp || [], String(t.close_notes || ''));
+            var ORD = ['', 'one', 'two', 'three'];
+            var verdict;
+            if (g.outcome === 'matched') verdict = num + ' is resolved, and the close notes match my theory ' + (ORD[g.n] || g.n) + ': "' + g.snippet + '".';
+            else if (g.outcome === 'missed') verdict = num + ' is resolved, and it does not match any of my theories - I got this one wrong. The fix was: "' + g.snippet + '".';
+            else verdict = num + ' is resolved, but the close notes are too thin for me to tell whether my theories were right.';
+            task.state = 'fired';
+            this._log(task, 'graded: ' + g.outcome + (g.n ? ' (theory ' + g.n + ')' : ''), { outcome: g.outcome, theory: g.n || 0 });
+            task.update();
+            this._notify(task, String(task.nt_number) + ': ' + verdict);
+            return true;
+        }
+
+        var snapNew = inv.snapshot(anchor);
+        var snapOld = cond.snap || {};
+        var said = [];
+        var facts = inv.diffSnapshot(snapOld, snapNew) || [];
+        for (var i = 0; i < facts.length && said.length < 4; i++) said.push(facts[i]);
+        var sigs = inv.checkSignals(cond.sig || [], snapOld, snapNew) || [];
+        var ORD2 = ['', 'one', 'two', 'three'];
+        for (var s = 0; s < sigs.length; s++) {
+            if (sigs[s].supported) said.push(sigs[s].text + ' - that supports my theory ' + (ORD2[sigs[s].n] || sigs[s].n));
+        }
+        cond.snap = snapNew;
+        var ser = JSON.stringify(cond);
+        // condition_json is a 4000-char column - trim the snapshot lists, never the theories
+        while (ser.length > 3900 && snapNew) {
+            if (snapNew.sib && snapNew.sib.length > 3) snapNew.sib = snapNew.sib.slice(-3);
+            else if (snapNew.res && snapNew.res.length > 3) snapNew.res = snapNew.res.slice(-3);
+            else if (snapNew.chg && snapNew.chg.length > 3) snapNew.chg = snapNew.chg.slice(-3);
+            else break;
+            ser = JSON.stringify(cond);
+        }
+        task.condition_json = ser;
+        var sent = false;
+        var fires = parseInt(String(task.fire_count || '0'), 10);
+        if (said.length && fires < parseInt(String(task.max_fires || '5'), 10)) {
+            task.fire_count = fires + 1;
+            this._log(task, 'new on ' + num + ': ' + said.join('; '));
+            sent = true;
+        }
+        this._rearm(task, 30);
+        task.update();
+        if (sent) this._notify(task, String(task.nt_number) + ': still digging on ' + num + '. ' + said.join('. ') + '.');
+        return sent;
     },
 
     // ---- kind: watch_ticket ------------------------------------------

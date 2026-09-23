@@ -327,7 +327,8 @@
         { name: 'watch_assignments', type: 'boolean',                 label: 'Watch Assignments', default: 'true' },
         { name: 'watch_comments',    type: 'boolean',                 label: 'Watch Comments',    default: 'true' },
         { name: 'watch_approvals',   type: 'boolean',                 label: 'Watch Approvals',   default: 'true' },
-        { name: 'voice_mode',        type: 'string', length: 20,      label: 'Voice Mode',        default: 'normal' }
+        { name: 'voice_mode',        type: 'string', length: 20,      label: 'Voice Mode',        default: 'normal' },
+        { name: 'last_seen_at',      type: 'glide_date_time',         label: 'Last Seen At' }   // R17 away debrief
     ]);
     upsertTable(scope + '_context', 'Netra Context', scopeSysId, [
         { name: 'user',           type: 'reference', ref: 'sys_user', label: 'User' },
@@ -356,6 +357,55 @@
         { name: 'model',         type: 'string', length: 64,    label: 'Embedding Model' },
         { name: 'embedded_at',   type: 'glide_date_time',       label: 'Embedded At' }
     ]);
+    // R17 - standing orders + R18 missions/watches (one header row each)
+    upsertTable(scope + '_task', 'Netra Task', scopeSysId, [
+        { name: 'user',                 type: 'reference', ref: 'sys_user', label: 'User' },
+        { name: 'nt_number',            type: 'string', length: 10,    label: 'NT Number' },
+        { name: 'kind',                 type: 'string', length: 40,    label: 'Kind' },
+        { name: 'target_table',         type: 'string', length: 40,    label: 'Target Table' },
+        { name: 'target_sys_id',        type: 'string', length: 32,    label: 'Target sys_id' },
+        { name: 'target_number',        type: 'string', length: 32,    label: 'Target Number' },
+        { name: 'condition_json',       type: 'string', length: 4000,  label: 'Condition JSON' },
+        { name: 'action',               type: 'string', length: 40,    label: 'Action' },
+        { name: 'action_params',        type: 'string', length: 1000,  label: 'Action Params' },
+        { name: 'authorized_utterance', type: 'string', length: 1000,  label: 'Authorized Utterance' },
+        { name: 'state',                type: 'string', length: 20,    label: 'State' },
+        { name: 'max_fires',            type: 'integer',               label: 'Max Fires' },
+        { name: 'fire_count',           type: 'integer',               label: 'Fire Count' },
+        { name: 'next_check_at',        type: 'glide_date_time',       label: 'Next Check At' },
+        { name: 'expires_at',           type: 'glide_date_time',       label: 'Expires At' },
+        { name: 'action_log',           type: 'string', length: 8000,  label: 'Action Log' },
+        { name: 'undo_json',            type: 'string', length: 4000,  label: 'Undo JSON' }
+    ]);
+    // R18 - the quota governor's instance-wide ledger (one row per model)
+    upsertTable(scope + '_brain', 'Netra Brain Health', scopeSysId, [
+        { name: 'key',         type: 'string', length: 64,  label: 'Model' },
+        { name: 'state',       type: 'string', length: 20,  label: 'State' },
+        { name: 'reason',      type: 'string', length: 20,  label: 'Reason' },
+        { name: 'dead_until',  type: 'glide_date_time',     label: 'Resting Until' },
+        { name: 'day_key',     type: 'string', length: 12,  label: 'Pacific Day' },
+        { name: 'used_today',  type: 'integer',             label: 'Used Today' },
+        { name: 'fails_today', type: 'integer',             label: 'Fails Today' },
+        { name: 'quota_limit', type: 'integer',             label: 'Learned Daily Limit' },
+        { name: 'last_ok_at',  type: 'glide_date_time',     label: 'Last OK At' },
+        { name: 'last_err',    type: 'string', length: 500, label: 'Last Error' },
+        { name: 'avg_ms',      type: 'integer',             label: 'Avg Latency ms' }
+    ]);
+    // R18 - one row per ticket in a background mission (NOT the task table:
+    // NT numbers count every task row)
+    upsertTable(scope + '_mission_item', 'Netra Mission Item', scopeSysId, [
+        { name: 'mission',             type: 'string', length: 32,   label: 'Mission (header sys_id)' },
+        { name: 'seq',                 type: 'integer',              label: 'Sequence' },
+        { name: 'target_table',        type: 'string', length: 40,   label: 'Target Table' },
+        { name: 'target_sys_id',       type: 'string', length: 32,   label: 'Target sys_id' },
+        { name: 'target_number',       type: 'string', length: 40,   label: 'Target Number' },
+        { name: 'state',               type: 'string', length: 20,   label: 'State' },
+        { name: 'lease_until',         type: 'glide_date_time',      label: 'Lease Until' },
+        { name: 'mod_count_at_review', type: 'integer',              label: 'sys_mod_count At Review' },
+        { name: 'findings_json',       type: 'string', length: 4000, label: 'Findings (JSON)' },
+        { name: 'undo_json',           type: 'string', length: 1000, label: 'Undo (JSON)' },
+        { name: 'attempts',            type: 'integer',              label: 'Attempts' }
+    ]);
 
     /* ---- Script Includes ---- */
     say('');
@@ -370,6 +420,11 @@
     upsertScriptInclude('NetraContext',    scopeSysId, scope, 'Per-user conversational context (last ticket etc.).',               SRC.NetraContext);
     upsertScriptInclude('NetraNavigator',  scopeSysId, scope, 'Resolves spoken destinations to portal URLs.',                      SRC.NetraNavigator);
     upsertScriptInclude('NetraVulnerability', scopeSysId, scope, 'Vulnerability Response analyst operations: triage, exposure, CVE lookup, assign, state, defer, notes.', SRC.NetraVulnerability);
+    upsertScriptInclude('NetraTaskRunner',    scopeSysId, scope, 'Standing orders executed by the scanner: watch, nudge, chase, escalate, investigate-watch. No LLM.', SRC.NetraTaskRunner);
+    upsertScriptInclude('NetraBrain',         scopeSysId, scope, 'Quota governor: per-model rest ledger, Pacific reset clock, 429 classification.', SRC.NetraBrain);
+    upsertScriptInclude('NetraInvestigator',  scopeSysId, scope, 'Evidence-first investigation: change correlation, dossier, rule theories, watch snapshots. No LLM.', SRC.NetraInvestigator);
+    upsertScriptInclude('NetraSemantic',      scopeSysId, scope, 'Embedding engine for background jobs: similar resolved, triage votes, duplicates.', SRC.NetraSemantic);
+    upsertScriptInclude('NetraMissionRunner', scopeSysId, scope, 'Background missions (triage the unassigned queue) with leases, apply and undo. No generate calls.', SRC.NetraMissionRunner);
 
     /* ---- Business Rule ---- */
     say('');
@@ -416,7 +471,14 @@
         say('  > prop ' + scope + '.' + suffix);
     }
     upsertProp('gemini_api_key', '', 'Google AI Studio API key for Gemini. REQUIRED for the conversational brain and TTS. Get a free key at https://aistudio.google.com/apikey');
-    upsertProp('gemini_model', 'gemini-flash-lite-latest', 'Primary Gemini model for chat + reasoning. Default tuned for voice-loop latency (~1s). Set to gemini-2.5-flash for richer reasoning at ~2-4s per call.');
+    // R18 - no gemini_model pin any more: pinning disabled auto-routing and the
+    // old value was a -latest alias that moved between model generations
+    upsertProp('model_chain', 'gemini-2.5-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3-flash-preview', 'Ordered model chain. Each free-tier model has its own daily pool; the quota governor skips resting ones for free.');
+    upsertProp('turn_call_budget', '5', 'Hard cap on generate calls per chat turn. When hit, Netra answers from what she already found instead of spending more.');
+    upsertProp('fast_lane', 'true', 'Answer frequent unambiguous requests (status, my tickets, approvals, debrief, confirmations) with zero model calls.');
+    upsertProp('brain_offline', 'false', 'Test switch: force basic (no-LLM) mode.');
+    upsertProp('investigate_llm', 'true', 'Use one model call to rank investigation theories; false = rule-based only.');
+    upsertProp('investigate_model', 'gemini-3-flash-preview', 'Preferred model for the investigation synthesis call (falls back through model_chain).');
     upsertProp('sentiment_llm', 'false', 'When true, refine keyword-detected frustration with an extra Gemini classification call on the reply path (adds ~1-2s on frustrated turns).');
     upsertProp('notify_author', 'false', 'When true, the comment business rule also notifies the comment author.');
 
@@ -451,7 +513,11 @@
         'sn_vul_entry': ['read'],
         'sn_vul_vulnerability_group': ['read'],
         'sys_user_grmember': ['read'],
-        'cmdb_ci': ['read']
+        'cmdb_ci': ['read'],
+        // R17/R18 - standing orders, investigations, missions
+        'task': ['read'], 'task_ci': ['read'], 'task_sla': ['read'],
+        'change_task': ['read'], 'cmdb_rel_ci': ['read'], 'cmdb_rel_type': ['read'],
+        'sys_audit': ['read']
     };
     var privCreated = 0, privSkipped = 0;
     for (var privTable in privRules) {

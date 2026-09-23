@@ -1,0 +1,21 @@
+{
+  "table": "x_196061_netra_v1_mission_item",
+  "label": "Netra Mission Item",
+  "super_class": "",
+  "is_extendable": false,
+  "access": "public",
+  "note": "One row per ticket in a mission (R18 F7). Must NOT live in x_196061_netra_v1_task: _ntNext counts every row there. Index 'mission' - every runner query filters on it. Date column is written only via setDateNumericValue.",
+  "columns": [
+    { "name": "mission",             "internal_type": "string",          "max_length": 32,   "column_label": "Mission (header sys_id)" },
+    { "name": "seq",                 "internal_type": "integer",         "max_length": 40,   "column_label": "Sequence" },
+    { "name": "target_table",        "internal_type": "string",          "max_length": 40,   "column_label": "Target Table" },
+    { "name": "target_sys_id",       "internal_type": "string",          "max_length": 32,   "column_label": "Target sys_id" },
+    { "name": "target_number",       "internal_type": "string",          "max_length": 40,   "column_label": "Target Number" },
+    { "name": "state",               "internal_type": "string",          "max_length": 20,   "column_label": "State" },
+    { "name": "lease_until",         "internal_type": "glide_date_time", "max_length": 40,   "column_label": "Lease Until" },
+    { "name": "mod_count_at_review", "internal_type": "integer",         "max_length": 40,   "column_label": "sys_mod_count At Review" },
+    { "name": "findings_json",       "internal_type": "string",          "max_length": 4000, "column_label": "Findings (JSON)" },
+    { "name": "undo_json",           "internal_type": "string",          "max_length": 1000, "column_label": "Undo (JSON)" },
+    { "name": "attempts",            "internal_type": "integer",         "max_length": 40,   "column_label": "Attempts" }
+  ]
+}

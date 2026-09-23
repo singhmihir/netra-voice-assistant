@@ -48,6 +48,12 @@ NetraScanner.prototype = {
             gs.warn('[NetraScanner] task runner failed: ' + eT);
         }
 
+        // R18 - advance background missions a few items at a time (embedding
+        // API only - never a generate call - and a 45s pass deadline)
+        try { var mo = new NetraMissionRunner().advance(); enqueued += (mo && mo.notified) || 0; } catch (eMs) {
+            gs.warn('[NetraScanner] mission runner failed: ' + eMs);
+        }
+
         var prefs = new GlideRecord('x_196061_netra_v1_user_pref');
         prefs.addQuery('active', true);
         prefs.query();
@@ -115,10 +121,17 @@ NetraScanner.prototype = {
         gr.query();
 
         var byCi = {}, byCat = {}, total = 0;
+        var ciId = {}, ciFirstMs = {};   // R18 - for the likely-trigger lookup
         while (gr.next()) {
             total++;
             var ci = String(gr.cmdb_ci.getDisplayValue ? gr.cmdb_ci.getDisplayValue() : '');
-            if (ci) { byCi[ci] = (byCi[ci] || 0) + 1; }
+            if (ci) {
+                byCi[ci] = (byCi[ci] || 0) + 1;
+                ciId[ci] = String(gr.getValue('cmdb_ci') || '');
+                var oc = gr.getValue('opened_at') || gr.getValue('sys_created_on');
+                var ocMs = oc ? new GlideDateTime(oc).getNumericValue() : 0;
+                if (ocMs && (!ciFirstMs[ci] || ocMs < ciFirstMs[ci])) ciFirstMs[ci] = ocMs;
+            }
             var cat = String(gr.category || '');
             if (cat) { byCat[cat] = (byCat[cat] || 0) + 1; }
         }
@@ -138,6 +151,17 @@ NetraScanner.prototype = {
         var key = ('mic_' + top.what + '_' + bucket).substring(0, 32);
         var msg = 'Heads up - ' + top.n + ' tickets have come in ' + top.kind +
                   ' in the last couple of hours. That looks like one outage rather than separate issues.';
+        // R18 - if a change landed on that server just before the first
+        // ticket, say so in the same breath (correlation wording only)
+        if (byCi[top.what] && ciId[top.what]) {
+            try {
+                var sc = new NetraInvestigator().suspectChanges(ciId[top.what], ciFirstMs[top.what] || new GlideDateTime().getNumericValue(), {});
+                if (sc && sc.ok && sc.suspects && sc.suspects.length && sc.suspects[0].score >= 0.5) {
+                    msg += ' Likely trigger: ' + sc.suspects[0].sentence;
+                }
+            } catch (eSc) { gs.warn('[NetraScanner] suspect lookup failed: ' + (eSc.message || eSc)); }
+        }
+        msg = msg.substring(0, 1000);
 
         var sent = 0;
         var prefs = new GlideRecord('x_196061_netra_v1_user_pref');

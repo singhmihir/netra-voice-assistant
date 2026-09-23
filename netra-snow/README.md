@@ -1,6 +1,63 @@
-# Netra on ServiceNow 🎙️ v6.0
+# Netra on ServiceNow 🎙️ v7.0
 
 A voice-first, fully accessible assistant that runs **natively inside ServiceNow** as a scoped application. Zero external services, zero recurring cost. Designed for blind and visually-impaired ServiceNow users.
+
+---
+
+## v7.0 — Tireless (2026-09)
+
+The brief: make Netra work like a dedicated senior agent — investigate
+before concluding, keep going across many steps, verify her own work, keep
+working while you are away, recover instead of giving up, and report
+honestly. The constraint that shaped everything: **the free Gemini tier
+allows 20 generate calls per model per day** (Google says so in the 429
+body — `quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier,
+quotaValue: 20`), and every ordinary turn used to cost two. So v7 does the
+heavy lifting deterministically and spends a model call only where
+reasoning actually earns its keep.
+
+- **Never goes dark.** A quota governor (`NetraBrain`, instance-wide ledger
+  in `x_196061_netra_v1_brain`) remembers which model is out of quota and
+  until when — per-day limits rest until the Pacific-midnight reset (US DST
+  handled), per-minute limits for the RetryInfo delay, timeouts and
+  overloads briefly — and **never sends HTTP to a resting model**. Chat
+  *and* the reasoning tools share one governed chain across four models,
+  each with its own daily pool. Per-turn call budget (default 5), at most 6
+  tool calls a round. If the brain dies mid-turn she tells you what she
+  already found instead of "I am thinking too much". *"How's your brain?"*
+  reads the ledger for free.
+- **Zero-call fast lane.** Ticket status (including *"i n c zero zero one
+  zero zero one three"*), my tickets, my approvals, the away debrief, the
+  work board, quota status, repeat, plan hops, and yes/no on anything she
+  parked in the previous turn — all answered with **no model call**.
+- **Basic mode.** When every model is resting she still reads tickets,
+  lists work, searches by meaning (the embedding API has its own quota),
+  raises a ticket with a read-back and a yes, refuses other writes *with a
+  reason*, and says when her reasoning comes back.
+- **Investigates like an engineer** (`NetraInvestigator`). *"Investigate
+  INC0010013"* gathers a numbered evidence dossier — journal, audit trail,
+  the CI and its neighbours, **changes that landed just before**, sibling
+  incidents, open problems, KB, similar resolved tickets — for free, then
+  spends **one** call to rank theories that must cite evidence. Code drops
+  any theory with a missing or invented citation, caps confidence by
+  evidence strength, and composes the spoken answer from the evidence
+  fields so numbers and times can't drift. *"Evidence for two"*, *"what did
+  you check"*, *"write it up"*, *"link that change"* — show-your-work at zero
+  calls, writes confirm-gated and verified.
+- **Change correlation** — *"what changed on this server before these
+  tickets"* ranks changes by link, timing, type, risk and outcome, worded as
+  correlation, never causation. The outage radar now names the likely
+  trigger in the same announcement.
+- **Keeps digging while you're away** — an evidence watch that reports only
+  new facts, checks each theory's signal, and when the ticket resolves
+  **grades its own theories** against the real close notes — including
+  saying *"I got this one wrong"*.
+- **Missions** (`NetraMissionRunner`) — *"work through the unassigned
+  queue"*: the scanner reviews a few tickets per pass (routing, likely
+  duplicate, known fix — embeddings only, never a generate call), you hear
+  progress on the work board, and it applies only what you then say yes to
+  — re-reading every write, skipping anything a human touched since, fully
+  undoable.
 
 ---
 

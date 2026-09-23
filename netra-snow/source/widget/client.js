@@ -157,6 +157,12 @@ api.controller = function ($scope, $timeout, $window) {
     // R1.4 - last-turn tool-call trace (so you can actually see what she did)
     c.lastTrace = [];   // [{name, ts}, ...]
     c.agency = (c.data && c.data.agency) || { orders: [], corrections: 0, facts: 0, addendum: '', plan: null };   // R17
+    c.brain = (c.data && c.data.brain) || { models: [], calls: 0, mode: 'full', alive: 0 };   // R18
+    c.brainUntil = function (ms) {
+        if (!ms) return '';
+        var mins = Math.round((ms - Date.now()) / 60000);
+        return mins <= 0 ? 'any moment' : (mins < 60 ? mins + 'm' : Math.round(mins / 60) + 'h');
+    };
     // R7 - live conversation transcript for the dev panel Chat tab
     c.convo = [];       // [{who:'you'|'netra'|'sys', text, t}]
     function _convoPush(who, text) {
@@ -1502,30 +1508,41 @@ api.controller = function ($scope, $timeout, $window) {
             }
         }
 
-        // greetings (English + Indian)
-        if (/^(hi|hello|hey|hiya|namaste|namaskar|salaam|salam|good\s*(morning|afternoon|evening|day)|shubh\s*prabhat|shubh\s*ratri)\b/.test(lc) && lc.length < 40) {
+        // R18 - every shortcut below matches the WHOLE utterance. The old
+        // versions matched anywhere, so "hey netra, list my tickets" got a
+        // greeting, "thanks, now resolve it" got "you're welcome", "what
+        // time was that ticket opened" got the clock, and "what are you
+        // working on" got "I am Netra". And while Netra is waiting on an
+        // answer (her last line ended in a question) nothing here may
+        // swallow a yes/no/ok - the old ack rule ate the bare "yes" that
+        // confirms a ticket, so the ticket never got raised.
+        var bare = lc.replace(/[!.,?]+$/g, '').replace(/^(hey |ok |okay )?netra[,!.]*\s*/, '').trim();
+        var expecting = /\?\s*["']?\s*$/.test(String(c.lastSpoken || ''));
+
+        // greetings (English + Indian) - only when that is ALL they said
+        if (/^(hi|hello|hey|hiya|namaste|namaskar|salaam|salam|good\s*(morning|afternoon|evening|day)|shubh\s*prabhat|shubh\s*ratri)( there)?( netra)?$/.test(lc.replace(/[!.,]+/g, '').trim())) {
             var h = new Date().getHours();
             var greet = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
             return { intent: 'greet', reply: greet + ', how may I help you today?' };
         }
         // thanks
-        if (/\b(thanks|thank you|thanks a lot|much appreciated|dhanyavaad|shukriya|thank ya)\b/.test(lc) && lc.length < 40) {
+        if (/^(ok |okay )?(thanks|thank you|thanks a lot|thank you so much|thanks so much|much appreciated|dhanyavaad|shukriya|thank ya)( netra)?$/.test(bare)) {
             return { intent: 'thanks', reply: 'You are most welcome. Do let me know if anything else is required.' };
         }
         // farewell (no sleep)
-        if (/^(bye|goodbye|see you|see ya|catch you later|alvida)$/i.test(lc.replace(/[!.,]/g,''))) {
+        if (/^(bye|goodbye|see you|see ya|catch you later|alvida)$/i.test(bare)) {
             return { intent: 'bye', reply: 'Goodbye. I will be here whenever you need me.' };
         }
         // identity
-        if (/\b(who are you|what are you|your name|introduce yourself|tell me about yourself|aap kaun ho)\b/.test(lc)) {
-            return { intent: 'identity', reply: 'I am Netra, your voice assistant for ServiceNow. I can open tickets, list your open issues, resolve them, search the knowledge base, and handle approvals - all by voice.' };
+        if (/^(who are you|what are you|what'?s your name|what is your name|introduce yourself|tell me about yourself|aap kaun ho)$/.test(bare)) {
+            return { intent: 'identity', reply: 'I am Netra, your voice assistant for ServiceNow. I can investigate tickets, raise and update them, chase approvals, watch things while you are away, and tell you what I did - all by voice.' };
         }
         // capabilities / help
-        if (/\b(what can you do|help me|your capabilities|commands|what do you do|how to use|how can i use)\b/.test(lc)) {
-            return { intent: 'help', reply: 'You can ask me things like: open a ticket about my VPN, list my open tickets, resolve I N C zero zero zero one two three four, what are my pending approvals, search knowledge for password reset. Just speak naturally.' };
+        if (/^(help|help me|what can you do|what are your capabilities|your capabilities|commands|what do you do|how do i use you|how can i use you|how to use you)$/.test(bare)) {
+            return { intent: 'help', reply: 'You can ask me things like: what is the status of I N C zero zero one zero zero one three, list my tickets, what are my approvals, investigate that incident, watch it and nudge the assignee if nothing moves, what did you do while I was away, or what are you working on. Just speak naturally.' };
         }
         // time
-        if (/\b(what(\s+is|\'s)?(\s+the)?\s+(current\s+)?time|tell\s+me\s+the\s+time|current\s+time|samay\s+kya\s+hai)\b/.test(lc)) {
+        if (/^(what(\s+is|'s)?(\s+the)?\s+(current\s+)?time( is it)?( now)?|what time is it( now)?|tell\s+me\s+the\s+time|current\s+time|samay\s+kya\s+hai)$/.test(bare)) {
             var t = new Date();
             var hh = t.getHours(), mm = t.getMinutes();
             var ampm = hh < 12 ? 'A M' : 'P M';
@@ -1533,34 +1550,35 @@ api.controller = function ($scope, $timeout, $window) {
             return { intent: 'time', reply: 'The time is ' + h12 + ' ' + (mm < 10 ? 'oh ' + mm : mm) + ' ' + ampm + '.' };
         }
         // date
-        if (/\b(what(\s+is|\'s)?(\s+the|today\'?s)?\s+date|today\'?s\s+date|what day is|aaj\s+kya\s+tareekh|tareekh)\b/.test(lc)) {
+        if (/^(what(\s+is|'s)?(\s+the|\s+today'?s)?\s+date( today)?|today'?s\s+date|what day is (it|today)|aaj\s+kya\s+tareekh\s+hai|tareekh)$/.test(bare)) {
             var d = new Date();
             var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
             var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
             return { intent: 'date', reply: 'Today is ' + days[d.getDay()] + ', the ' + d.getDate() + 'th of ' + months[d.getMonth()] + '.' };
         }
         // small talk
-        if (/\b(how are you|how\'?s it going|how do you do|kaise ho|kya haal|sab theek|kaisa hai)\b/.test(lc)) {
+        if (/^(how are you( doing)?( today)?|how'?s it going|how do you do|kaise ho|kya haal( hai)?|sab theek( hai)?)$/.test(bare)) {
             return { intent: 'smalltalk', reply: 'I am doing well, thank you for asking. Ready to help whenever you are.' };
         }
-        // affirmations - skip server roundtrip
-        if (/^(ok|okay|alright|fine|cool|got it|understood|theek hai|haan|haanji|yes)\.?\s*$/i.test(lc) && lc.length < 15) {
+        // acknowledgements - never "yes"/"haan" (the server decides what a
+        // yes confirms, for free), and never while an answer is expected
+        if (!expecting && /^(ok|okay|alright|fine|got it|understood|theek hai)$/.test(bare)) {
             return { intent: 'ack', reply: 'Anything else I can do?' };
         }
         // joke / fun
-        if (/\b(tell me a joke|crack a joke|make me laugh|joke please)\b/.test(lc)) {
+        if (/^(tell me a joke|crack a joke|make me laugh|joke please|tell me something funny)$/.test(bare)) {
             return { intent: 'joke', reply: 'Why did the developer go broke? Because he used up all his cache. Anything else?' };
         }
         // version
-        if (/\b(version|build|which version|kaunsa version)\b/.test(lc)) {
-            return { intent: 'version', reply: 'I am running Netra version nine, with always-on listening and Indian English voice.' };
+        if (/^((what|which) version( are you( on| running)?)?|kaunsa version|version)$/.test(bare)) {
+            return { intent: 'version', reply: 'I am running Netra version seven - the one that keeps working even when my reasoning models are out of quota.' };
         }
         // R2.9.1 - repeat / say again
-        if (/^(repeat|repeat that|say (it|that) again|come again|once more|kya bola)\.?$/i.test(lc)) {
+        if (/^(repeat|repeat that|say (it|that) again|come again|once more|kya bola)$/i.test(bare)) {
             return { intent: 'repeat', reply: c.lastSpoken || 'I have not said anything yet.' };
         }
         // R2.9.1 - "where am I" - return current Service Portal route
-        if (/\b(where am i|which page|what page|current page|kahaan hoon)\b/.test(lc)) {
+        if (/^(where am i|which page( is this| am i on)?|what page( is this| am i on)?|current page|kahaan hoon)$/.test(bare)) {
             var pageId = '';
             try {
                 var qp = new URLSearchParams(window.location.search);
@@ -1569,24 +1587,28 @@ api.controller = function ($scope, $timeout, $window) {
             return { intent: 'where', reply: 'You are on the ' + pageId.replace(/_/g,' ') + ' page of the Service Portal.' };
         }
         // R2.9.1 - quiet / silence (without sleeping)
-        if (/^(quiet|silence|hush|be quiet|chup|chup ho)\.?$/i.test(lc)) {
+        if (/^(quiet|silence|hush|be quiet|chup|chup ho)$/i.test(bare)) {
             return { intent: 'quiet', reply: 'Of course. I will stay silent until you speak to me again.' };
         }
         // R2.9.1 - speed up / slow down playback
-        if (/\b(speak (faster|quicker)|talk faster|hurry up|jaldi)\b/.test(lc)) {
+        if (/^(please )?((speak|talk) (faster|quicker)|hurry up|jaldi)( please)?$/.test(bare)) {
             return { intent: 'pace', reply: 'I will speak a bit quicker from now on.' };
         }
-        if (/\b(speak (slower|slowly)|talk slower|slow down|dheere)\b/.test(lc)) {
+        if (/^(please )?((speak|talk) (slower|slowly)|slow down|dheere)( please)?$/.test(bare)) {
             return { intent: 'pace', reply: 'I will slow down a touch.' };
         }
         // R2.9.1 - acknowledgement variants
-        if (/^(cool|nice|great|awesome|perfect|wonderful|bahut khoob|wah)\.?$/i.test(lc) && lc.length < 25) {
+        if (!expecting && /^(cool|nice|great|awesome|perfect|wonderful|bahut khoob|wah)$/i.test(bare)) {
             return { intent: 'praise', reply: 'Thank you. Happy to help.' };
         }
-        // R2.10 - conversational repair: rewind / undo last
-        if (/^(scratch that|forget that|undo( that)?|rewind|go back|cancel that|never mind|chod do)\.?$/i.test(lc)) {
+        // R2.10 - conversational repair: rewind the chat memory ONLY.
+        // "undo that" / "cancel that" / "never mind" are NOT here any more -
+        // they go to the server, which really reverses the last write (the
+        // old local version said "Undone" while the ticket still existed)
+        // and which can drop a read-back that is waiting for a yes.
+        if (!expecting && /^(scratch that|forget that|rewind|go back)$/i.test(bare)) {
             return { intent: 'rewind', _action: 'rewind_mem',
-                     reply: 'Undone. We are back to before that. What would you like to do?' };
+                     reply: 'Okay, I have forgotten that last exchange. What would you like to do?' };
         }
         return null;
     }
@@ -3284,6 +3306,7 @@ api.controller = function ($scope, $timeout, $window) {
                     c.server.update();   // fire-and-forget
                 } catch (eR) { logEvent('warn', 'rewind_mem server call failed: ' + eR.message); }
             }
+            try { _convoPush('you', text); _convoPush('netra', local.reply); } catch (eCv) {}
             setState('speaking');
             speak(local.reply, function () {
                 if (c.alert) {
@@ -3501,6 +3524,7 @@ api.controller = function ($scope, $timeout, $window) {
                     geminiHistory = r.history;
                     _memPersist();   // R11 - survive refreshes
                     if (r.agency) c.agency = r.agency;   // R17 - AGENCY card refresh
+                    if (r.brain) c.brain = r.brain;      // R18 - BRAIN card refresh
                     if (r.memory) {
                         logEvent('mem', 'memory: ' + (r.memory.prompts || 0) + '/50 prompts in the live window, ' +
                             c.mem.entries + ' turns, ~' + c.mem.kb + 'KB' +
@@ -3860,6 +3884,10 @@ api.controller = function ($scope, $timeout, $window) {
             _afterTTS(done);
             return;
         }
+        // R18 - "repeat" and the did-she-just-ask-a-question check both read
+        // this; nothing ever set it, so repeat always said "I have not said
+        // anything yet"
+        c.lastSpoken = String(text).replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*_`#>]/g, '').trim();
         // R9 - Lab mute: captions still update, no audio (used for NLP
         // dry-runs and quiet dev sessions).
         if (c.labMute) {
