@@ -124,7 +124,7 @@ T.test('as a caller: no work note is written for them, and work notes are never 
     g.put('sys_journal_field', { element_id: 'inc15', element: 'work_notes', value: 'internal: escalate quietly', sys_created_by: 'admin', sys_created_on: g.fmtUtc(g.P.now) });
     r = s.say('summarize INC0010015');
     T.notMatch(r.message, /escalate quietly|work note/, 'work notes are not read to a caller');
-    T.match(s.say('summarize INC0010013').message, /INC0010013 was not found, or you can not see it\.$/, 'someone else\'s ticket is invisible');
+    T.match(s.say('summarize INC0010013').message, /Ticket \*\*incident ending 0 1 3\*\* was not found, or you can not see it\.$/, 'someone else\'s ticket is invisible');
 });
 
 T.test('search only finds tickets the user can see', function () {

@@ -1292,7 +1292,7 @@
     }
 
     function _saySummary(res) {
-        if (!res || res.ok === false) return 'I could not find that record' + (res && res.error ? ' - ' + String(res.error).replace(/[.\s]+$/, '') : '') + '.';
+        if (!res || res.ok === false) return 'I could not find that record' + (res && res.error ? ' - ' + String(res.error).replace(/[.\s]+$/, '').replace(/\b(?:INC|CHG|PRB|RITM|REQ|SCTASK)\d{7}\b/g, function (n) { return _spkNum(n); }) : '') + '.';
         var who = res.assigned_to || res.assignment_group || '';
         var s = _spkNum(res.number) + ': ' + String(res.short_description || '').substring(0, 110) + '. ' +
                 'It is ' + String(res.state || 'in an unknown state').toLowerCase() +
