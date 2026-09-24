@@ -99,14 +99,15 @@ NetraTaskRunner.prototype = {
         var num = String(task.target_number);
         var t = new GlideRecord(String(task.target_table || 'incident'));
         if (!t.get(String(task.target_sys_id))) { this._fail(task, 'target record is gone'); return false; }
-        var inv = new NetraInvestigator();
+        var inv = new NetraInvestigator({ background: true });
         var anchor = inv.resolveAnchor(num);
         if (!anchor || !anchor.ok) { this._fail(task, 'could not re-open the investigation on ' + num); return false; }
 
         var closed = String(t.state) === '6' || String(t.state) === '7' || String(t.active) === 'false';
         if (closed) {
-            // the CI name is in every theory, so it can never tell them apart
-            var g = inv.grade(cond.sig || [], String(t.close_notes || ''), { exclude: [String(anchor.ci_name || '')] });
+            // the CI name is in every theory, so it can never tell them apart;
+            // the ticket's own number (the process theory's ref) proves nothing
+            var g = inv.grade(cond.sig || [], String(t.close_notes || ''), { exclude: [String(anchor.ci_name || '')], anchor: num });
             var verdict = num + ' is resolved, and ' + g.text;
             task.state = 'fired';
             this._log(task, 'graded: ' + g.outcome + (g.n ? ' (theory ' + g.n + ')' : ''), { outcome: g.outcome, theory: g.n || 0 });
