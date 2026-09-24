@@ -1895,19 +1895,28 @@
 .nsg-0, .nsg-1, .nsg-2, .nsg-3 { transition: stop-color 0.2s linear; }
 
 /* R21 - the loading screen */
-.netra-ready { position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(12, 6, 30, .62); backdrop-filter: blur(3px); }
-.netra-ready-card { max-width: 420px; width: calc(100% - 32px); padding: 22px 24px; border-radius: 18px; background: rgba(25, 14, 52, .92); color: #fff; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
-.netra-ready-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-.netra-ready-sub { font-size: 13px; opacity: .8; margin-bottom: 14px; }
-.netra-ready-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.08); font-size: 14px; }
-.netra-ready-row b { min-width: 72px; }
-.netra-ready-row em { font-style: normal; opacity: .85; overflow-wrap: anywhere; }
-.netra-ready-row .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 10px; background: #f5b83d; animation: netra-ready-pulse 1s ease-in-out infinite alternate; }
+/* R21/R23 - the loading screen. Above everything on the stage (the
+   Settings tab and the install button included), a solid card, large
+   full-contrast text; rows are explicitly transparent so no portal theme
+   class can paint over them (the theme's .ok once did: grey box, white text) */
+.netra-ready { position: absolute; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; background: rgba(8, 6, 14, 0.74); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.netra-ready-card { max-width: 440px; width: 100%; box-sizing: border-box; padding: 24px 24px 22px; border-radius: 20px; background: #16131f; border: 1px solid rgba(255, 255, 255, 0.14); color: #ffffff; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55); text-align: left; }
+.netra-ready-title { font-size: 22px; line-height: 1.25; font-weight: 700; color: #ffffff; margin: 0 0 6px; }
+.netra-ready-sub { font-size: 15px; line-height: 1.45; color: #d9d6e2; opacity: 1; margin: 0 0 16px; }
+.netra-ready .netra-ready-row { display: flex; align-items: flex-start; gap: 12px; padding: 11px 0; border-top: 1px solid rgba(255, 255, 255, 0.12); font-size: 16px; line-height: 1.4; color: #ffffff; background: transparent !important; }
+.netra-ready .netra-ready-row b { min-width: 78px; flex: 0 0 auto; font-weight: 600; color: #ffffff; }
+.netra-ready .netra-ready-row em { font-style: normal; color: #e6e3ee; opacity: 1; overflow-wrap: anywhere; }
+.netra-ready-row .dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 11px; margin-top: 6px; background: #f5b83d; animation: netra-ready-pulse 1s ease-in-out infinite alternate; }
 .netra-ready-row.netra-ready-ok .dot { background: #3ddc84; animation: none; }
-@keyframes netra-ready-pulse { from { opacity: .35; } to { opacity: 1; } }
+@keyframes netra-ready-pulse { from { opacity: .45; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .netra-ready-row .dot { animation: none; } }
-.netra-ready-start { margin-top: 14px; width: 100%; min-height: 44px; border: 0; border-radius: 12px; background: #4285F4; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+.netra-ready-start { margin-top: 16px; width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #4285F4; color: #fff; font-size: 17px; font-weight: 700; cursor: pointer; }
 .netra-ready-start:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+@media (max-width: 420px) {
+    .netra-ready-card { padding: 20px 18px 18px; }
+    .netra-ready .netra-ready-row { gap: 10px; }
+    .netra-ready .netra-ready-row b { min-width: 70px; }
+}
 .netra-stage-status {
     font-size: 17px;
     font-weight: 500;

@@ -2999,7 +2999,10 @@ api.controller = function ($scope, $timeout, $window) {
         var earUsable = c.ear.mode !== 'off' && c.ear.status !== 'error' && typeof Worker !== 'undefined';
         c.ready = c.ear.on || _nativeHeardWords || (_nativeVerdict === 'ok' && !earUsable);
         if (!c.ready) {
-            if (c.ear.status === 'loading') c.readyText = 'Getting ready — loading my on-device ear' + (c.ear.progress ? ' ' + c.ear.progress + '%' : '') + '…';
+            // the download reaches 100 % before the model is compiled and
+            // warmed up, which can take a while more on a slow machine
+            if (c.ear.status === 'loading') c.readyText = c.ear.progress >= 100 ? 'Getting ready — preparing my on-device ear (the first time can take a minute)…'
+                                                        : 'Getting ready — loading my on-device ear' + (c.ear.progress ? ' ' + c.ear.progress + '%' : '') + '…';
             else if (_nativeVerdict === 'blocked') c.readyText = 'Getting ready — the browser can not reach its speech service, switching to my own ear…';
             else if (!c.hasSR) c.readyText = 'Getting ready…';
             else c.readyText = 'Getting ready — checking the browser can hear…';

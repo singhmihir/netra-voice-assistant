@@ -655,6 +655,19 @@
       <div class="netra-mesh-blob netra-mesh-5"></div>
     </div>
 
+    <!-- R21 - the loading screen: nothing is accepted until Netra can hear, speak and answer.
+         A direct child of the stage, so it covers the Settings tab and the controls too -->
+    <div class="netra-ready" ng-if="c.gate && !c.gate.open" role="alertdialog" aria-live="assertive" aria-label="Netra is getting ready">
+      <div class="netra-ready-card">
+        <div class="netra-ready-title">{{c.gate.everOpen ? 'One moment - Netra is catching up' : 'Netra is getting ready'}}</div>
+        <div class="netra-ready-sub">Please wait - she can not take questions until all three are ready.</div>
+        <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.hearing}"><span class="dot"></span><b>Hearing</b><em>{{c.gate.hearingText}}</em></div>
+        <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.voice}"><span class="dot"></span><b>Voice</b><em>{{c.gate.voiceText}}</em></div>
+        <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.brain}"><span class="dot"></span><b>Answers</b><em>{{c.gate.brainText}}</em></div>
+        <button type="button" class="netra-ready-start" ng-if="c.gate.needsTap" ng-click="c.gateActivate()" autofocus
+                aria-label="Start Netra. Press Enter so the browser lets her speak.">Start Netra</button>
+      </div>
+    </div>
     <div class="netra-stage-center">
       <div class="netra-stage-orbit" aria-hidden="true">
         <!-- slow-spinning prism ring behind the blob -->
@@ -679,18 +692,6 @@
           <path class="netra-stage-blob-inner"/>
         </svg>
       </button>
-      <!-- R21 - the loading screen: nothing is accepted until Netra can hear, speak and answer -->
-      <div class="netra-ready" ng-if="c.gate && !c.gate.open" role="alertdialog" aria-live="assertive" aria-label="Netra is getting ready">
-        <div class="netra-ready-card">
-          <div class="netra-ready-title">{{c.gate.everOpen ? 'One moment - Netra is catching up' : 'Netra is getting ready'}}</div>
-          <div class="netra-ready-sub">Please wait - she can not take questions until all three are ready.</div>
-          <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.hearing}"><span class="dot"></span><b>Hearing</b><em>{{c.gate.hearingText}}</em></div>
-          <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.voice}"><span class="dot"></span><b>Voice</b><em>{{c.gate.voiceText}}</em></div>
-          <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.brain}"><span class="dot"></span><b>Answers</b><em>{{c.gate.brainText}}</em></div>
-          <button type="button" class="netra-ready-start" ng-if="c.gate.needsTap" ng-click="c.gateActivate()" autofocus
-                  aria-label="Start Netra. Press Enter so the browser lets her speak.">Start Netra</button>
-        </div>
-      </div>
       <div class="netra-stage-status" role="status" aria-live="polite">{{c.liveStatus}}</div>
       <!-- R8.1 - live captions: her own words while speaking, yours while listening -->
       <div class="netra-stage-caption netra-stage-caption-netra"
