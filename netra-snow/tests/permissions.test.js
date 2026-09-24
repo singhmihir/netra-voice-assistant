@@ -94,4 +94,87 @@ T.test('my tickets includes the work assigned to me, not just what I raised', fu
     T.match(r.message, /You have 8 open tickets - 2 assigned to you and 6 you raised/);
 });
 
+/* ---- the widget's own ticket helpers run with the user's permissions ---- */
+var BETH = { sys_id: 'u_beth', name: 'Beth Anglin', user_name: 'beth.anglin' };
+function lastResult(s) { return JSON.stringify(s.gemini.generate[s.gemini.generate.length - 1].contents.slice(-1)); }
+// a self-service caller: reads their own incident and its comments; may not
+// write it, and may not read work notes
+function callerAcl(owner) {
+    return function (table, op, rec, field) {
+        if (table !== 'incident') return true;
+        if (op !== 'read') return false;
+        if (field === 'work_notes') return false;
+        return rec.caller_id === owner;
+    };
+}
+
+T.test('as a caller: no work note is written for them, and work notes are never read to them', function () {
+    var s = new S.Session();
+    s.inc('INC0010015').caller_id = 'u_beth';
+    g.put('sys_journal_field', { element_id: 'inc15', element: 'work_notes', value: 'internal: probably user error', sys_created_by: 'admin', sys_created_on: g.fmtUtc(g.P.now - 60000) });
+    g.put('sys_journal_field', { element_id: 'inc15', element: 'comments', value: 'We are looking at the printer now', sys_created_by: 'admin', sys_created_on: g.fmtUtc(g.P.now - 30000) });
+    g.P.user = BETH; g.P.ACL = callerAcl('u_beth');
+    s.model(gem.call('add_work_note', { ticket_number: 'INC0010015', note: 'user says it is fixed' }), gem.text('I could not.'));
+    s.say('add a work note to INC0010015 saying it is fixed');
+    T.match(lastResult(s), /You do not have permission to add work notes on INC0010015, so I left it alone/);
+    T.eq((s.inc('INC0010015')._work_notes || []).length, 0, 'nothing written');
+    var r = s.say('summarize INC0010015');
+    T.match(r.message, /Latest comment from admin, .*"We are looking at the printer now"/);
+    // a newer work note exists; the caller must not hear it or its existence
+    g.put('sys_journal_field', { element_id: 'inc15', element: 'work_notes', value: 'internal: escalate quietly', sys_created_by: 'admin', sys_created_on: g.fmtUtc(g.P.now) });
+    r = s.say('summarize INC0010015');
+    T.notMatch(r.message, /escalate quietly|work note/, 'work notes are not read to a caller');
+    T.match(s.say('summarize INC0010013').message, /INC0010013 was not found, or you can not see it\.$/, 'someone else\'s ticket is invisible');
+});
+
+T.test('search only finds tickets the user can see', function () {
+    var s = new S.Session();
+    s.inc('INC0010015').caller_id = 'u_beth';
+    g.put('incident', { sys_id: 'inc99', number: 'INC0010099', caller_id: 'u_admin', state: '2', active: 'true', short_description: 'Printer on floor 5 offline' });
+    g.P.user = BETH; g.P.ACL = callerAcl('u_beth');
+    s.model(gem.call('search_incidents', { query: 'Printer' }), gem.text('One.'));
+    s.say('search incidents for printer');
+    T.match(lastResult(s), /INC0010015/);
+    T.notMatch(lastResult(s), /INC0010099/);
+    var f = N.loadServer({ input: { action: 'chat' } }).fn;
+    T.eq(f._eqv('printer^active=false^ORpriority=1'), 'printer active=false ORpriority=1', 'spoken text can not add query clauses');
+});
+
+T.test('a field the user may not write is refused up front, not claimed', function () {
+    var s = new S.Session();
+    g.P.ACL = function (table, op, rec, field) { return !(table === 'incident' && op === 'write' && field === 'assignment_group'); };
+    s.model(gem.call('assign_ticket_to_group', { ticket_number: 'INC0010013', group_name: 'Database' }), gem.text('I could not.'));
+    s.say('assign INC0010013 to Database');
+    T.match(lastResult(s), /You do not have permission to reassign it on INC0010013/);
+    T.eq(s.inc('INC0010013').assignment_group, 'g_net');
+    g.P.ACL = null;
+    s.model(gem.call('assign_ticket_to_group', { ticket_number: 'INC0010013', group_name: 'Database' }), gem.text('Done.'));
+    s.say('assign INC0010013 to Database');
+    T.match(lastResult(s), /INC0010013 assigned to Database - I read it back/);
+    T.eq(s.inc('INC0010013').assignment_group, 'g_db');
+});
+
+T.test('batch update: each ticket is checked and read back; refused ones are named', function () {
+    var s = new S.Session();
+    g.P.ACL = function (table, op, rec) { return !(table === 'incident' && op === 'write' && rec.number === 'INC0010014'); };
+    s.model(gem.call('batch_update_tickets', { ticket_numbers: ['INC0010013', 'INC0010014'], comment: 'Network maintenance tonight' }), gem.text('Done.'));
+    s.say('tell the callers on 13 and 14 about the maintenance');
+    var res = lastResult(s);
+    T.match(res, /Updated 1 of 2 tickets - I read each one back/);
+    T.match(res, /INC0010014.{0,40}you do not have permission to change it/);
+    T.eq((s.inc('INC0010013')._comments || []).length, 1);
+    T.eq((s.inc('INC0010014')._comments || []).length, 0);
+});
+
+T.test('undo runs with the user\'s permissions too', function () {
+    var s = new S.Session();
+    s.setBlob({ last_action: { kind: 'field', number: 'INC0010013', table: 'incident', field: 'assignment_group', old: 'g_db', old_display: 'Database' } });
+    g.P.ACL = function (table, op) { return !(table === 'incident' && op === 'write'); };
+    s.model(gem.call('undo_last_action', {}), gem.text('I could not.'));
+    s.say('undo that, go ahead');
+    T.match(lastResult(s), /You do not have permission to undo that on INC0010013/);
+    T.eq(s.inc('INC0010013').assignment_group, 'g_net');
+    T.ok(s.blob().last_action, 'the undo is kept for someone who can');
+});
+
 T.run(__filename);

@@ -78,7 +78,7 @@ T.test('model files a plan, the yes runs it, undo puts everything back', functio
     var inc = s.inc('INC0010014');
     T.eq(inc.assignment_group, 'g_db');
     T.eq(inc.priority, '4');
-    T.match(run.message, /Plan complete\. 1\. \*\*incident ending 0 1 4\*\* assigned to Database; 2\. Priority of \*\*incident ending 0 1 4\*\* is now 4 - I read it back/);
+    T.match(run.message, /Plan complete\. 1\. \*\*incident ending 0 1 4\*\* assigned to Database - I read it back; 2\. Priority of \*\*incident ending 0 1 4\*\* is now 4 - I read it back/);
     T.notMatch(run.message, /\.\.|\.;/, 'clean punctuation');
     T.match(s.say('undo the plan').message, /put back 2 changes/);
     var u = s.say('yes');

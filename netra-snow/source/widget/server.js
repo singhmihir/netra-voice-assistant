@@ -1287,7 +1287,7 @@
     }
 
     function _saySummary(res) {
-        if (!res || res.ok === false) return 'I could not find that record' + (res && res.error ? ' - ' + res.error : '') + '.';
+        if (!res || res.ok === false) return 'I could not find that record' + (res && res.error ? ' - ' + String(res.error).replace(/[.\s]+$/, '') : '') + '.';
         var who = res.assigned_to || res.assignment_group || '';
         var s = _spkNum(res.number) + ': ' + String(res.short_description || '').substring(0, 110) + '. ' +
                 'It is ' + String(res.state || 'in an unknown state').toLowerCase() +
@@ -1299,7 +1299,7 @@
             s += ' Latest ' + (last.element === 'work_notes' ? 'work note' : 'comment') + ' from ' + last.author +
                  (last.created_ms ? ', ' + _ago(last.created_ms) : '') + ': "' + String(last.body || '').substring(0, 140) + '".';
         } else {
-            s += ' No comments or work notes yet.';
+            s += res.journal_kinds && res.journal_kinds.indexOf('work_notes') < 0 ? ' No comments yet.' : ' No comments or work notes yet.';
         }
         return s;
     }
@@ -2408,11 +2408,12 @@
         if (!inv) return { text: 'The investigation has gone stale, so I will not write it up - say "investigate" again first.' };
         if (!_invIsTicket(inv)) return { text: 'That investigation was on a configuration item, not a ticket, so there is nothing to write the note on.' };
         if (!_ticketWritesEnabled()) return { text: 'Ticket writes are switched off by the admin, so I can not add the note. The theories are still here if you want them read out.' };
-        var gr = new GlideRecord(inv.anchor.table || 'incident');
-        if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone.' };
+        var gr = _ugr(inv.anchor.table || 'incident');
+        if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone, or you can not see it any more.' };
+        if (!gr.canWrite() || !gr.work_notes.canWrite()) return { text: 'You do not have permission to add work notes on ' + _spkNum(inv.anchor.number) + ', so I wrote nothing. The theories are still here if you want them read out.' };
         var startMs = new GlideDateTime().getNumericValue() - 2000;
         gr.work_notes = _invNoteText(inv);
-        gr.update();
+        if (!gr.update()) return { text: 'The platform refused the work note on ' + _spkNum(inv.anchor.number) + ', so nothing was written.', tool: 'investigation_write_up', extra: { verified: false } };
         var j = new GlideRecord('sys_journal_field');
         j.addQuery('element_id', inv.anchor.sys_id);
         j.addQuery('element', 'work_notes');
@@ -2434,17 +2435,19 @@
         var chg = null;
         for (var i = 0; i < inv.suspects.length; i++) if (inv.suspects[i].number === a.number) chg = inv.suspects[i];
         if (!chg) return { text: String(a.number) + ' was not one of the suspect changes, so I will not link it.' };
-        var gr = new GlideRecord(inv.anchor.table || 'incident');
-        if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone.' };
+        var gr = _ugr(inv.anchor.table || 'incident');
+        if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone, or you can not see it any more.' };
+        if (!gr.canWrite()) return { text: 'You do not have permission to change ' + _spkNum(inv.anchor.number) + ', so I did not link it.' };
         // caused_by only: on problem, rfc means the change raised to FIX it
         var linkField = gr.isValidField('caused_by') ? 'caused_by' : '';
+        if (linkField && !gr.caused_by.canWrite()) return { text: 'You can not edit the "caused by" field on ' + _spkNum(inv.anchor.number) + ', so I did not link it.' };
         if (!linkField) {
             // no field to link through on this instance - cross-reference both
             // records with work notes instead, so the trail still exists
             var who = gs.getUserDisplayName();
             var noteStart = new GlideDateTime().getNumericValue() - 2000;
             gr.work_notes = 'Suspected related change: ' + chg.number + ' (' + chg.sentence + '). Linked by ' + who + ' via Netra - correlation, not proof.';
-            gr.update();
+            if (!gr.update()) return { text: 'The platform refused the note on ' + _spkNum(inv.anchor.number) + ', so nothing was linked.', tool: 'link_change', extra: { verified: false, via: 'work_notes' } };
             var jn = new GlideRecord('sys_journal_field');
             jn.addQuery('element_id', inv.anchor.sys_id);
             jn.addQuery('element', 'work_notes');
@@ -2455,12 +2458,11 @@
             var noteOk = jn.next() && new GlideDateTime(jn.getValue('sys_created_on')).getNumericValue() >= noteStart;
             if (!noteOk) return { text: 'I tried to note the change on ' + _spkNum(inv.anchor.number) + ' but could not read the note back - worth a glance before I try again.',
                                   tool: 'link_change', extra: { verified: false, via: 'work_notes' } };
-            var cr = new GlideRecord('change_request');
+            var cr = _ugr('change_request');
             var chgNoted = false;
-            if (cr.get(chg.sys_id) && cr.isValidField('work_notes')) {
+            if (cr.get(chg.sys_id) && cr.isValidField('work_notes') && cr.canWrite() && cr.work_notes.canWrite()) {
                 cr.work_notes = inv.anchor.number + ' may be related to this change (' + chg.sentence + '). Noted by ' + who + ' via Netra.';
-                cr.update();
-                chgNoted = true;
+                chgNoted = !!cr.update();
             }
             return { text: 'This instance has no "caused by" field, so I cross-referenced them instead: a work note on ' + _spkNum(inv.anchor.number) +
                            (chgNoted ? ' and one on ' + _spkNum(chg.number) : '') + ' pointing at each other. Notes can not be deleted, so if that was wrong just tell me and I will add a correction.',
@@ -2470,7 +2472,7 @@
         var oldDisp = old ? String(gr[linkField].getDisplayValue()) : 'empty';
         gr.setValue(linkField, chg.sys_id);
         gr.work_notes = 'Linked "caused by" to ' + chg.number + ' via Netra (suspect change: ' + chg.sentence + ') - authorised by ' + gs.getUserDisplayName() + '.';
-        gr.update();
+        if (!gr.update()) return { text: 'The platform refused the change to ' + _spkNum(inv.anchor.number) + ', so it is not linked.', tool: 'link_change', extra: { verified: false } };
         var chk = new GlideRecord(inv.anchor.table || 'incident');
         chk.get(inv.anchor.sys_id);
         var ok = String(chk.getValue(linkField) || '') === String(chg.sys_id);
@@ -4435,12 +4437,12 @@
                 case 'assign_vulnerable_item': {
                     var vo = {};
                     if (args.group) {
-                        var vg = _pickByName('sys_user_group', String(args.group), 'nameLIKE' + String(args.group));
+                        var vg = _pickByName('sys_user_group', String(args.group));
                         if (vg.error) return { ok: false, error: vg.error, ambiguous: !!vg.ambiguous };
                         vo.group_id = vg.gr.getUniqueValue(); vo.group_name = String(vg.gr.getValue('name'));
                     }
                     if (args.user) {
-                        var vu = _pickByName('sys_user', String(args.user), 'nameLIKE' + args.user + '^ORuser_nameLIKE' + args.user + '^ORemailLIKE' + args.user);
+                        var vu = _pickByName('sys_user', String(args.user));
                         if (vu.error) return { ok: false, error: vu.error, ambiguous: !!vu.ambiguous };
                         vo.user_id = vu.gr.getUniqueValue(); vo.user_name = String(vu.gr.getValue('name'));
                     }
@@ -4472,15 +4474,39 @@
     /* ===================================================================
      *  v11 extended tool implementations
      * =================================================================== */
+    // Records the user asks about are read and changed with THEIR
+    // permissions: GlideRecordSecure applies the platform's ACLs, a scoped
+    // app's plain GlideRecord does not. Netra must never reach a ticket, a
+    // field or a note the signed-in user could not reach themselves.
+    function _ugr(table) { return new GlideRecordSecure(table); }
+
+    // spoken text going into an encoded query: "^" would start a new clause
+    function _eqv(s) { return String(s == null ? '' : s).replace(/\^/g, ' ').replace(/[\r\n]+/g, ' ').trim(); }
+
+    // a write the platform refused (ACL, business rule abort) comes back as
+    // an empty sys_id from update(); say so instead of claiming it landed
+    function _deniedWrite(gr, what) {
+        return { ok: false, error: 'You do not have permission to ' + what + ' on ' + String(gr.getValue('number') || 'that record') + ', so I left it alone.', denied: true };
+    }
+
+    // the journals the user may hear: work notes are for fulfillers, so a
+    // caller hears comments only (and Netra does not even count the notes)
+    function _journalEls(gr) {
+        var els = [];
+        if (!gr.isValidField('comments') || gr.comments.canRead()) els.push('comments');
+        if (gr.isValidField('work_notes') && gr.work_notes.canRead()) els.push('work_notes');
+        return els;
+    }
+
     function _getIncident(num) {
         // R8 - type-aware: resolves the table from the number prefix
         // (INC/PRB/CHG/REQ/RITM/SCTASK) so every mutation helper built on
         // this works across all ticket types, with incident as fallback.
         var table = _tableForNumber(num) || 'incident';
-        var gr = new GlideRecord(table);
+        var gr = _ugr(table);
         if (gr.get('number', num)) return gr;
         if (table !== 'incident') {
-            gr = new GlideRecord('incident');
+            gr = _ugr('incident');
             if (gr.get('number', num)) return gr;
         }
         return null;
@@ -4488,7 +4514,8 @@
 
     function _changePriority(num, p) {
         var gr = _getIncident(num);
-        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        if (!gr) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
+        if (!gr.canWrite()) return _deniedWrite(gr, 'change the priority');
         p = String(p || '').replace(/[^1-5]/g, '').substring(0, 1);
         if (!p) return { ok: false, error: 'Priority must be 1 to 5.' };
         var oldP = String(gr.priority), oldI = String(gr.impact), oldU = String(gr.urgency);
@@ -4516,14 +4543,17 @@
 
     function _escalateTicket(num) {
         var gr = _getIncident(num);
-        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        if (!gr) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
+        if (!gr.canWrite()) return _deniedWrite(gr, 'escalate it');
         var cur = parseInt(String(gr.priority), 10) || 4;
         if (cur <= 1) return { ok: false, error: 'Already at maximum priority' };
-        gr.priority = cur - 1;
-        gr.work_notes = '[Netra] Escalated by voice from priority ' + cur + ' to ' + (cur - 1) + '.';
-        gr.update();
-        _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: 'priority', old: String(cur), old_display: 'priority ' + cur });
-        return { ok: true, message: 'Escalated ' + num + ' from priority ' + cur + ' to ' + (cur - 1) + '.', from: cur, to: cur - 1 };
+        // same path as change_priority: priority is usually derived from
+        // impact x urgency, so a plain write can "succeed" and change nothing
+        var res = _changePriority(num, String(cur - 1));
+        if (!res.ok) return res;
+        var nb = _getIncident(num);
+        if (nb) { nb.work_notes = '[Netra] Escalated by voice from priority ' + cur + ' to ' + (cur - 1) + '.'; nb.update(); }
+        return { ok: true, verified: true, message: 'Escalated ' + num + ' from priority ' + cur + ' to ' + (cur - 1) + ' - I read it back.', from: cur, to: cur - 1 };
     }
 
     /**
@@ -4532,7 +4562,9 @@
      * for the user - never a silent guess (a blind user can not see that
      * "Network" landed on "Network CAB Managers").
      */
-    function _pickByName(table, name, likeQuery) {
+    function _pickByName(table, name) {
+        var n = _eqv(name);
+        var likeQuery = table === 'sys_user' ? 'nameLIKE' + n + '^ORuser_nameLIKE' + n + '^ORemailLIKE' + n : 'nameLIKE' + n;
         var ex = new GlideRecord(table);
         ex.addQuery('active', true);
         ex.addQuery('name', name);
@@ -4555,37 +4587,49 @@
     function _assignToGroup(num, groupName) {
         if (!groupName) return { ok: false, error: 'Group name is required' };
         var gr = _getIncident(num);
-        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
-        var pg = _pickByName('sys_user_group', groupName, 'nameLIKE' + groupName);
+        if (!gr) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
+        var pg = _pickByName('sys_user_group', groupName);
         if (pg.error) return { ok: false, error: pg.error, ambiguous: !!pg.ambiguous };
         var gg = pg.gr;
-        var oldGrp = String(gr.assignment_group);
+        if (!gr.canWrite() || !gr.assignment_group.canWrite()) return _deniedWrite(gr, 'reassign it');
+        var oldGrp = String(gr.getValue('assignment_group') || '');
         var oldGrpName = String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : '') || 'unassigned';
+        if (oldGrp === String(gg.sys_id)) return { ok: true, unchanged: true, message: num + ' is already with ' + gg.name + ' - I changed nothing.' };
         gr.assignment_group = String(gg.sys_id);
         gr.work_notes = '[Netra] Assigned to group ' + gg.name + ' by voice.';
-        gr.update();
+        if (!gr.update()) return _deniedWrite(gr, 'reassign it');
+        var ck = new GlideRecord(gr.getTableName());
+        if (!ck.get(String(gr.sys_id)) || String(ck.getValue('assignment_group') || '') !== String(gg.sys_id)) {
+            return { ok: false, error: 'I asked for ' + num + ' to go to ' + gg.name + ' but it did not stick when I read it back - a rule on the platform may have put it back.' };
+        }
         _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: 'assignment_group', old: oldGrp, old_display: oldGrpName });
-        return { ok: true, message: num + ' assigned to ' + gg.name + '.' };
+        return { ok: true, verified: true, message: num + ' assigned to ' + gg.name + ' - I read it back.' };
     }
 
     function _assignToUser(num, userName) {
         if (!userName) return { ok: false, error: 'User name is required' };
         var gr = _getIncident(num);
-        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
-        var pu = _pickByName('sys_user', userName, 'nameLIKE' + userName + '^ORuser_nameLIKE' + userName + '^ORemailLIKE' + userName);
+        if (!gr) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
+        var pu = _pickByName('sys_user', userName);
         if (pu.error) return { ok: false, error: pu.error, ambiguous: !!pu.ambiguous };
         var u = pu.gr;
-        var oldWho = String(gr.assigned_to);
+        if (!gr.canWrite() || !gr.assigned_to.canWrite()) return _deniedWrite(gr, 'reassign it');
+        var oldWho = String(gr.getValue('assigned_to') || '');
         var oldWhoName = String(gr.assigned_to.getDisplayValue ? gr.assigned_to.getDisplayValue() : '') || 'unassigned';
+        if (oldWho === String(u.sys_id)) return { ok: true, unchanged: true, message: num + ' is already assigned to ' + u.name + ' - I changed nothing.' };
         gr.assigned_to = String(u.sys_id);
         gr.work_notes = '[Netra] Assigned to ' + u.name + ' by voice.';
-        gr.update();
+        if (!gr.update()) return _deniedWrite(gr, 'reassign it');
+        var ck = new GlideRecord(gr.getTableName());
+        if (!ck.get(String(gr.sys_id)) || String(ck.getValue('assigned_to') || '') !== String(u.sys_id)) {
+            return { ok: false, error: 'I asked for ' + num + ' to go to ' + u.name + ' but it did not stick when I read it back - an assignment rule may have changed it.' };
+        }
         _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: 'assigned_to', old: oldWho, old_display: oldWhoName });
-        return { ok: true, message: num + ' assigned to ' + u.name + '.' };
+        return { ok: true, verified: true, message: num + ' assigned to ' + u.name + ' - I read it back.' };
     }
 
     function _listMyOf(table, limit) {
-        var gr = new GlideRecord(table);
+        var gr = _ugr(table);
         gr.addQuery('opened_by', user);
         gr.addQuery('active', true);
         gr.orderByDesc('sys_updated_on');
@@ -4607,8 +4651,9 @@
 
     function _searchIncidents(query) {
         if (!query) return { ok: false, error: 'Query is required' };
-        var gr = new GlideRecord('incident');
-        gr.addEncodedQuery('short_descriptionLIKE' + query + '^ORdescriptionLIKE' + query);
+        var gr = _ugr('incident');
+        var q = _eqv(query);
+        gr.addEncodedQuery('short_descriptionLIKE' + q + '^ORdescriptionLIKE' + q);
         gr.orderByDesc('sys_updated_on');
         gr.setLimit(5);
         gr.query();
@@ -4647,9 +4692,9 @@
 
     function _listAttachments(num) {
         var gr = _getIncident(num);
-        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
-        var att = new GlideRecord('sys_attachment');
-        att.addQuery('table_name', 'incident');
+        if (!gr) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
+        var att = _ugr('sys_attachment');
+        att.addQuery('table_name', gr.getTableName());
         att.addQuery('table_sys_id', String(gr.sys_id));
         att.setLimit(20);
         att.query();
@@ -4666,11 +4711,11 @@
 
     function _readTextAttachment(num, attachmentName) {
         var gr = _getIncident(num);
-        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
-        var att = new GlideRecord('sys_attachment');
-        att.addQuery('table_name', 'incident');
+        if (!gr) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
+        var att = _ugr('sys_attachment');
+        att.addQuery('table_name', gr.getTableName());
         att.addQuery('table_sys_id', String(gr.sys_id));
-        if (attachmentName) att.addEncodedQuery('file_nameLIKE' + attachmentName);
+        if (attachmentName) att.addQuery('file_name', 'CONTAINS', String(attachmentName));
         att.orderByDesc('sys_created_on');
         att.setLimit(1);
         att.query();
@@ -4694,7 +4739,7 @@
 
     function _summarizeTicket(num) {
         var gr = _getIncident(num);
-        if (!gr) return { ok: false, error: 'Ticket not found: ' + num };
+        if (!gr) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
         var dv = function (f) {
             try { return String(gr[f].getDisplayValue ? gr[f].getDisplayValue() : gr[f]); }
             catch (e) { return ''; }
@@ -4714,14 +4759,17 @@
             caller_id: dv('caller_id'),
             opened_at: String(gr.opened_at),
             updated_at: String(gr.sys_updated_on),
+            journal_kinds: _journalEls(gr),
             journal: (function () {
                 // R18 - String(gr.comments) is empty on a loaded record, so the
                 // old recent_comments field was always blank
                 var out = [];
                 try {
+                    var els = _journalEls(gr);
+                    if (!els.length) return out;
                     var j = new GlideRecord('sys_journal_field');
                     j.addQuery('element_id', String(gr.sys_id));
-                    j.addQuery('element', 'IN', 'comments,work_notes');
+                    j.addQuery('element', 'IN', els.join(','));
                     j.orderByDesc('sys_created_on');
                     j.setLimit(3);
                     j.query();
@@ -4739,10 +4787,11 @@
 
     function _sendMessage(recipient, message) {
         if (!recipient || !message) return { ok: false, error: 'Both recipient and message are required' };
-        var pr = _pickByName('sys_user', recipient, 'nameLIKE' + recipient + '^ORuser_nameLIKE' + recipient + '^ORemailLIKE' + recipient);
+        var pr = _pickByName('sys_user', recipient);
         if (pr.error) return { ok: false, error: pr.error, ambiguous: !!pr.ambiguous };
         var u = pr.gr;
-        var inc = new GlideRecord('incident');
+        var inc = _ugr('incident');
+        if (!inc.canCreate()) return { ok: false, error: 'You do not have permission to create the incident that carries the message, so I sent nothing.' };
         inc.initialize();
         inc.short_description = '[Netra message] ' + message.substring(0, 100);
         inc.description = 'Voice message from ' + gs.getUserDisplayName() + ':\n\n' + message;
@@ -4752,9 +4801,10 @@
         inc.impact = 3;
         inc.state = 1;
         var sid = inc.insert();
-        if (!sid) return { ok: false, error: 'Could not create message record' };
+        if (!sid) return { ok: false, error: 'The platform refused the message record - nothing was sent.' };
         var fresh = new GlideRecord('incident');
-        fresh.get(sid);
+        if (!fresh.get(sid)) return { ok: false, error: 'I could not read the message record back, so I can not say it was sent.' };
+        _noteUndo({ kind: 'created', number: String(fresh.number), table: 'incident' });
         return {
             ok: true,
             recipient: String(u.name),
@@ -4856,7 +4906,7 @@
 
         // 1. Highest-priority active incident
         try {
-            var p = new GlideRecord('incident');
+            var p = _ugr('incident');
             p.addActiveQuery();
             p.addQuery('assigned_to', meId);
             p.orderBy('priority');
@@ -4874,7 +4924,7 @@
 
         // 2. Oldest pending approval
         try {
-            var a = new GlideRecord('sysapproval_approver');
+            var a = _ugr('sysapproval_approver');
             a.addQuery('approver', meId);
             a.addQuery('state', 'requested');
             a.orderBy('sys_created_on');
@@ -4934,7 +4984,8 @@
     function _createProblem(desc, impact) {
         if (!desc) return { ok: false, error: 'short description is required' };
         try {
-            var gr = new GlideRecord('problem');
+            var gr = _ugr('problem');
+            if (!gr.canCreate()) return { ok: false, error: 'You do not have permission to create problem records, so I logged nothing.' };
             gr.initialize();
             gr.short_description = desc;
             gr.impact            = impact || '3';
@@ -4942,8 +4993,10 @@
             gr.opened_by         = gs.getUserID();
             gr.assigned_to       = gs.getUserID();
             var sid = gr.insert();
-            gr.get(sid);
-            return { ok: true, number: String(gr.number), sys_id: sid, message: 'Logged problem ' + gr.number + '.' };
+            if (!sid) return { ok: false, error: 'The platform refused the new problem - nothing was created.' };
+            var ck = new GlideRecord('problem');
+            if (!ck.get(sid)) return { ok: false, error: 'I could not read the new problem back, so I can not say it was created.' };
+            return { ok: true, verified: true, number: String(ck.number), sys_id: sid, message: 'Logged problem ' + ck.number + ' - I read it back.' };
         } catch (e) {
             return { ok: false, error: String(e.message || e) };
         }
@@ -4952,15 +5005,18 @@
     function _createChange(desc, changeType) {
         if (!desc) return { ok: false, error: 'short description is required' };
         try {
-            var gr = new GlideRecord('change_request');
+            var gr = _ugr('change_request');
+            if (!gr.canCreate()) return { ok: false, error: 'You do not have permission to create change requests, so I created nothing.' };
             gr.initialize();
             gr.short_description = desc;
             gr.type              = changeType || 'normal';
             gr.opened_by         = gs.getUserID();
             gr.requested_by      = gs.getUserID();
             var sid = gr.insert();
-            gr.get(sid);
-            return { ok: true, number: String(gr.number), sys_id: sid, message: 'Created ' + (changeType || 'normal') + ' change ' + gr.number + '.' };
+            if (!sid) return { ok: false, error: 'The platform refused the new change - nothing was created.' };
+            var ck = new GlideRecord('change_request');
+            if (!ck.get(sid)) return { ok: false, error: 'I could not read the new change back, so I can not say it was created.' };
+            return { ok: true, verified: true, number: String(ck.number), sys_id: sid, message: 'Created ' + (changeType || 'normal') + ' change ' + ck.number + ' - I read it back.' };
         } catch (e) {
             return { ok: false, error: String(e.message || e) };
         }
@@ -4969,7 +5025,7 @@
     function _listOverdue() {
         try {
             var meId = gs.getUserID();
-            var gr = new GlideRecord('incident');
+            var gr = _ugr('incident');
             gr.addActiveQuery();
             gr.addQuery('assigned_to', meId);
             // SLA-ish: p1 >4h, p2 >1d, p3+ >3d since opened
@@ -4997,8 +5053,8 @@
         try {
             var table = _tableForNumber(num);
             if (!table) return { ok: false, error: 'Unrecognised number prefix: ' + num };
-            var gr = new GlideRecord(table);
-            if (!gr.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+            var gr = _ugr(table);
+            if (!gr.get('number', num)) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
 
             // Upsert into Netra Context
             var ctx = new GlideRecord(SCOPE + '_context');
@@ -5050,8 +5106,10 @@
         if (!num) return { ok: false, error: 'ticket number required' };
         var table = _tableForNumber(num);
         if (!table) return { ok: false, error: 'Unrecognised number: ' + num };
-        var rec = new GlideRecord(table);
-        if (!rec.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+        // the watch scanner runs as the system: only a record the user can
+        // read may go on their list, or its changes would leak to them
+        var rec = _ugr(table);
+        if (!rec.get('number', num)) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
 
         // De-dupe
         var existing = new GlideRecord(SCOPE + '_watchlist');
@@ -5066,7 +5124,7 @@
         w.record_table     = table;
         w.record_number    = num;
         w.record_sys_id    = rec.getUniqueValue();
-        w.insert();
+        if (!w.insert()) return { ok: false, error: 'I could not save ' + num + ' to your watchlist.' };
         return { ok: true, message: 'Added ' + num + ' to your watchlist. I will notify you of any changes.' };
     }
 
@@ -5100,10 +5158,11 @@
         if (!num || !note) return { ok: false, error: 'ticket number and note are required' };
         var table = _tableForNumber(num);
         if (!table) return { ok: false, error: 'Unrecognised number: ' + num };
-        var gr = new GlideRecord(table);
-        if (!gr.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+        var gr = _ugr(table);
+        if (!gr.get('number', num)) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
+        if (!gr.isValidField('work_notes') || !gr.canWrite() || !gr.work_notes.canWrite()) return _deniedWrite(gr, 'add work notes');
         gr.work_notes = '[Netra] ' + note;
-        gr.update();
+        if (!gr.update()) return _deniedWrite(gr, 'add work notes');
         return { ok: true, message: 'Internal note added to ' + num + '.' };
     }
 
@@ -5155,62 +5214,60 @@
         var a = b.last_action;
         if (!a) return { ok: false, error: 'There is nothing on record to undo.' };
         _learnFromUndo(a);   // R17 - an undo is a labelled "that was wrong" signal
-        var table, gr;
+        var table = a.table || _tableForNumber(a.number), gr;
+        if (!table) return { ok: false, error: 'Cannot work out the table for ' + a.number };
+        // undo runs with the user's permissions too: it can only put back
+        // what they could have changed by hand
+        gr = _ugr(table);
+        var found = gr.get('number', a.number);
         if (a.kind === 'created') {
-            table = a.table || _tableForNumber(a.number);
-            if (!table) return { ok: false, error: 'Cannot work out the table for ' + a.number };
-            gr = new GlideRecord(table);
-            if (!gr.get('number', a.number)) return { ok: false, error: a.number + ' is already gone.' };
+            if (!found) return { ok: false, error: a.number + ' is already gone, or you can not see it.' };
             // cross-scope deletes on global task tables fail SILENTLY for a
             // scoped app, so verify - and fall back to cancel-and-close,
             // which is arguably the better audit trail anyway
-            gr.deleteRecord();
+            if (gr.canDelete()) gr.deleteRecord();
             var check = new GlideRecord(table);
             if (check.get('number', a.number)) {
-                check.setValue('state', '8');   // Canceled on incident; harmless elsewhere
-                check.setValue('active', 'false');
-                check.work_notes = '[Netra] Undo by voice: raised by mistake, cancelled.';
-                check.update();
+                var cx = _ugr(table);
+                if (!cx.get('number', a.number) || !cx.canWrite()) return { ok: false, error: 'You do not have permission to delete or cancel ' + a.number + ' - it is still open. Ask its assignment group to cancel it.' };
+                cx.setValue('state', '8');   // Canceled on incident; harmless elsewhere
+                cx.setValue('active', 'false');
+                cx.work_notes = '[Netra] Undo by voice: raised by mistake, cancelled.';
+                cx.update();
+                var cc = new GlideRecord(table);
+                if (!cc.get('number', a.number) || String(cc.getValue('active')) !== '0' && String(cc.getValue('active')) !== 'false') {
+                    return { ok: false, error: 'I could not delete ' + a.number + ', and cancelling it did not stick when I read it back - it is still open.' };
+                }
                 b.last_action = null; _ctxWriteBlob(b);
-                return { ok: true, message: 'Undone - the platform does not allow hard deletes here, so ' + a.number + ' is cancelled and closed instead.' };
+                return { ok: true, verified: true, message: 'Undone - the platform does not allow deleting it, so ' + a.number + ' is cancelled and closed instead. I read it back.' };
             }
             b.last_action = null; _ctxWriteBlob(b);
-            return { ok: true, message: 'Undone - ' + a.number + ' has been deleted.' };
+            return { ok: true, verified: true, message: 'Undone - ' + a.number + ' has been deleted.' };
         }
-        if (a.kind === 'field') {
-            table = a.table || _tableForNumber(a.number);
-            gr = new GlideRecord(table);
-            if (!gr.get('number', a.number)) return { ok: false, error: 'Ticket not found: ' + a.number };
-            gr.setValue(a.field, a.old);
-            gr.work_notes = '[Netra] Undo by voice: ' + a.field + ' restored to "' + a.old_display + '".';
-            gr.update();
+        if (!found) return { ok: false, error: 'Ticket ' + a.number + ' was not found, or you can not see it.' };
+        if (!gr.canWrite()) return _deniedWrite(gr, 'undo that');
+        var want = {}, what = a.old_display || 'what it was';
+        if (a.kind === 'field' && a.field === 'priority') {
+            // priority is usually derived from impact x urgency: restore it the
+            // way it was set, through the matrix when a plain write will not hold
+            var pr = new NetraTaskRunner().setPriority(gr, String(a.old));
+            if (!pr.ok) return { ok: false, error: 'I could not put ' + a.number + ' back to priority ' + a.old + ' - ' + pr.why + '.' };
             b.last_action = null; _ctxWriteBlob(b);
-            return { ok: true, message: 'Undone - ' + a.field + ' on ' + a.number + ' is back to ' + (a.old_display || a.old) + '.' };
+            return { ok: true, verified: true, message: 'Undone - ' + a.number + ' is back to ' + (a.old_display || 'priority ' + a.old) + '. I read it back.' };
         }
-        if (a.kind === 'fields' && a.fields) {
-            table = a.table || _tableForNumber(a.number);
-            gr = new GlideRecord(table);
-            if (!gr.get('number', a.number)) return { ok: false, error: 'Ticket not found: ' + a.number };
-            for (var fk in a.fields) { if (a.fields.hasOwnProperty(fk)) gr.setValue(fk, a.fields[fk]); }
-            gr.work_notes = '[Netra] Undo by voice: restored to ' + (a.old_display || 'the earlier values') + '.';
-            gr.update();
-            var rb = new GlideRecord(table), same = rb.get('number', a.number);
-            for (var fk2 in a.fields) { if (a.fields.hasOwnProperty(fk2) && same && String(rb.getValue(fk2) || '') !== String(a.fields[fk2])) same = false; }
-            b.last_action = null; _ctxWriteBlob(b);
-            return same ? { ok: true, message: 'Undone - ' + a.number + ' is back to ' + (a.old_display || 'what it was') + '. I read it back.' }
-                        : { ok: false, error: 'I put the old values back on ' + a.number + ' but they did not stick when I read it back.' };
-        }
-        if (a.kind === 'resolved') {
-            table = a.table || _tableForNumber(a.number);
-            gr = new GlideRecord(table);
-            if (!gr.get('number', a.number)) return { ok: false, error: 'Ticket not found: ' + a.number };
-            gr.setValue('state', a.old_state || '2');
-            gr.work_notes = '[Netra] Undo by voice: reopened after an accidental resolve.';
-            gr.update();
-            b.last_action = null; _ctxWriteBlob(b);
-            return { ok: true, message: 'Undone - ' + a.number + ' is reopened and back in progress.' };
-        }
-        return { ok: false, error: 'I do not know how to undo that (' + a.kind + ').' };
+        if (a.kind === 'field') { want[a.field] = a.old; what = a.field + ' ' + (a.old_display || a.old || 'empty'); }
+        else if (a.kind === 'fields' && a.fields) { for (var fk in a.fields) if (a.fields.hasOwnProperty(fk)) want[fk] = a.fields[fk]; }
+        else if (a.kind === 'resolved') { want.state = a.old_state || '2'; what = 'reopened and back in progress'; }
+        else return { ok: false, error: 'I do not know how to undo that (' + a.kind + ').' };
+        for (var wk in want) if (want.hasOwnProperty(wk)) gr.setValue(wk, want[wk]);
+        gr.work_notes = a.kind === 'resolved' ? '[Netra] Undo by voice: reopened after an accidental resolve.'
+                                              : '[Netra] Undo by voice: restored to ' + String(a.old_display || 'the earlier values') + '.';
+        if (!gr.update()) return _deniedWrite(gr, 'undo that');
+        var rb = new GlideRecord(table), same = rb.get('number', a.number);
+        for (var fk2 in want) { if (want.hasOwnProperty(fk2) && same && String(rb.getValue(fk2) || '') !== String(want[fk2] || '')) same = false; }
+        if (!same) return { ok: false, error: 'I put the old values back on ' + a.number + ' but they did not stick when I read it back - a rule on the platform may have changed them again.' };
+        b.last_action = null; _ctxWriteBlob(b);
+        return { ok: true, verified: true, message: 'Undone - ' + a.number + (a.kind === 'resolved' ? ' is ' + what : ' is back to ' + what) + '. I read it back.' };
     }
 
     /* ===================================================================
@@ -5273,13 +5330,16 @@
     function _slaRadar() {
         try {
             var out = [];
-            var sla = new GlideRecord('task_sla');
+            var sla = _ugr('task_sla');
             sla.addQuery('active', true);
             sla.addQuery('percentage', '>=', 60);
             sla.orderByDesc('percentage');
-            sla.setLimit(8);
+            sla.setLimit(25);
             sla.query();
-            while (sla.next()) {
+            while (sla.next() && out.length < 8) {
+                // the SLA row may be readable while its ticket is not
+                var tk = _ugr(String(sla.task.sys_class_name || 'task'));
+                if (!tk.get(String(sla.getValue('task') || ''))) continue;
                 out.push({
                     number: String(sla.task.number),
                     short_description: String(sla.task.short_description || '').substring(0, 120),
@@ -5294,7 +5354,7 @@
                          message: out.length + ' SLA' + (out.length === 1 ? ' is' : 's are') + ' burning down. Read the worst 2-3 aloud with percent consumed and time left.' };
             }
             // no SLA engine data - aging fallback
-            var gr = new GlideRecord('incident');
+            var gr = _ugr('incident');
             gr.addActiveQuery();
             gr.addQuery('assigned_to', gs.getUserID());
             gr.orderBy('priority');
@@ -5331,18 +5391,27 @@
         for (var i = 0; i < numbers.length; i++) {
             var num = _normNum(String(numbers[i]));
             var table = _tableForNumber(num);
-            var gr = table ? new GlideRecord(table) : null;
-            if (!gr || !gr.get('number', num)) { failed.push({ number: num, why: 'not found' }); continue; }
+            var gr = table ? _ugr(table) : null;
+            if (!gr || !gr.get('number', num)) { failed.push({ number: num, why: 'not found, or you can not see it' }); continue; }
+            if (!gr.canWrite()) { failed.push({ number: num, why: 'you do not have permission to change it' }); continue; }
             try {
                 if (comment)  gr.comments = '[Netra batch] ' + comment;
-                if (priority) gr.setValue('priority', String(priority));
                 if (state)    gr.setValue('state', String(state));
-                gr.update();
+                if (!gr.update()) { failed.push({ number: num, why: 'the platform refused the change' }); continue; }
+                // priority goes the same way as change_priority (impact x urgency)
+                if (priority) {
+                    var pr = new NetraTaskRunner().setPriority(gr, String(priority));
+                    if (!pr.ok) { failed.push({ number: num, why: 'priority did not change - ' + pr.why }); continue; }
+                }
+                var ck = new GlideRecord(gr.getTableName());
+                if (!ck.get(String(gr.sys_id)) || (state && String(ck.getValue('state')) !== String(state))) {
+                    failed.push({ number: num, why: 'the new state did not stick when I read it back' }); continue;
+                }
                 done.push(num);
             } catch (eU) { failed.push({ number: num, why: String(eU.message || eU) }); }
         }
-        return { ok: true, updated: done, failed: failed,
-                 message: 'Updated ' + done.length + ' of ' + numbers.length + ' tickets.' +
+        return { ok: done.length > 0, updated: done, failed: failed, verified: true,
+                 message: 'Updated ' + done.length + ' of ' + numbers.length + ' tickets - I read each one back.' +
                           (failed.length ? ' ' + failed.length + ' failed - read those out.' : '') };
     }
 
@@ -5688,7 +5757,8 @@
         }
 
         try {
-            var gr = new GlideRecord(table);
+            var gr = _ugr(table);
+            if (!gr.canCreate()) return { ok: false, error: 'You do not have permission to create ' + table.replace(/_/g, ' ') + ' records, so I created nothing. The draft is kept.' };
             gr.initialize();
             for (var k2 in d.fields) {
                 if (d.fields.hasOwnProperty(k2)) gr.setValue(k2, d.fields[k2]);
@@ -5697,10 +5767,12 @@
             if (table === 'incident') gr.caller_id = gs.getUserID();
             if (table === 'problem' || table === 'change_request') gr.assigned_to = gs.getUserID();
             var sid = gr.insert();
-            gr.get(sid);
+            if (!sid) return { ok: false, error: 'The platform refused the new record - nothing was created. The draft is kept.' };
+            var ck = new GlideRecord(table);
+            if (!ck.get(sid)) return { ok: false, error: 'I could not read the new record back, so I can not say it was created. The draft is kept.' };
             _draftWrite(null);
-            return { ok: true, table: table, number: String(gr.number), sys_id: sid,
-                     message: 'Created ' + String(gr.number) + ' successfully.' };
+            return { ok: true, verified: true, table: table, number: String(ck.number), sys_id: sid,
+                     message: 'Created ' + String(ck.number) + ' - I read it back.' };
         } catch (e) {
             return { ok: false, error: 'Insert failed: ' + (e.message || e) };
         }
@@ -5736,7 +5808,7 @@
         if (!num) return null;
         var table = _tableForNumber(num);
         if (!table) return null;
-        var gr = new GlideRecord(table);
+        var gr = _ugr(table);
         if (!gr.get('number', num)) return null;
         return { table: table, gr: gr };
     }
@@ -6055,7 +6127,7 @@
         if (!rec) return { ok: false, error: 'Record not found: ' + num };
         var sid = rec.gr.getUniqueValue();
         var out = [];
-        var ap = new GlideRecord('sysapproval_approver');
+        var ap = _ugr('sysapproval_approver');
         ap.addQuery('sysapproval', sid).addOrCondition('document_id', sid);
         ap.orderByDesc('sys_created_on');
         ap.setLimit(15);   // names for the first few; the counts below are exact
@@ -6086,7 +6158,7 @@
         if (!rec) return { ok: false, error: 'Record not found: ' + num };
         var gr = rec.gr, sid = gr.getUniqueValue();
         function attachments(limit) {
-            var a = new GlideRecord('sys_attachment');
+            var a = _ugr('sys_attachment');
             a.addQuery('table_sys_id', sid);
             a.setLimit(limit); a.query();
             var l = [];
@@ -6094,7 +6166,7 @@
             return l;
         }
         function slas(limit) {
-            var s = new GlideRecord('task_sla');
+            var s = _ugr('task_sla');
             s.addQuery('task', sid);
             s.setLimit(limit); s.query();
             var l = [];
@@ -6103,7 +6175,7 @@
             return l;
         }
         function childTasks(limit) {
-            var t = new GlideRecord('task');
+            var t = _ugr('task');
             t.addQuery('parent', sid);
             t.setLimit(limit); t.query();
             var l = [];
@@ -6111,7 +6183,7 @@
             return l;
         }
         function cis(limit) {
-            var c2 = new GlideRecord('task_ci');
+            var c2 = _ugr('task_ci');
             c2.addQuery('task', sid);
             c2.setLimit(limit); c2.query();
             var l = [];
@@ -6138,7 +6210,7 @@
         try {
             var j = new GlideAggregate('sys_journal_field');
             j.addQuery('element_id', sid);
-            j.addQuery('element', 'IN', 'comments,work_notes');
+            j.addQuery('element', 'IN', _journalEls(gr).join(','));
             j.groupBy('element');
             j.addAggregate('COUNT');
             j.query();
@@ -6162,7 +6234,7 @@
             journal_counts: journal,
             message: 'Related picture for ' + num + ': ' + nAtt + ' attachments, ' + nSla + ' SLAs, ' +
                      nTask + ' child tasks, ' + nCi + ' affected CIs, ' + (apr.pending || 0) + ' pending approvals, ' +
-                     journal.comments + ' comments and ' + journal.work_notes + ' work notes. Drill in with kind=attachments|slas|tasks|cis|approvals.'
+                     journal.comments + ' comments' + (_journalEls(gr).indexOf('work_notes') >= 0 ? ' and ' + journal.work_notes + ' work notes' : '') + '. Drill in with kind=attachments|slas|tasks|cis|approvals.'
         };
     }
 
@@ -6217,7 +6289,7 @@
         var uname = gs.getUserName();
         for (var i = 0; i < tables.length; i++) {
             try {
-                var gr = new GlideRecord(tables[i]);
+                var gr = _ugr(tables[i]);
                 gr.addEncodedQuery('sys_created_on>=javascript:gs.minutesAgoStart(' + mins + ')');
                 gr.addQuery('sys_created_by', uname).addOrCondition('opened_by', gs.getUserID());
                 gr.orderByDesc('sys_created_on');
@@ -6355,8 +6427,8 @@
      * =================================================================== */
     function _summarizeChange(num) {
         if (!num) return { ok: false, error: 'CHG number is required.' };
-        var gr = new GlideRecord('change_request');
-        if (!gr.get('number', num)) return { ok: false, error: 'Change request not found: ' + num };
+        var gr = _ugr('change_request');
+        if (!gr.get('number', num)) return { ok: false, error: 'Change ' + num + ' was not found, or you can not see it.' };
         var dv = function (f) {
             try { return String(gr[f].getDisplayValue ? gr[f].getDisplayValue() : gr[f] || ''); }
             catch (e) { return ''; }
@@ -6384,9 +6456,11 @@
             journal: (function () {
                 var out = [];
                 try {
+                    var els = _journalEls(gr);
+                    if (!els.length) return out;
                     var j = new GlideRecord('sys_journal_field');
                     j.addQuery('element_id', gr.getUniqueValue());
-                    j.addQuery('element', 'IN', 'comments,work_notes');
+                    j.addQuery('element', 'IN', els.join(','));
                     j.orderByDesc('sys_created_on');
                     j.setLimit(3);
                     j.query();
@@ -6420,7 +6494,7 @@
         }
         try {
             // exact name first; several partial matches are a question, never a guess
-            var pu = _pickByName('sys_user', recipientName, 'nameLIKE' + recipientName + '^ORuser_nameLIKE' + recipientName + '^ORemailLIKE' + recipientName);
+            var pu = _pickByName('sys_user', recipientName);
             if (pu.error) return { ok: false, error: pu.error, ambiguous: !!pu.ambiguous };
             var recipientId = pu.gr.getUniqueValue();
             var recipientDisplay = String(pu.gr.getValue('name') || recipientName);
@@ -8242,7 +8316,7 @@
         var table = _tableForNumber(num);
         if (!table) return { ok: false, error: 'Unrecognised number: ' + num };
         var gr = new GlideRecord(table);
-        if (!gr.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+        if (!gr.get('number', num)) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
 
         // Map table -> SP page id (the Now portal default ticket page)
         var pageId = 'ticket';   // works for incident/problem/change in stock /sp portal
@@ -8325,7 +8399,7 @@
         var table = _tableForNumber(num);
         if (!table) return { ok: false, error: 'Unrecognised ticket number: ' + num };
         var gr = new GlideRecord(table);
-        if (!gr.get('number', num)) return { ok: false, error: 'Ticket not found: ' + num };
+        if (!gr.get('number', num)) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
 
         var oldValue = '';
         try { oldValue = String(gr.getValue(fieldNorm) || ''); } catch (eOld) { oldValue = ''; }

@@ -160,7 +160,10 @@ function makeElement(self, field) {
         getRefRecord: function () { var g = new GlideRecord('sys_user'); g.get(str); return g; },
         setDateNumericValue: function (ms) { self._rec[field] = fmtUtc(ms); },
         getGlideObject: function () { return new GlideDateTime(str); },
-        changes: function () { return false; }
+        changes: function () { return false; },
+        // field-level ACLs: evaluated for the current user on any record
+        canRead: function () { return aclOk(self.table || '', 'read', self._rec, field); },
+        canWrite: function () { return aclOk(self.table || '', 'write', self._rec, field); }
     };
 }
 
@@ -174,7 +177,12 @@ function GlideRecord(table) {
         isValidRecord: function () { return !!(self.rec && self.rec.sys_id && P.STORE[table] && P.STORE[table][self.rec.sys_id]); },
         isNewRecord: function () { return !(self.rec && self.rec.sys_id); },
         isValidField: function (f) { return !(P.INVALID_FIELDS[table] && P.INVALID_FIELDS[table][f]); },
-        canRead: function () { return true; }, canWrite: function () { return true; }, canCreate: function () { return true; },
+        // canX() evaluate the ACLs for the current user on any GlideRecord;
+        // only GlideRecordSecure ENFORCES them on query/get/update/insert
+        canRead: function () { return aclOk(self.recTable || table, 'read', self.rec); },
+        canWrite: function () { return aclOk(self.recTable || table, 'write', self.rec); },
+        canCreate: function () { return aclOk(self.recTable || table, 'create', self.rec); },
+        canDelete: function () { return aclOk(self.recTable || table, 'delete', self.rec); },
         getTableName: function () { return self.recTable || table; },
         getRecordClassName: function () { return self.recTable || table; },
         getUniqueValue: function () { return self.rec ? self.rec.sys_id : null; },
@@ -189,8 +197,8 @@ function GlideRecord(table) {
             v = v === undefined || v === null ? '' : String(v);
             return label(table, f, v);
         },
-        getElement: function (f) { self._rec = self.rec; return makeElement({ _rec: self.rec, table: table }, f); },
-        setValue: function (f, v) { self.rec[f] = v === null || v === undefined ? '' : String(v); },
+        getElement: function (f) { self._rec = self.rec; return makeElement({ _rec: self.rec, table: self.recTable || table }, f); },
+        setValue: function (f, v) { if (self.secure && !fieldWritable(self, table, f)) return; self.rec[f] = v === null || v === undefined ? '' : String(v); },
         get: function (a, b) {
             var found = null, rows = allRows(table);
             for (var i = 0; i < rows.length && !found; i++) {
@@ -311,11 +319,12 @@ function GlideRecord(table) {
         get: function (o, p) {
             if (p in o) return o[p];
             if (typeof p !== 'string') return undefined;
-            return makeElement({ _rec: self.rec, table: table }, p);
+            return makeElement({ _rec: self.rec, table: self.recTable || table }, p);
         },
         set: function (o, p, v) {
             if (typeof v === 'function' && p in o) { o[p] = v; return true; }   // GlideRecordSecure wraps methods
             if (!self.rec) self.rec = { sys_mod_count: '0' };
+            if (self.secure && !fieldWritable(self, table, p)) return true;   // Secure ignores fields the user may not write
             self.rec[p] = (v === null || v === undefined) ? '' : String(v);
             self._rec = self.rec;
             return true;
@@ -326,17 +335,21 @@ GlideRecord.onUpdate = {};     // table -> fn(next, old): simulate business rule
 GlideRecord.onInsert = {};
 GlideRecord.refuseDelete = {}; // table -> true: simulate cross-scope delete refusal
 GlideRecord.refuseInsert = {}; // table -> true: simulate an insert the platform refuses
-function aclOk(table, op, rec) { return !P.ACL || P.ACL(table, op, rec || {}) !== false; }
+function aclOk(table, op, rec, field) { return !P.ACL || P.ACL(table, op, rec || {}, field) !== false; }
+function fieldWritable(self, table, f) {
+    if (!self.rec || !self.rec.sys_id) return true;              // new record: create ACL decides at insert
+    return aclOk(self.recTable || table, 'write', self.rec, f);
+}
 function GlideRecordSecure(table) {
     var gr = GlideRecord(table), self = gr._self;
-    var baseQuery = gr.query, baseGet = gr.get, baseUpdate = gr.update, baseInsert = gr.insert;
+    self.secure = true;
+    var baseQuery = gr.query, baseGet = gr.get, baseUpdate = gr.update, baseInsert = gr.insert, baseDelete = gr.deleteRecord;
     gr.query = function () {
         baseQuery.call(gr);
         self.rows = (self.rows || []).filter(function (x) { return aclOk(x.t, 'read', x.r); });
     };
     gr.get = function (a, b) { var ok = baseGet.call(gr, a, b); if (ok && !aclOk(self.recTable || table, 'read', self.rec)) { self.rec = null; return false; } return ok; };
-    gr.canRead = function () { return aclOk(self.recTable || table, 'read', self.rec); };
-    gr.canWrite = function () { return aclOk(self.recTable || table, 'write', self.rec); };
+    gr.deleteRecord = function () { if (!aclOk(self.recTable || table, 'delete', self.rec)) return false; return baseDelete.call(gr); };
     gr.update = function () { if (!aclOk(self.recTable || table, 'write', self.rec)) return null; return baseUpdate.call(gr); };
     gr.insert = function () { if (!aclOk(table, 'create', self.rec)) return null; return baseInsert.call(gr); };
     return gr;

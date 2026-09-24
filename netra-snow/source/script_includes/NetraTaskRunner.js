@@ -353,9 +353,11 @@ NetraTaskRunner.prototype = {
         if (!pair || !t.isValidField('impact') || !t.isValidField('urgency')) {
             return { ok: false, why: 'priority is recalculated on this table and I have no impact/urgency lever' };
         }
-        check.impact = pair[0];
-        check.urgency = pair[1];
-        check.update();
+        // write the matrix through the caller's record, so a GlideRecordSecure
+        // from the widget keeps the user's field-level ACLs on this step too
+        t.impact = pair[0];
+        t.urgency = pair[1];
+        t.update();
         var check2 = new GlideRecord(table);
         check2.get(sysId);
         if (String(check2.priority) === String(target)) {
