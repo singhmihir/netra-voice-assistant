@@ -223,13 +223,13 @@ T.test('the brain stopping mid-turn still reports writes that came after many lo
     var s = new S.Session();
     s.model(gem.calls([['lookup_user', { query: 'beth' }], ['lookup_user', { query: 'bert' }], ['team_workload', {}],
                        ['lookup_user', { query: 'admin' }], ['sla_radar', {}]]),
-            gem.calls([['add_work_note', { ticket_number: 'INC0010015', note: 'parts ordered' }],
-                       ['add_work_note', { ticket_number: 'INC0010016', note: 'parts ordered' }]]),
+            gem.calls([['assign_ticket_to_group', { ticket_number: 'INC0010015', group_name: 'Database' }],
+                       ['change_priority', { ticket_number: 'INC0010016', priority: '4' }]]),
             gem.quota429('day'), gem.quota429('day'), gem.quota429('day'), gem.quota429('day'));
-    var r = s.say('check the team and add a work note to 15 and 16 saying parts ordered');
-    T.eq(s.inc('INC0010016')._work_notes, ['[Netra] parts ordered'], 'the second note really happened');
-    T.match(r.message, /Internal note added to \*\*incident ending 0 1 5\*\*/);
-    T.match(r.message, /Internal note added to \*\*incident ending 0 1 6\*\*/);
+    var r = s.say('check the team, give 15 to Database and set 16 to priority 4');
+    T.eq(s.inc('INC0010016').priority, '4', 'the second write really happened');
+    T.match(r.message, /\*\*incident ending 0 1 5\*\* assigned to Database - I read it back/);
+    T.match(r.message, /Priority of \*\*incident ending 0 1 6\*\* is now 4 - I read it back/);
     T.match(r.message, /I also did 1 more lookup\./);
     T.match(r.message, /Those changes are already made/);
     T.notMatch(r.message, /Ask me again/, 'a retry would repeat the notes');

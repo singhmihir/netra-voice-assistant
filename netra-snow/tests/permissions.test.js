@@ -158,10 +158,9 @@ T.test('batch update: each ticket is checked and read back; refused ones are nam
     var s = new S.Session();
     g.P.ACL = function (table, op, rec) { return !(table === 'incident' && op === 'write' && rec.number === 'INC0010014'); };
     s.model(gem.call('batch_update_tickets', { ticket_numbers: ['INC0010013', 'INC0010014'], comment: 'Network maintenance tonight' }), gem.text('Done.'));
-    s.say('tell the callers on 13 and 14 about the maintenance');
-    var res = lastResult(s);
-    T.match(res, /Updated 1 of 2 tickets - I read each one back/);
-    T.match(res, /INC0010014.{0,40}you do not have permission to change it/);
+    T.match(s.say('tell the callers on 13 and 14 about the maintenance').message, /Shall I\?$/, 'a batch is read back first');
+    var res = s.say('yes').message;
+    T.match(res, /I updated 1 of 2 tickets and read each one back; not changed: \*\*incident ending 0 1 4\*\* - you do not have permission to change it/);
     T.eq((s.inc('INC0010013')._comments || []).length, 1);
     T.eq((s.inc('INC0010014')._comments || []).length, 0);
 });

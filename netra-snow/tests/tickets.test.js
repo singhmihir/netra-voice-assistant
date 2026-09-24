@@ -47,15 +47,15 @@ T.test('undoing a created change cancels it with the change\'s own cancel state,
     g.GlideRecord.refuseDelete.change_request = true;
     s.setBlob({ last_action: { kind: 'created', number: 'CHG0030009', table: 'change_request' } });
     s.model(gem.call('undo_last_action', {}), gem.text('Cancelled.'));
-    s.say('undo creating that change, go ahead');
-    T.match(lastResult(s), /CHG0030009 is cancelled and closed instead\. I read it back/);
+    T.match(s.say('undo creating that change').message, /That would delete \*\*change ending 0 0 9\*\* that I created.*Shall I\?/);
+    T.match(s.say('yes').message, /CHG0030009 is cancelled and closed instead\. I read it back/);
     T.eq(g.find('change_request', 'number', 'CHG0030009').state, '4');
     g.GlideRecord.refuseDelete.problem = true;
     g.put('problem', { sys_id: 'prb9', number: 'PRB0040009', state: '101', active: 'true', short_description: 'y' });
     s.setBlob({ last_action: { kind: 'created', number: 'PRB0040009', table: 'problem' } });
     s.model(gem.call('undo_last_action', {}), gem.text('Could not.'));
-    s.say('undo creating that problem, go ahead');
-    T.match(lastResult(s), /has no cancelled state I can set - it is still open/);
+    s.say('undo creating that problem');
+    T.match(s.say('yes').message, /has no cancelled state I can set - it is still open/);
     delete g.GlideRecord.refuseDelete.change_request; delete g.GlideRecord.refuseDelete.problem;
 });
 
@@ -102,8 +102,9 @@ T.test('batch update refuses a state code the table does not have', function () 
     [['incident', '6'], ['incident', '2'], ['change_request', '-5'], ['change_request', '3']].forEach(function (c) { g.put('sys_choice', { name: c[0], element: 'state', value: c[1], inactive: 'false' }); });
     s.model(gem.call('batch_update_tickets', { ticket_numbers: ['INC0010013', 'CHG0030008'], state: '6' }), gem.text('Done.'));
     s.say('resolve 13 and the change 8');
-    T.match(lastResult(s), /Updated 1 of 2 tickets/);
-    T.match(lastResult(s), /state 6 does not exist on a change request/);
+    var r = s.say('yes').message;
+    T.match(r, /I updated 1 of 2 tickets/);
+    T.match(r, /state 6 does not exist on a change request/);
     T.eq(g.find('change_request', 'number', 'CHG0030008').state, '-5');
     T.eq(s.inc('INC0010013').state, '6');
 });

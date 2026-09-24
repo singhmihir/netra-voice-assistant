@@ -70,7 +70,9 @@ T.test('a comment, note or approval replaces the breadcrumb: undo says it can no
     s.model(gem.call('assign_ticket_to_group', { ticket_number: 'INC0010014', group_name: 'Database' }), gem.text('Done.'));
     s.say('assign INC0010014 to Database');
     s.model(gem.call('update_ticket', { ticket_number: 'INC0010013', comment: 'We are on it' }), gem.text('Done.'));
-    s.say('tell the caller on 13 we are on it');
+    // a comment the caller sees is read back first, and sent on the yes
+    T.match(s.say('tell the caller on 13 we are on it').message, /add a comment the caller will see on \*\*incident ending 0 1 3\*\* saying "We are on it"\. Shall I\?/);
+    s.say('yes');
     var r = s.say('undo that');
     T.match(r.message, /My last change was a comment on \*\*incident ending 0 1 3\*\*, and that can not be undone/);
     T.ok(!s.blob().flDraft, 'nothing parked for a yes');
@@ -78,6 +80,7 @@ T.test('a comment, note or approval replaces the breadcrumb: undo says it can no
     T.eq(s.inc('INC0010014').assignment_group, 'g_db', 'the older write is not reached');
     s.model(gem.call('add_work_note', { ticket_number: 'INC0010015', note: 'checked cabling' }), gem.text('Done.'));
     s.say('note on 15 that I checked the cabling');
+    s.say('yes');
     T.match(s.say('undo that').message, /a work note on \*\*incident ending 0 1 5\*\*/);
 });
 
@@ -209,10 +212,10 @@ T.test('a write after six reads is still reported', function () {
     // back by the untrusted-text gate
     var reads = [];
     for (var i = 0; i < 6; i++) reads.push(['lookup_user', { query: i % 2 ? 'beth' : 'bert' }]);
-    s.model(gem.calls(reads), gem.call('update_ticket', { ticket_number: 'INC0010013', comment: 'Rebooting now' }),
+    s.model(gem.calls(reads), gem.call('assign_ticket_to_group', { ticket_number: 'INC0010013', group_name: 'Database' }),
             gem.quota429('day'), gem.quota429('day'), gem.quota429('day'), gem.quota429('day'));
-    var r = s.say('look up beth and bert and tell 13 we are rebooting');
-    T.match(r.message, /Comment added to \*\*incident ending 0 1 3\*\*/);
+    var r = s.say('look up beth and bert and give 13 to Database');
+    T.match(r.message, /\*\*incident ending 0 1 3\*\* assigned to Database/);
     T.match(r.message, /I also did 2 more lookups\./);
 });
 
