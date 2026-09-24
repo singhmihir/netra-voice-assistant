@@ -79,7 +79,8 @@ T.test('the debug action is for admins and never shows any part of the key', fun
 T.test('a Guest: record asks get the sign-in line; general questions that share a word get the model', function () {
     var s = guest(new S.Session());
     ['my tickets', 'what is the status of INC0010013', 'create a ticket for my laptop', 'list my open incidents',
-     'brief me', 'remind me to call Sam at 3', 'resolve the incident', 'close it', 'our approvals'].forEach(function (u) {
+     'brief me', 'remind me to call Sam at 3', 'resolve the incident', 'close it', 'our approvals',
+     'list my servicenow tickets', 'show my IT tickets'].forEach(function (u) {
         T.match(s.say(u).message, /guest, so I can not see or change ServiceNow records/, u);
     });
     T.eq(s.gemini.generate.length, 0);

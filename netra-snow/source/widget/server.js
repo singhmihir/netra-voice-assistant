@@ -1317,7 +1317,7 @@
         // a word ("what problems does Kubernetes solve", "what is an SLA",
         // "remind me what photosynthesis is") goes to the model
         if (_findNums(norm || lc).length) return true;
-        if (/\b(my|our|mine)\s+(open\s+|new\s+|pending\s+|active\s+|assigned\s+)?(tickets?|incidents?|requests?|approvals?|changes?|problems?|tasks?|work|queue|plate|day|watch ?list|reminders?|standing orders?|missions?|cases?)\b/.test(lc)) return true;
+        if (/\b(my|our|mine)\s+(open\s+|new\s+|pending\s+|active\s+|assigned\s+)?(servicenow\s+|service now\s+|snow\s+|it\s+|support\s+)?(open\s+|pending\s+)?(tickets?|incidents?|requests?|approvals?|changes?|problems?|tasks?|work|queue|plate|day|watch ?list|reminders?|standing orders?|missions?|cases?)\b/.test(lc)) return true;
         if (/^(please\s+)?(create|raise|open|log|file|submit|resolve|close|assign|reassign|escalate|approve|reject|update|cancel)\s+(a\s+|an\s+|the\s+|that\s+|this\s+|it\b|my\s+)?(new\s+)?(tickets?|incidents?|requests?|changes?|problems?|approvals?|it\b)/.test(lc)) return true;
         if (/^(give me |read me |read )?(my |the )?(daily |morning )?(briefing|debrief)$|^brief me$|^what'?s on (for )?today$|^what did (you do|i miss)|while i was away/.test(lc)) return true;
         if (/^(set |cancel |list )?(a |my )?reminders?\b|^remind me (to|in|at|about my)\b|^(watch|stop watching|nudge|chase) (it|that|the|this|inc|ritm|req|chg)/.test(lc)) return true;
