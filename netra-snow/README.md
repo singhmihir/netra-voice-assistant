@@ -244,6 +244,32 @@ journey (hunters per area, then an adversarial verifier per finding; 13 of
   ear hands back to the browser recognizer, the same words are never asked
   twice.
 
+**Fenced, and a Gemini stage (v7.6).** A final regression round (code
+review in four lenses, a live reviewer journey, emulated phones) found the
+public page trusted what its own page sent. Now:
+
+- **The server is the fence.** A Guest runs only web search, jokes and help,
+  checked in the tool dispatcher whatever the model names; only plain words
+  from a Guest's history reach the model (a planted tool call or tool
+  result never does); the anonymous page load carries no group,
+  application or catalog names and no model telemetry; person lookups
+  honour ACLs. A Guest browser session gets 40 model questions an hour,
+  then web answers, so one visitor can not spend the shared key's day.
+- **Approvals and standing orders need the user's own yes** to a read-back
+  they heard - the model's `confirm` flag alone decides nothing. Approvals
+  are read and decided under the user's ACLs, and the kill switch stops
+  decisions and messages on every path.
+- **Answers, not search results.** General questions are answered from the
+  model's own knowledge; the web is for what changes. A search hit is read
+  out only when it is about the question (the generic CVE page is not about
+  CVE-2021-44228), without links, emoji or pronunciation guides. The model
+  always has the user's local time.
+- **A Gemini Live stage.** One 24 KB light renderer replaces the 667 KB
+  three.js scene: a near-black stage, a luminous orb that swirls violet and
+  rose while she speaks, sweeps a gradient arc while she thinks and greys
+  when muted, and Gemini's glow at the foot. About 30 fps on software GL
+  (the old stage: 1-2), paused in a hidden tab, still for reduced motion.
+
 **Quick by default (v7.3).** For a page anyone opens, the quickest of
 everything is the default: the browser's own installed voice (instant,
 offline; the neural voice is a Lab choice), the tiny on-device model,
