@@ -317,6 +317,7 @@ function GlideRecord(table) {
             self.rec.sys_id = sid;
             if (!self.rec.sys_created_on) self.rec.sys_created_on = fmtUtc(P.now);
             self.rec.sys_updated_on = fmtUtc(P.now);
+            journal(table, sid, self.rec);
             if (self.rec.work_notes) { self.rec._work_notes = [self.rec.work_notes]; self.rec.work_notes = ''; }
             if (self.rec.comments) { self.rec._comments = [self.rec.comments]; self.rec.comments = ''; }
             if (!self.rec.sys_class_name) self.rec.sys_class_name = table;
@@ -344,6 +345,7 @@ function GlideRecord(table) {
             }
             next.sys_mod_count = String((parseInt(stored.sys_mod_count, 10) || 0) + 1);
             next.sys_updated_on = fmtUtc(P.now);
+            journal(rt, next.sys_id, next);
             if (next.work_notes) { next._work_notes = (stored._work_notes || []).concat([next.work_notes]); next.work_notes = ''; }
             if (next.comments) { next._comments = (stored._comments || []).concat([next.comments]); next.comments = ''; }
             if (GlideRecord.onUpdate[rt]) GlideRecord.onUpdate[rt](next, stored);
@@ -364,6 +366,8 @@ function GlideRecord(table) {
         get: function (o, p) {
             if (p in o) return o[p];
             if (typeof p !== 'string') return undefined;
+            // like the platform: under GlideRecordSecure an unreadable field is null
+            if (self.secure && self.rec && self.rec.sys_id && !aclOk(self.recTable || table, 'read', self.rec, p)) return null;
             return makeElement({ _rec: self.rec, table: self.recTable || table }, p);
         },
         set: function (o, p, v) {
@@ -380,6 +384,16 @@ GlideRecord.onUpdate = {};     // table -> fn(next, old): simulate business rule
 GlideRecord.onInsert = {};
 GlideRecord.refuseDelete = {}; // table -> true: simulate cross-scope delete refusal
 GlideRecord.refuseInsert = {}; // table -> true: simulate an insert the platform refuses
+// journal fields: the platform stores each entry as a sys_journal_field row
+function journal(table, sysId, rec) {
+    ['work_notes', 'comments'].forEach(function (f) {
+        if (!rec[f] || table === 'sys_journal_field') return;
+        P.STORE.sys_journal_field = P.STORE.sys_journal_field || {};
+        var id = newId();
+        P.STORE.sys_journal_field[id] = { sys_id: id, element_id: sysId, element: f, name: table, value: rec[f],
+                                          sys_created_on: fmtUtc(P.now), sys_created_by: P.user.user_name, sys_class_name: 'sys_journal_field' };
+    });
+}
 function aclOk(table, op, rec, field) { return !P.ACL || P.ACL(table, op, rec || {}, field) !== false; }
 function fieldWritable(self, table, f) {
     if (!self.rec || !self.rec.sys_id) return true;              // new record: create ACL decides at insert
@@ -395,6 +409,10 @@ function GlideRecordSecure(table) {
     };
     gr.get = function (a, b) { var ok = baseGet.call(gr, a, b); if (ok && !aclOk(self.recTable || table, 'read', self.rec)) { self.rec = null; return false; } return ok; };
     gr.deleteRecord = function () { if (!aclOk(self.recTable || table, 'delete', self.rec)) return false; return baseDelete.call(gr); };
+    var baseValid = gr.isValidField, baseElement = gr.getElement;
+    var unreadable = function (f) { return self.rec && self.rec.sys_id && !aclOk(self.recTable || table, 'read', self.rec, f); };
+    gr.isValidField = function (f) { return unreadable(f) ? false : baseValid.call(gr, f); };
+    gr.getElement = function (f) { return unreadable(f) ? null : baseElement.call(gr, f); };
     gr.update = function () { if (!aclOk(self.recTable || table, 'write', self.rec)) return null; return baseUpdate.call(gr); };
     gr.insert = function () { if (!aclOk(table, 'create', self.rec)) return null; return baseInsert.call(gr); };
     return gr;

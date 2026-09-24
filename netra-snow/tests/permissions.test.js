@@ -177,4 +177,24 @@ T.test('undo runs with the user\'s permissions too', function () {
     T.ok(s.blob().last_action, 'the undo is kept for someone who can');
 });
 
+T.test('a caller who may not see work notes: write-up and link are refused politely, not crashed', function () {
+    var s = new S.Session();
+    S.g.P.PROPS['x_196061_netra_v1.investigate_llm'] = 'false';
+    s.inc('INC0010015').caller_id = 'u_beth';
+    g.P.user = BETH;
+    // a caller may edit their own incident, but not read or write work notes
+    g.P.ACL = function (table, op, rec, field) {
+        if (table !== 'incident') return true;
+        if (field === 'work_notes' || field === 'caused_by') return false;
+        return rec.caller_id === 'u_beth';
+    };
+    s.say('investigate INC0010015');
+    var f = N.loadServer({ input: { action: 'chat' } }).fn;
+    var w = f._invWriteNoteConfirmed();
+    T.match(w.text, /You do not have permission to add work notes on \*\*incident ending 0 1 5\*\*/);
+    T.eq((s.inc('INC0010015')._work_notes || []).length, 0);
+    var r = f._addWorkNote('INC0010015', 'x');
+    T.match(r.error, /You do not have permission to add work notes on INC0010015/);
+});
+
 T.run(__filename);

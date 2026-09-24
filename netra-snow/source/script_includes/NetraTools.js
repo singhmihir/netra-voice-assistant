@@ -371,9 +371,11 @@ NetraTools.prototype = {
 
     // only the journals the user may read: a caller never hears work notes
     _recentJournal: function (gr, limit) {
+        // under GlideRecordSecure an unreadable field is null and not "valid"
+        var can = function (f) { try { var el = gr.isValidField(f) ? gr.getElement(f) : null; return !!(el && el.canRead()); } catch (e) { return false; } };
         var els = [];
-        if (!gr.isValidField('comments') || gr.comments.canRead()) els.push('comments');
-        if (gr.isValidField('work_notes') && gr.work_notes.canRead()) els.push('work_notes');
+        if (can('comments')) els.push('comments');
+        if (can('work_notes')) els.push('work_notes');
         if (!els.length) return [];
         var j = new GlideRecord('sys_journal_field');
         j.addQuery('element_id', String(gr.sys_id));

@@ -2421,7 +2421,7 @@
         if (!_ticketWritesEnabled()) return { text: 'Ticket writes are switched off by the admin, so I can not add the note. The theories are still here if you want them read out.' };
         var gr = _ugr(inv.anchor.table || 'incident');
         if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone, or you can not see it any more.' };
-        if (!gr.canWrite() || !gr.work_notes.canWrite()) return { text: 'You do not have permission to add work notes on ' + _spkNum(inv.anchor.number) + ', so I wrote nothing. The theories are still here if you want them read out.' };
+        if (!gr.canWrite() || !_fieldCan(gr, 'work_notes', 'write')) return { text: 'You do not have permission to add work notes on ' + _spkNum(inv.anchor.number) + ', so I wrote nothing. The theories are still here if you want them read out.' };
         var startMs = new GlideDateTime().getNumericValue() - 2000;
         gr.work_notes = _invNoteText(inv);
         if (!gr.update()) return { text: 'The platform refused the work note on ' + _spkNum(inv.anchor.number) + ', so nothing was written.', tool: 'investigation_write_up', extra: { verified: false } };
@@ -2451,7 +2451,8 @@
         if (!gr.canWrite()) return { text: 'You do not have permission to change ' + _spkNum(inv.anchor.number) + ', so I did not link it.' };
         // caused_by only: on problem, rfc means the change raised to FIX it
         var linkField = gr.isValidField('caused_by') ? 'caused_by' : '';
-        if (linkField && !gr.caused_by.canWrite()) return { text: 'You can not edit the "caused by" field on ' + _spkNum(inv.anchor.number) + ', so I did not link it.' };
+        if (linkField && !_fieldCan(gr, 'caused_by', 'write')) return { text: 'You can not edit the "caused by" field on ' + _spkNum(inv.anchor.number) + ', so I did not link it.' };
+        if (!linkField && !_fieldCan(gr, 'work_notes', 'write')) return { text: 'You do not have permission to add work notes on ' + _spkNum(inv.anchor.number) + ', so I did not link it.' };
         if (!linkField) {
             // no field to link through on this instance - cross-reference both
             // records with work notes instead, so the trail still exists
@@ -2471,7 +2472,7 @@
                                   tool: 'link_change', extra: { verified: false, via: 'work_notes' } };
             var cr = _ugr('change_request');
             var chgNoted = false;
-            if (cr.get(chg.sys_id) && cr.isValidField('work_notes') && cr.canWrite() && cr.work_notes.canWrite()) {
+            if (cr.get(chg.sys_id) && cr.canWrite() && _fieldCan(cr, 'work_notes', 'write')) {
                 cr.work_notes = inv.anchor.number + ' may be related to this change (' + chg.sentence + '). Noted by ' + who + ' via Netra.';
                 chgNoted = !!cr.update();
             }
@@ -4500,13 +4501,40 @@
         return { ok: false, error: 'You do not have permission to ' + what + ' on ' + String(gr.getValue('number') || 'that record') + ', so I left it alone.', denied: true };
     }
 
+    // Field-level ACLs. Under GlideRecordSecure a field the user may not
+    // read comes back null or undefined (and isValidField is false), so ask
+    // the element nothing until we know it is there. Checked live.
+    function _fieldCan(gr, f, op) {
+        try {
+            if (!gr.isValidField(f)) return false;
+            var el = gr.getElement(f);
+            if (el === null || el === undefined) return false;
+            return op === 'write' ? !!el.canWrite() : !!el.canRead();
+        } catch (e) { return false; }
+    }
+
     // the journals the user may hear: work notes are for fulfillers, so a
     // caller hears comments only (and Netra does not even count the notes)
     function _journalEls(gr) {
         var els = [];
-        if (!gr.isValidField('comments') || gr.comments.canRead()) els.push('comments');
-        if (gr.isValidField('work_notes') && gr.work_notes.canRead()) els.push('work_notes');
+        if (_fieldCan(gr, 'comments', 'read')) els.push('comments');
+        if (_fieldCan(gr, 'work_notes', 'read')) els.push('work_notes');
         return els;
+    }
+
+    // a journal entry really landed: a Secure update() still returns the
+    // sys_id when the platform silently drops a field the user may not write
+    function _journalLanded(sysId, element, text, sinceMs) {
+        try {
+            var j = new GlideRecord('sys_journal_field');
+            j.addQuery('element_id', String(sysId));
+            j.addQuery('element', element);
+            j.addQuery('value', 'CONTAINS', String(text).substring(0, 80));
+            j.orderByDesc('sys_created_on');
+            j.setLimit(1);
+            j.query();
+            return j.next() && new GlideDateTime(j.getValue('sys_created_on')).getNumericValue() >= sinceMs;
+        } catch (e) { return false; }
     }
 
     function _getIncident(num) {
@@ -4602,7 +4630,7 @@
         var pg = _pickByName('sys_user_group', groupName);
         if (pg.error) return { ok: false, error: pg.error, ambiguous: !!pg.ambiguous };
         var gg = pg.gr;
-        if (!gr.canWrite() || !gr.assignment_group.canWrite()) return _deniedWrite(gr, 'reassign it');
+        if (!gr.canWrite() || !_fieldCan(gr, 'assignment_group', 'write')) return _deniedWrite(gr, 'reassign it');
         var oldGrp = String(gr.getValue('assignment_group') || '');
         var oldGrpName = String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : '') || 'unassigned';
         if (oldGrp === String(gg.sys_id)) return { ok: true, unchanged: true, message: num + ' is already with ' + gg.name + ' - I changed nothing.' };
@@ -4624,7 +4652,7 @@
         var pu = _pickByName('sys_user', userName);
         if (pu.error) return { ok: false, error: pu.error, ambiguous: !!pu.ambiguous };
         var u = pu.gr;
-        if (!gr.canWrite() || !gr.assigned_to.canWrite()) return _deniedWrite(gr, 'reassign it');
+        if (!gr.canWrite() || !_fieldCan(gr, 'assigned_to', 'write')) return _deniedWrite(gr, 'reassign it');
         var oldWho = String(gr.getValue('assigned_to') || '');
         var oldWhoName = String(gr.assigned_to.getDisplayValue ? gr.assigned_to.getDisplayValue() : '') || 'unassigned';
         if (oldWho === String(u.sys_id)) return { ok: true, unchanged: true, message: num + ' is already assigned to ' + u.name + ' - I changed nothing.' };
@@ -5187,10 +5215,12 @@
         if (!table) return { ok: false, error: 'Unrecognised number: ' + num };
         var gr = _ugr(table);
         if (!gr.get('number', num)) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
-        if (!gr.isValidField('work_notes') || !gr.canWrite() || !gr.work_notes.canWrite()) return _deniedWrite(gr, 'add work notes');
+        if (!gr.canWrite() || !_fieldCan(gr, 'work_notes', 'write')) return _deniedWrite(gr, 'add work notes');
+        var since = new GlideDateTime().getNumericValue() - 2000;
         gr.work_notes = '[Netra] ' + note;
         if (!gr.update()) return _deniedWrite(gr, 'add work notes');
-        return { ok: true, message: 'Internal note added to ' + num + '.' };
+        if (!_journalLanded(gr.sys_id, 'work_notes', '[Netra] ' + note, since)) return { ok: false, error: 'I sent the note to ' + num + ' but it is not on the ticket when I read it back - your permissions may not allow work notes there.' };
+        return { ok: true, verified: true, message: 'Internal note added to ' + num + ' - I read it back.' };
     }
 
     function _teamWorkload() {

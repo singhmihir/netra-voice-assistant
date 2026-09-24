@@ -89,9 +89,6 @@ T.test('write-up: read back, then written and read back from the journal', funct
     var s = outage(false);
     s.say('investigate INC0030010');
     T.match(s.say('write it up').message, /I will add a work note to \*\*incident ending 0 1 0\*\* .* Shall I\?/);
-    g.GlideRecord.onUpdate.incident = function (next) {
-        (next._work_notes || []).slice(-1).forEach(function (n) { g.put('sys_journal_field', { element_id: next.sys_id, element: 'work_notes', value: n, sys_created_on: g.fmtUtc(g.P.now) }); });
-    };
     var r = s.say('yes');
     T.match(r.message, /Written up on \*\*incident ending 0 1 0\*\* as a work note - I read it back/);
     T.match(g.find('incident', 'number', 'INC0030010')._work_notes.join('\n'), /Netra investigation/);
