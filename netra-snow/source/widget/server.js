@@ -2711,8 +2711,44 @@
             return us.length ? 'I looked up ' + us.slice(0, 2).join(' and ') + (us.length > 2 ? ' and ' + (us.length - 2) + ' more' : '')
                              : 'I found nobody matching "' + String((args && args.query) || '').substring(0, 40) + '"';
         }
+        // R23 - a CVE lookup is read out, not "I ran lookup cve"
+        if (name === 'lookup_cve' && res.cve_id) {
+            var cvs = _gistSentence(res.summary), fix = _gistSentence(res.solution), aff = Number(res.affected_items) || 0;
+            return String(res.cve_id) + (cvs ? ': ' + cvs : '') + '. ' +
+                   (aff ? 'It affects ' + aff + ' active item' + (aff === 1 ? '' : 's') + ' here, worst risk ' + res.worst_risk + (res.worst_band ? ' (' + res.worst_band + ')' : '')
+                        : 'No active items here reference it') +
+                   (fix ? '. The fix: ' + fix : '');
+        }
+        // anything else that came back with something to say: its own words
+        // or what it found, never just the tool's name
+        var gist = _toolGist(res);
+        if (gist) return gist;
         var on = args && args.ticket_number ? _normNum(args.ticket_number) : '';
         return 'I ran ' + name.replace(/_/g, ' ') + (on ? ' on ' + _spkNum(on) : '');
+    }
+    // the first sentence of a longer text, markup and whitespace removed
+    function _gistSentence(s) {
+        s = String(s || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        if (!s) return '';
+        var m = s.match(/^.{20,240}?[.!?](\s|$)/);
+        return (m ? m[0] : s.substring(0, 220)).replace(/[.\s]+$/, '');
+    }
+    // a tool result with nothing tool-specific to say: its summary, or a count
+    function _toolGist(res) {
+        if (!res || res.ok === false) return '';
+        var keys = ['summary', 'answer', 'description', 'short_description', 'title', 'text'];
+        for (var i = 0; i < keys.length; i++) {
+            var v = res[keys[i]];
+            if (typeof v === 'string' && v.replace(/\s+/g, '').length > 3) return _gistSentence(v);
+        }
+        var n = typeof res.count === 'number' ? res.count : (typeof res.total === 'number' ? res.total : null), noun = '';
+        if (n === null) {
+            for (var k in res) {
+                if (res.hasOwnProperty(k) && Object.prototype.toString.call(res[k]) === '[object Array]') { n = res[k].length; noun = k.replace(/_/g, ' '); break; }
+            }
+        }
+        if (n === null) return '';
+        return 'I found ' + (n === 0 ? 'no' : n) + ' ' + (noun ? (n === 1 ? noun.replace(/s$/, '') : noun) : 'result' + (n === 1 ? '' : 's'));
     }
 
     // a result that parked something waiting for a yes, with its read-back

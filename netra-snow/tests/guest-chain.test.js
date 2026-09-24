@@ -186,6 +186,19 @@ T.test('a search call with no query searches what the user asked', function () {
     void log;
 });
 
+T.test('when the model drops out mid-turn, what a tool found is read out - never "I ran lookup cve"', function () {
+    new S.Session();
+    var f = N.loadServer({ input: { action: 'chat' } }).fn;
+    var cve = f._sayToolResult('lookup_cve', { ok: true, cve_id: 'CVE-2021-44228', summary: 'Apache Log4j2 JNDI features do not protect against attacker controlled LDAP endpoints. More detail follows here.',
+        solution: '<p>Upgrade to Log4j 2.17.1 or later.</p> Other mitigations exist.', affected_items: 3, worst_risk: 92, worst_band: 'critical' }, { cve: 'CVE-2021-44228' });
+    T.match(cve, /^CVE-2021-44228: Apache Log4j2 JNDI features do not protect against attacker controlled LDAP endpoints\. It affects 3 active items here, worst risk 92 \(critical\)\. The fix: Upgrade to Log4j 2\.17\.1 or later$/);
+    T.match(f._sayToolResult('lookup_cve', { ok: true, cve_id: 'CVE-2099-0001', summary: 'A test advisory about nothing much at all.', affected_items: 0 }, {}), /No active items here reference it/);
+    T.eq(f._sayToolResult('list_things', { ok: true, things: [1, 2, 3] }, {}), 'I found 3 things');
+    T.eq(f._sayToolResult('list_things', { ok: true, count: 0 }, {}), 'I found no results');
+    T.match(f._sayToolResult('explain_something', { ok: true, summary: 'It is a tidy explanation of the thing. And more.' }, {}), /^It is a tidy explanation of the thing$/);
+    T.notMatch(cve, /I ran/);
+});
+
 T.test('a tool that composed its own answer is read as it is', function () {
     new S.Session();
     var f = N.loadServer({ input: { action: 'chat' } }).fn;
