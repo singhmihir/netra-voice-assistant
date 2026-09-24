@@ -1048,11 +1048,13 @@ NetraInvestigator.prototype = {
         f.reassignments = Math.max(f.reassignments || 0, f.audit_reassign || 0);
 
         // ---- journal: last 8 comments / work notes (same query as NetraTools._recentJournal) ----
-        if (isTicket) {
+        // the widget passes the journals the signed-in user may read
+        var jEls = typeof opts.journal === 'string' ? opts.journal : 'comments,work_notes';
+        if (isTicket && jEls) {
             this._run(d.sources, 'journal', 'sys_journal_field', deadlineAt, function (src) {
                 var j = new GlideRecord('sys_journal_field');
                 j.addQuery('element_id', anchor.sys_id);
-                j.addQuery('element', 'IN', 'comments,work_notes');
+                j.addQuery('element', 'IN', jEls);
                 j.orderByDesc('sys_created_on');
                 j.setLimit(8);
                 j.query();
@@ -1068,7 +1070,7 @@ NetraInvestigator.prototype = {
             });
             if (d.sources.journal && d.sources.journal.status === 'empty') d.missing.push('any work notes or comments on the ticket');
         } else {
-            d.sources.journal = { rows: 0, ms: 0, status: 'skipped', note: 'not a ticket' };
+            d.sources.journal = { rows: 0, ms: 0, status: 'skipped', note: isTicket ? 'no journal you can read' : 'not a ticket' };
         }
 
         // ---- KB keyword hits ----
