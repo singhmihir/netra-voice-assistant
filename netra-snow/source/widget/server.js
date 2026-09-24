@@ -1340,10 +1340,22 @@
         if (typeof m !== 'number' || isNaN(m) || m < -14 * 60 || m > 14 * 60) return null;
         return m * 60000;
     }
-    // "YYYY-MM-DD HH:MM" in the user's timezone
+    // true when the browser's zone is the session zone: then the platform's
+    // DST-aware conversion is right, and a fixed offset would be an hour
+    // out for any timestamp on the other side of a clock change
+    function _pageIsProfileZone(off) {
+        try {
+            var name = String((input && input.tz_name) || '');
+            if (name && name === String(gs.getSession().getTimeZoneName())) return true;
+            return new GlideDateTime().getTZOffset() === off;
+        } catch (e) { return false; }
+    }
+    // "YYYY-MM-DD HH:MM" in the user's timezone. A page in another zone
+    // than the profile gets its own current offset (no DST history: an
+    // event on the other side of a clock change is an hour out there)
     function _localStamp(ms) {
         var off = _tzOffsetMs();
-        if (off !== null) {
+        if (off !== null && !_pageIsProfileZone(off)) {
             var d = new Date(ms + off), p = function (n) { return (n < 10 ? '0' : '') + n; };
             return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
         }
@@ -1830,10 +1842,15 @@
         return [
             // an explicit web search - real results, no model call
             function (lc, norm, contents) {
-                // "such the web", "surge the web": what recognizers make of "search"
-                var m = lc.match(/^(?:please |netra )?(?:(?:search|such|surge|sir|look ?up|check|find)(?: (?:it|this|that))?(?: (?:on|in))?(?: the)? (?:web|internet|net|online|google|bing)(?: for| about)?|google|bing|web search(?: for)?|what does the (?:web|internet) say about)[:,]?\s+(.{3,})$/);
+                // "such the web", "surge the web": what recognizers make of "search".
+                // "check the internet connection" and "google chrome is not
+                // working" are problem reports, not searches: check/find need
+                // "for/about" after the medium, google/bing need "it/for"
+                var m = lc.match(/^(?:please |netra )?(?:(?:search|such|surge|sir|look ?up)(?: (?:it|this|that))?(?: (?:on|in))?(?: the)? (?:web|internet|net|online|google|bing)(?: for| about)?|(?:check|find)(?: (?:it|this|that))?(?: (?:on|in))?(?: the)? (?:web|internet|net|online|google|bing) (?:for|about)|(?:google|bing) (?:it|this|that|for)|search (?:google|bing)(?: for)?|web search(?: for)?|what does the (?:web|internet) say about)[:,]?\s+(.{3,})$/);
                 if (!m) return null;
                 var q = m[1].replace(/[?.!]+$/, '');
+                // a ticket reference or a ServiceNow thing is never a web question: the brain owns it
+                if (_findNums(norm).length || /\b(ticket|tickets|incident|incidents|portal|kb|servicenow|approval|approvals|my queue)\b/i.test(q)) return null;
                 var res = _searchWeb(q);
                 return _flReply(_saySearch(res, q), contents, 'search_web', 'fast_lane', { search: res.ok ? { source: res.source, heading: res.heading, url: res.url } : null });
             },
@@ -2245,14 +2262,6 @@
         if (/^(resolve|close|approve|reject|assign|reassign|update|change|set|delete|cancel) /.test(lc) || /\b(escalate|reassign)\b/.test(lc)) {
             return _flReply(notice + 'I will not make that kind of change in basic mode - I want my full reasoning for anything beyond raising a ticket. ' + _offlineWhen(why && why.resting_until_ms) + ' I can still read tickets, list your work, and give you the debrief.', contents, 'offline_refuse', 'offline');
         }
-        // a general question: the web still answers with no model at all
-        if (/^(what|who|where|when|why|how)('s| is| are| was| were| does| do| did| much| many| long| far| old)\b|^(tell me about|explain|define|meaning of|who was)\b/.test(lc) &&
-            !/\b(ticket|tickets|incident|incidents|change|changes|problem|problems|request|requests|approval|approvals|task|tasks|my|netra|you|your|queue|watch|debrief|mission|order|plan|kb\d|inc\d|chg\d|prb\d|ritm\d)\b/.test(lc)) {
-            try {
-                var web = _searchWeb(clean.replace(/[?.!]+$/, ''));
-                if (web && web.ok) return _flReply(notice + _saySearch(web, clean), contents, 'search_web', 'offline', { search: { source: web.source, heading: web.heading, url: web.url } });
-            } catch (eWeb) {}
-        }
         // a described problem: search by meaning (separate embedding quota)
         if (clean.split(/\s+/).length >= 4) {
             try {
@@ -2263,11 +2272,23 @@
                     var m0 = sr.matches[0];
                     bits.push(_spkNum(m0.number) + ' looked like this' + (m0.close_notes ? ' and was fixed with: "' + String(m0.close_notes).substring(0, 140) + '"' : ''));
                 }
-                if (kb && kb.ok && kb.count) bits.push('the closest knowledge article is ' + _spkNum(kb.articles[0].number) + ', "' + String(kb.articles[0].title || '').substring(0, 80) + '"');
+                // the keyword fallback (no embedding key) returns articles without a count
+                if (kb && kb.ok && ((kb.count || 0) || (kb.articles && kb.articles.length))) bits.push('the closest knowledge article is ' + _spkNum(kb.articles[0].number) + ', "' + String(kb.articles[0].title || '').substring(0, 80) + '"');
                 if (bits.length) {
                     return _flReply(notice + 'I can not reason about that fully right now, but I searched by meaning: ' + bits.join('; and ') + '. ' + _offlineWhen(why && why.resting_until_ms), contents, 'offline_search', 'offline');
                 }
             } catch (eS) {}
+        }
+        // a general question with no article or fix of our own: the web still
+        // answers with no model at all - never the company's own things
+        // (passwords, VPN, printers, SLAs: those stay inside)
+        if (/^(what|who|where|when|why|how)('s| is| are| was| were| does| do| did| much| many| long| far| old)\b|^(tell me about|explain|define|meaning of|who was)\b/.test(lc) &&
+            !/\b(ticket|tickets|incident|incidents|change|changes|problem|problems|request|requests|approval|approvals|task|tasks|my|our|netra|you|your|queue|watch|debrief|mission|order|plan|kb\d|inc\d|chg\d|prb\d|ritm\d|password|passwords|vpn|wifi|wi-fi|laptop|printer|outlook|email|mail|login|log in|account|access|sla|slas|p[1-4]|kb|on call|cab|servicenow|portal|office|building|floor)\b/.test(lc) &&
+            _contentWords(clean).length) {
+            try {
+                var web = _searchWeb(clean.replace(/[?.!]+$/, ''));
+                if (web && web.ok) return _flReply(notice + _saySearch(web, clean), contents, 'search_web', 'offline', { search: { source: web.source, heading: web.heading, url: web.url } });
+            } catch (eWeb) {}
         }
         return _flReply(notice + 'I can not work that one out without my reasoning models. ' + _offlineWhen(why && why.resting_until_ms) +
                         ' Meanwhile I can still give you ticket status by number, your tickets, your approvals, the debrief, my work board, raise a ticket, and keep running plans and standing orders.', contents, 'offline_help', 'offline');
@@ -7654,7 +7675,7 @@
             // a hit sharing under a third of the user's words is about
             // something else (a tweet about a pool for "what is cuban it"):
             // better to say nothing was found than to read it out
-            if (_contentWords(query).length) web = web.filter(function (x) { return x._score >= 0.34; });
+            if (_contentWords(query).length) web = web.filter(function (x) { return x._score >= 1 / 3 - 1e-9; });
             results = results.concat(web);
         };
         if (encyclopaedic) { addWiki(); if (!results.length) addWeb(); } else { addWeb(); if (!results.length) addWiki(); }

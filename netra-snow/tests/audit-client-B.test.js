@@ -293,7 +293,8 @@ T.test('"no, I meant X" is sent on as a command, never answered "Noted" on the p
 T.test('asleep: "hello", a colleague named Neha, or a mumbled "Netra" do not wake her', function () {
     var p = new Page();
     p.c.alert = false; p.c.conversationOpen = false;
-    ['Hello?', 'hey', 'listen to this', 'Neha, please close INC0012345, it is done', 'the server is near capacity'].forEach(function (u) {
+    ['Hello?', 'hey', 'listen to this', 'Neha, please close INC0012345, it is done', 'the server is near capacity',
+     'Nada, can you send me the report', 'nada más, gracias'].forEach(function (u) {
         p.hear(u);
         T.ok(!p.c.alert, u + ': still asleep');
     });

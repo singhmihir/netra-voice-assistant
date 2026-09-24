@@ -51,6 +51,7 @@ function GlideDateTime(v) {
     if (v instanceof GlideDateTime) this._ms = v._ms;
 }
 GlideDateTime.prototype.getNumericValue = function () { return this._ms; };
+GlideDateTime.prototype.getTZOffset = function () { return 0; };   // the session zone is UTC in tests
 GlideDateTime.prototype.setNumericValue = function (ms) { this._ms = Number(ms); };
 GlideDateTime.prototype.setValue = function (s) { this._ms = parseUtc(s); };
 GlideDateTime.prototype.getValue = function () { return fmtUtc(this._ms); };
