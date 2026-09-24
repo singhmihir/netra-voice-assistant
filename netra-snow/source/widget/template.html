@@ -810,11 +810,11 @@
       </section>
 
       <section class="netra-lab-sec">
-        <div class="netra-lab-sec-title">NLP TEST (dry run, TTS muted)</div>
+        <div class="netra-lab-sec-title">NLP TEST (live - real actions)</div>
         <div class="netra-lab-row netra-lab-cmd">
           <input type="text" ng-model="c.labNlpText" ng-keydown="c.labNlpKey($event)"
                  placeholder="e.g. what buttons are on INC0000059?"
-                 aria-label="NLP test utterance" />
+                 aria-label="NLP test utterance - runs for real" />
           <button ng-click="c.labRunNlp()" ng-disabled="!c.labNlpText">Run</button>
         </div>
         <div ng-show="c.labNlp">

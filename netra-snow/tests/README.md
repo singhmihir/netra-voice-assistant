@@ -42,6 +42,7 @@ node:
 | `audit-server-G-semantic-orders-plans.test.js` | standing orders arm only the resolved ticket, state and priority that were read back, on a fresh yes; the debrief speaks every report and the true count; a plan is never silently replaced and its undo never overwrites a later change; "nothing similar" only after every ticket was compared |
 | `missions.test.js` | a queue mission launched on a yes, reviewed with embeddings only, applied with re-reads, human-routed tickets left alone, undone |
 | `engines.test.js` | quota governor, missions and semantic-search harnesses |
+| `audit-client-A.test.js` | a "no, I said X" while a read-back waits reaches the server, and "I said X" runs X; the Lab NLP test says it is live and never leaves speech muted; ticket numbers keep their spacing through the real router; "speak slower/faster" and "quiet" do what they say; no key boots into basic mode; the boot mic check lets skips and commands through and never sticks; o'clock and real ordinals |
 | `audit-server-A-core.test.js` | a yes said before a reply was heard confirms nothing; model replies end on the draft's own read-back; writes asked for after reading other people's text wait for a heard yes; notifications are delivered only once spoken; history cuts keep tool calls with their responses; partial answers name every write; the digest keeps the oldest prompts; the voice tag does not pick the model |
 
 CI runs the suite on every push and pull request that touches `netra-snow/`
