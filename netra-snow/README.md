@@ -72,11 +72,52 @@ reviewed 27 tickets with 27 embedding calls and **0** generate calls,
 skipped the one a human had edited, applied 11 confirmed changes with
 read-back, and undo restored all 11.
 
+### Trust, by construction
+
+- **She acts with your permissions, never the app's.** Ticket, knowledge and
+  vulnerability reads and writes go through `GlideRecordSecure`, so the same
+  ACLs as the ServiceNow forms apply: a caller can not resolve someone else's
+  ticket through Netra, a restricted HR article is never read out, and the
+  Vulnerability Response tools are only offered to people with a VR role.
+- **A "yes" only runs what you just heard.** Every write that needs consent is
+  read back and parked with the turn it was proposed in; only your next turn
+  can confirm it. Two drafts in one turn, a reply you never heard (you barged
+  in), a partial answer that did not read it back, a stale plan, a yes from
+  twelve minutes ago - all dropped or read back again. Approvals can not be
+  decided in the turn they are proposed, even if text in an approval tells the
+  model to.
+- **Everything she changes is checked and undoable.** Writes are read back
+  before she says "done"; undo restores what really changed (priority through
+  impact and urgency, resolve with its close notes, whole plans step by step)
+  and says plainly what can not be taken back.
+- **She checks herself.** *"Run a self check"* tests her key (against Google's
+  free model list), her tables, her cross-scope reads, the background scanner's
+  heartbeat, overdue standing orders, quota, memory coverage and recent errors
+  — zero model calls — and says what is wrong and how to fix it.
+
+### Tested without an instance
+
+`node netra-snow/tests/run.js` runs the real widget and script-include code
+against an in-memory ServiceNow and a scripted Gemini in about two seconds:
+conversations through the real router for the confirm gate, fast-lane
+routing, investigations, standing orders fired by the real background
+runner, queue missions, permissions (with ACLs and roles), record facts,
+spoken numbers and times, the client's local replies and the self-check,
+plus static guarantees (everything parses, no secrets ship, every declared
+tool has a handler, the router hoisting trap stays closed). GitHub Actions
+runs it on every push (`.github/workflows/netra-tests.yml`). See
+[`tests/README.md`](tests/README.md).
+
+The v7 code was also put through an adversarial whole-codebase audit - an
+auditor per slice, then a skeptic per slice trying to refute each finding -
+and the confirmed defects were fixed with a test each.
+
 **Known limits.** Free keys allow 20 generate calls per model per day, so a
 heavy day will still put Netra into basic mode for a while — she says so and
-says when she is back. Instances without a `caused_by` / `rfc` field on
-incident get the change link as a cross-referenced work note on both
-records instead.
+says when she is back. Instances without a `caused_by` field on incident get
+the change link as a cross-referenced work note on both records instead.
+Some instances fence the system log off from scoped apps; the self-check then
+says it could not look there rather than reporting "no errors".
 
 ---
 
