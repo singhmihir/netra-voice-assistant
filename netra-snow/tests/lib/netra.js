@@ -82,6 +82,8 @@ function loadClient() {
     // UPPER_CASE constants declared below it (regexes, thresholds, lists on
     // one line) are hoisted but undefined: give them their real values, so
     // a test exercises the same thresholds the page does
+    // controller state assigned below the hook that every input path reads
+    if (!out.c.ear) out.c.ear = { mode: 'auto', on: false, status: 'off', progress: 0, model: '', device: 'wasm', error: '', heard: 0, why: '' };
     var constRe = /^    var ([A-Z][A-Z0-9_]*)\s*=\s*(\/(?:[^\/\\\n]|\\.)+\/[gimuy]*|-?\d+(?:\.\d+)?|'[^'\n]*'|\[[^\]]*\]|true|false);/gm, cm;
     while ((cm = constRe.exec(src))) {
         try { if (out.get(cm[1]) === undefined) out.set(cm[1], vm.runInThisContext('(' + cm[2] + ')')); } catch (e) {}

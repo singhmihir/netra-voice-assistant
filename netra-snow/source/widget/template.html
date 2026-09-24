@@ -782,8 +782,16 @@
         <div class="netra-lab-sec-title">HEARD (LIVE)
           <span class="netra-lab-chip" ng-class="{'ok': c.interim, 'bad': !c.recRunning}">{{c.interim ? 'hearing…' : (c.recRunning ? 'listening' : 'mic off')}}</span>
           <span class="netra-lab-chip bad" ng-show="c.micHealth.speechService === 'unreachable'">speech service unreachable</span>
+          <span class="netra-lab-chip ok" ng-show="c.ear.on">on-device ear</span>
+          <span class="netra-lab-chip" ng-show="c.ear.status === 'loading'">loading ear {{c.ear.progress}}%</span>
+          <span class="netra-lab-chip bad" ng-show="c.micHealth.deafStrikes && !c.ear.on">sound without words ×{{c.micHealth.deafStrikes}}</span>
         </div>
         <div class="netra-lab-hearing" ng-class="{'on': c.interim}">{{c.interim || 'say something - words appear here as they are recognised'}}</div>
+        <div class="netra-lab-row netra-lab-selects">
+          <label>ear</label>
+          <select ng-model="c.ear.mode" ng-change="c.labSetEar()" ng-options="m as m for m in ['auto','on','off']" aria-label="Which ear hears you: automatic, the on-device one, or the browser only"></select>
+          <em class="netra-lab-ear-status">{{c.earSummary()}}</em>
+        </div>
         <div class="netra-lab-heard-row" ng-repeat="h in c.heard track by $index">
           <span class="t">{{h.t}}</span><span class="cf">{{h.conf}}</span><em>“{{h.text}}”</em><span class="f">{{h.fate}}</span>
         </div>

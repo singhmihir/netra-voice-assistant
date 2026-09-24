@@ -145,6 +145,22 @@ to the browser's default voice (the "tin can"):
   skips the doomed handshake and uses the best voice the browser has
   (Google's online voices in Chrome). Open her in Edge for the neural voice.
 
+**A second ear (v7.2).** The browser's recognizer sends your audio to
+Google's or Microsoft's speech service; when that service returns no words
+(a blocked network, a language it will not take, a grammar it rejects, a
+session that died silently) the mic shows sound and Netra hears nothing,
+which reads as "she is not listening". The page now watches for exactly
+that - clear speech on the meter, nothing from the recognizer - and heals in
+steps: it rebuilds without the grammar, tries plain en-US, and if the
+recognizer stays deaf (or the speech service is unreachable, or the browser
+has no recognizer at all) it opens its own ear: Whisper running inside the
+browser in a worker, fed straight from the mic's audio graph, no speech
+service involved. Every word it hears travels the same road a browser final
+does. The Lab's **ear** switch forces it on or off; its status row says
+which ear is listening and why. The model (about 40 MB, cached by the
+browser after the first load) comes from the Hugging Face hub and the
+runtime from jsDelivr, so those two hosts must be reachable once.
+
 Along with that: the Lab's **HEARD (LIVE)** section shows the live
 transcript and, for every final, what became of it ("answered on the page",
 "sent to Netra", "dropped: my own echo", "asked to repeat"); the Lab's

@@ -1590,6 +1590,9 @@ api.controller = function ($scope, $timeout, $window) {
     function matchLocal(s) {
         if (!s) return null;
         var lc = s.toLowerCase().trim();
+        // politeness round a question is not part of it: "what time is it
+        // please tell me", "can you tell me what day it is"
+        lc = lc.replace(/[?.!,]+$/, '').replace(/^(please |kindly |can you |could you |would you |tell me |netra )+/, '').replace(/( please| tell me| can you tell me| kindly| now)+$/, '').trim();
 
         // R18 - every shortcut below matches the WHOLE utterance. The old
         // versions matched anywhere, so "hey netra, list my tickets" got a
@@ -2118,6 +2121,8 @@ api.controller = function ($scope, $timeout, $window) {
             var gainNode = _micCtx.createGain();
             gainNode.gain.value = c.micGain || 1.0;   // R9 - mic sensitivity slider
             _micGainNode = gainNode;
+            _earProc = null; _earSink = null;
+            if (c.ear.on) _earTapAttach();
             _micAnalyser = _micCtx.createAnalyser();
             _micAnalyser.fftSize = 1024;
             _micAnalyser.smoothingTimeConstant = 0.75;   // R3.5.1 - 0.5 -> 0.75 damp brief noise transients
@@ -2140,6 +2145,7 @@ api.controller = function ($scope, $timeout, $window) {
                 var rms = Math.sqrt(sum / data.length);
                 var level = Math.min(100, Math.round(rms * 360));   // R3.5.1 - back to 360 (500 amplified noise floor)
 
+                _deafAccumulate(level, Date.now());
                 if (level !== lastMicLevel) {
                     lastMicLevel = level;
                     c.micLevel = level;
@@ -2676,6 +2682,293 @@ api.controller = function ($scope, $timeout, $window) {
     // keep arriving but finals never do ("hears but doesn't register"); we
     // track the interim/final timeline to detect and heal it.
     var _lastInterimAt = 0, _lastInterimText = '', _lastFinalAt = 0;
+
+    /* ============================================================
+     *  R19 - THE ON-DEVICE EAR, and a recognizer that notices it is deaf
+     *
+     *  The browser's recognizer sends the audio to Google's or Microsoft's
+     *  speech service. When that service returns no words - a blocked
+     *  network, a language it will not take, a grammar it rejects, a
+     *  session that died silently - the mic still shows sound and Netra
+     *  hears nothing, which reads as "she is not listening to me".
+     *
+     *  So the page watches for exactly that: clear speech on the meter
+     *  with no words back. It heals in steps (rebuild without the grammar,
+     *  plain en-US), and if the recognizer stays deaf it opens its own
+     *  ear: Whisper (tiny, English) running inside the browser in a
+     *  worker, fed straight from the mic's audio graph, no speech service
+     *  at all. Browsers without a recognizer get the ear from the start;
+     *  the Lab can force it on or off.
+     * ============================================================ */
+    var EAR_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1/dist/transformers.min.js';
+    var EAR_MODEL = 'onnx-community/whisper-tiny.en';        // small and quick anywhere (WebAssembly)
+    var EAR_MODEL_GPU = 'onnx-community/whisper-base.en';    // clearer, on a GPU-capable browser
+    var EAR_START_LEVEL = 18;     // meter level that opens a segment
+    var EAR_STOP_LEVEL = 9;       // and below which silence is counted
+    var EAR_SILENCE_MS = 900;     // this much silence closes the segment
+    var EAR_MIN_SPEECH_MS = 350;  // shorter is a click, not a word
+    var EAR_MAX_MS = 15000;       // a segment never runs longer
+    var EAR_PREROLL_MS = 320;     // audio kept from before the meter rose
+    var DEAF_LOUD_LEVEL = 22;     // speech-loud on the meter
+    var DEAF_WINDOW_MS = 10000;   // judged every ten seconds
+    var DEAF_LOUD_MS = 1500;      // this much speech with no words is a strike
+    var EAR_HALLUCINATION_RE = /^[\s\W]*$|^\[.*\]$|^\(.*\)$|^(you|thank you|thanks|thanks for watching|bye|so|the end|okay)[.!]?$/i;
+    c.ear = { mode: 'auto', on: false, status: 'off', progress: 0, model: EAR_MODEL, device: 'wasm', error: '', heard: 0, why: '' };
+    try { c.ear.mode = localStorage.getItem('netra_ear') || 'auto'; } catch (eEM) {}
+    if (c.ear.mode !== 'on' && c.ear.mode !== 'off') c.ear.mode = 'auto';
+    var _earWorker = null, _earBusy = false, _earQueue = [], _earNativeSeen = 0, _earSaid = false;
+    var _earProc = null, _earSink = null, _earRing = [], _earRingMs = 0, _earSeg = [], _earSegMs = 0, _earVoiceMs = 0, _earInSpeech = false, _earSilenceMs = 0, _earRate = 48000;
+    var _deafStrikes = 0, _deafWinStart = 0, _deafLoudMs = 0, _deafLastFrameAt = 0, _srNoGrammar = false, _langFellBack = false;
+    // the worker: transformers.js from the CDN, the model from the hub,
+    // both cached by the browser after the first load
+    var EAR_WORKER_SRC =
+        "import { pipeline, env } from '" + EAR_LIB + "';\n" +
+        "env.allowLocalModels = false;\n" +
+        "let asr = null;\n" +
+        "self.onmessage = async (e) => {\n" +
+        "  try {\n" +
+        "    if (e.data.cmd === 'load') {\n" +
+        "      asr = await pipeline('automatic-speech-recognition', e.data.model, { dtype: e.data.device === 'webgpu' ? 'fp32' : 'q8', device: e.data.device,\n" +
+        "        progress_callback: (p) => { if (p.status === 'progress' && p.file && /\\.onnx$/.test(p.file)) self.postMessage({ progress: Math.round(p.progress || 0), file: p.file }); } });\n" +
+        "      self.postMessage({ loaded: true });\n" +
+        "    } else if (e.data.cmd === 'run') {\n" +
+        "      const t = Date.now();\n" +
+        "      const r = await asr(e.data.audio);\n" +
+        "      self.postMessage({ id: e.data.id, text: String(r && r.text || ''), ms: Date.now() - t });\n" +
+        "    }\n" +
+        "  } catch (err) { self.postMessage({ id: e.data && e.data.id, error: String(err && err.message || err) }); }\n" +
+        "};\n";
+    c.earSummary = function () {
+        var e = c.ear;
+        if (e.status === 'loading') return 'on-device: loading Whisper ' + e.progress + '%';
+        if (e.status === 'on') return 'on-device Whisper (' + (/base/.test(e.model) ? 'base' : 'tiny') + ', English, ' + e.device + ') - ' + e.heard + ' heard' + (e.why ? ' - ' + e.why : '');
+        if (e.status === 'error') return 'on-device failed: ' + e.error;
+        return 'browser recognizer (' + (c.recLang || 'en-IN') + ')' + (c.hasSR ? '' : ' - none in this browser');
+    };
+    c.labSetEar = function () {
+        try { localStorage.setItem('netra_ear', c.ear.mode); } catch (e) {}
+        logEvent('lab', 'ear -> ' + c.ear.mode);
+        if (c.ear.mode === 'on') _earStart('switched on in the Lab', true);
+        else if (c.ear.mode === 'off') _earStop('switched off in the Lab');
+        else if (c.ear.on && !c.ear.why) _earStop('back to automatic');
+    };
+    function _earStart(why, quiet) {
+        if (c.ear.mode === 'off') { logEvent('rec', 'ear wanted (' + why + ') but switched off in the Lab'); return false; }
+        if (c.ear.on || c.ear.status === 'loading') return true;
+        if (typeof Worker === 'undefined' || typeof Blob === 'undefined') { c.ear.status = 'error'; c.ear.error = 'no workers in this browser'; return false; }
+        c.ear.why = why; c.ear.status = 'loading'; c.ear.progress = 0; c.ear.error = ''; _earNativeSeen = 0;
+        logEvent('rec', 'on-device ear starting: ' + why);
+        if (!quiet && !_earSaid) {
+            _earSaid = true;
+            speak('I can hear you, but the browser is returning no words for what you say. I am switching to listening on this device myself - give me a few seconds to load it.');
+        }
+        try {
+            if (!_earWorker) {
+                var gpu = !!(navigator.gpu);
+                c.ear.device = gpu ? 'webgpu' : 'wasm'; c.ear.model = gpu ? EAR_MODEL_GPU : EAR_MODEL;
+                _earSpawn();
+            } else {
+                _earReady();
+            }
+        } catch (e) { _earFail(String(e && e.message || e)); }
+        $scope.$applyAsync();
+        return true;
+    }
+    function _earSpawn() {
+        _earWorker = new Worker(URL.createObjectURL(new Blob([EAR_WORKER_SRC], { type: 'text/javascript' })), { type: 'module' });
+        _earWorker.onmessage = _earOnMessage;
+        _earWorker.onerror = function (ev) { _earLoadFailed('worker: ' + (ev && ev.message || 'failed')); };
+        logEvent('rec', 'on-device ear loading ' + c.ear.model + ' on ' + c.ear.device);
+        _earWorker.postMessage({ cmd: 'load', model: c.ear.model, device: c.ear.device });
+    }
+    // the GPU model would not load or run: the small model on WebAssembly instead
+    function _earLoadFailed(msg) {
+        if (c.ear.device === 'webgpu') {
+            logEvent('warn', 'on-device ear: ' + c.ear.model + ' on webgpu failed (' + msg + ') - trying ' + EAR_MODEL + ' on wasm');
+            try { if (_earWorker) _earWorker.terminate(); } catch (e) {}
+            _earWorker = null; _earBusy = false; _earQueue = [];
+            c.ear.device = 'wasm'; c.ear.model = EAR_MODEL; c.ear.progress = 0;
+            if (c.ear.status !== 'loading') c.ear.status = 'loading';
+            try { _earSpawn(); } catch (e2) { _earFail(String(e2 && e2.message || e2)); }
+            return;
+        }
+        _earFail(msg);
+    }
+    function _earReady() {
+        c.ear.on = true; c.ear.status = 'on'; c.ear.progress = 100;
+        _earTapAttach();
+        logEvent('rec', 'on-device ear listening (' + c.ear.model + ' on ' + c.ear.device + ')');
+        cue('wake');
+        if (c.ear.why && !/Lab/.test(c.ear.why)) speak('Ready - I am listening on this device now. Just speak.');
+        $scope.$applyAsync();
+    }
+    function _earFail(msg) {
+        c.ear.on = false; c.ear.status = 'error'; c.ear.error = msg;
+        logEvent('err', 'on-device ear failed: ' + msg);
+        try { if (_earWorker) _earWorker.terminate(); } catch (e) {}
+        _earWorker = null; _earBusy = false; _earQueue = [];
+        if (!/Lab/.test(c.ear.why || '')) speak('I could not load my on-device listening - ' + (/fetch|network|load/i.test(msg) ? 'the model would not download on this network' : 'this browser could not run it') + '. You can still type to me in the Lab.');
+        $scope.$applyAsync();
+    }
+    function _earStop(why) {
+        if (!c.ear.on && c.ear.status !== 'loading') return;
+        c.ear.on = false; c.ear.status = 'off'; c.ear.why = '';
+        _earSeg = []; _earSegMs = 0; _earInSpeech = false; _earQueue = [];
+        logEvent('rec', 'on-device ear off: ' + why);
+        $scope.$applyAsync();
+    }
+    function _earOnMessage(ev) {
+        var d = ev.data || {};
+        if (d.progress !== undefined) { c.ear.progress = d.progress; $scope.$applyAsync(); return; }
+        if (d.loaded) { _earReady(); return; }
+        if (d.error) {
+            if (c.ear.status === 'loading') return _earLoadFailed(d.error);
+            logEvent('err', 'on-device ear: ' + d.error);
+            _earBusy = false;
+            // a GPU run that breaks after loading: back to the small model, and this segment is lost
+            if (c.ear.device === 'webgpu' && c.ear.heard === 0) { c.ear.status = 'loading'; c.ear.on = false; _earLoadFailed(d.error); return; }
+            _earNext();
+            return;
+        }
+        if (d.text !== undefined) {
+            _earBusy = false;
+            var text = String(d.text).replace(/\s+/g, ' ').trim();
+            if (EAR_HALLUCINATION_RE.test(text)) {
+                logEvent('rec.f', 'on-device: nothing said (' + JSON.stringify(text) + ', ' + d.ms + ' ms)');
+                if (c.interim && /on-device/.test(c.interim)) { c.interim = ''; $scope.$applyAsync(); }
+            } else {
+                c.ear.heard++;
+                logEvent('rec.f', 'on-device: "' + text + '" (' + d.ms + ' ms)');
+                _earDeliver(text);
+            }
+            _earNext();
+        }
+    }
+    // the same road a browser final travels: barge-in scoring, aliases, the buffer
+    function _earDeliver(text) {
+        var t = text, conf = 0.85;
+        recLastActivityAt = Date.now();
+        _lastFinalAt = Date.now(); c.micHealth.lastFinalAt = _lastFinalAt;
+        if (Date.now() < ignoreFinalsUntil) { _heardLog(t, conf, 'dropped: right after my own voice'); return; }
+        if (_speakingNow || _fillerChainActive || currentFillerAudio || currentFillerUtter) {
+            if (_handleFinalWhileSpeaking(t, conf)) return;
+            if (_lastBargeText) { t = _lastBargeText; _lastBargeText = ''; }
+        }
+        var aliased = applyAliases(t);
+        if (aliased !== t) { logEvent('train', 'alias-rewrite: "' + t + '" -> "' + aliased + '"'); t = aliased; }
+        _enqueueFinalTranscript(t, conf);
+    }
+    // the mic's own audio, tapped after the gain stage; a silent sink keeps
+    // the processor running without playing the mic through the speakers
+    function _earTapAttach() {
+        if (_earProc || !_micCtx || !_micGainNode) return;
+        try {
+            _earRate = _micCtx.sampleRate || 48000;
+            _earProc = _micCtx.createScriptProcessor(4096, 1, 1);
+            _earSink = _micCtx.createGain(); _earSink.gain.value = 0;
+            _earProc.onaudioprocess = function (ev) {
+                if (!c.ear.on) return;
+                var inp = ev.inputBuffer.getChannelData(0);
+                _earFeed(new Float32Array(inp), _earRate);
+            };
+            _micGainNode.connect(_earProc); _earProc.connect(_earSink); _earSink.connect(_micCtx.destination);
+        } catch (e) { logEvent('err', 'on-device ear: could not tap the mic: ' + (e.message || e)); _earProc = null; }
+    }
+    function _earTapDetach() {
+        try { if (_earProc) { _earProc.disconnect(); _earProc.onaudioprocess = null; } if (_earSink) _earSink.disconnect(); } catch (e) {}
+        _earProc = null; _earSink = null;
+    }
+    // segments: a frame is speech when the meter would show it; a segment
+    // opens on speech, keeps a little pre-roll, and closes on silence
+    function _earFeed(frame, rate) {
+        var sum = 0;
+        for (var i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
+        var level = Math.min(100, Math.round(Math.sqrt(sum / frame.length) * 360));
+        var ms = frame.length / rate * 1000;
+        if (!_earInSpeech) {
+            _earRing.push(frame); _earRingMs += ms;
+            while (_earRingMs > EAR_PREROLL_MS && _earRing.length > 1) { _earRingMs -= _earRing[0].length / rate * 1000; _earRing.shift(); }
+            if (level >= EAR_START_LEVEL) {
+                _earInSpeech = true; _earSeg = _earRing.slice(); _earSegMs = _earRingMs; _earVoiceMs = 0; _earSilenceMs = 0;
+                _earRing = []; _earRingMs = 0;
+                if (!_speakingNow) { c.interim = '(on-device) hearing…'; $scope.$applyAsync(); }
+            }
+            return;
+        }
+        _earSeg.push(frame); _earSegMs += ms; _earVoiceMs += ms;
+        if (level < EAR_STOP_LEVEL) _earSilenceMs += ms; else _earSilenceMs = 0;
+        if (_earSilenceMs >= EAR_SILENCE_MS || _earSegMs >= EAR_MAX_MS) {
+            // the voiced part is what was said after the meter rose, less the trailing silence: the pre-roll is not speech
+            var seg = _earSeg, voicedMs = _earVoiceMs - _earSilenceMs;
+            _earSeg = []; _earSegMs = 0; _earVoiceMs = 0; _earInSpeech = false; _earSilenceMs = 0;
+            if (voicedMs < EAR_MIN_SPEECH_MS) { if (c.interim && /on-device/.test(c.interim)) { c.interim = ''; $scope.$applyAsync(); } return; }
+            _earSubmit(_earTo16k(seg, rate));
+        }
+    }
+    function _earTo16k(frames, rate) {
+        var total = 0, i, j;
+        for (i = 0; i < frames.length; i++) total += frames[i].length;
+        var all = new Float32Array(total), off = 0;
+        for (i = 0; i < frames.length; i++) { all.set(frames[i], off); off += frames[i].length; }
+        if (rate === 16000) return all;
+        var ratio = rate / 16000, n = Math.floor(all.length / ratio), out = new Float32Array(n);
+        for (i = 0; i < n; i++) {
+            var a = Math.floor(i * ratio), b = Math.min(all.length, Math.floor((i + 1) * ratio)), acc = 0;
+            for (j = a; j < b; j++) acc += all[j];
+            out[i] = b > a ? acc / (b - a) : 0;
+        }
+        return out;
+    }
+    function _earSubmit(audio) {
+        if (!_earWorker || !c.ear.on) return;
+        if (_earQueue.length >= 2) _earQueue.shift();   // never fall behind: the oldest goes
+        _earQueue.push(audio);
+        if (!_speakingNow) { c.interim = '(on-device) working out what you said…'; $scope.$applyAsync(); }
+        _earNext();
+    }
+    function _earNext() {
+        if (_earBusy || !_earQueue.length || !_earWorker) return;
+        _earBusy = true;
+        var audio = _earQueue.shift();
+        _earWorker.postMessage({ cmd: 'run', id: Date.now(), audio: audio }, [audio.buffer]);
+    }
+    // the meter shows speech, the recognizer returns nothing: judged every
+    // ten seconds, healed in steps, the ear as the last step
+    function _deafAccumulate(level, now) {
+        if (_deafLastFrameAt) {
+            var dt = Math.min(100, now - _deafLastFrameAt);
+            if (level >= DEAF_LOUD_LEVEL && !_speakingNow && !_calibActive && (now - _speakingSince) > 1500) _deafLoudMs += dt;
+        }
+        _deafLastFrameAt = now;
+        if (!_deafWinStart) _deafWinStart = now;
+    }
+    function _deafCheck(now) {
+        if (!_deafWinStart || now - _deafWinStart < DEAF_WINDOW_MS) return;
+        var loud = _deafLoudMs, since = _deafWinStart;
+        _deafWinStart = now; _deafLoudMs = 0;
+        if (c.ear.on || !c.alert || !c.hasSR || c.permission === 'denied') return;
+        var words = _lastInterimAt >= since || _lastFinalAt >= since;
+        if (words) { if (_deafStrikes) logEvent('rec', 'words are back - recognizer healthy'); _deafStrikes = 0; return; }
+        if (loud < DEAF_LOUD_MS) return;
+        _deafStrikes++;
+        c.micHealth.deafStrikes = (c.micHealth.deafStrikes || 0) + 1;
+        logEvent('warn', 'sound without words: ' + Math.round(loud / 100) / 10 + 's of speech on the meter, nothing from the recognizer (strike ' + _deafStrikes + ')');
+        if (_deafStrikes === 2) {
+            _srNoGrammar = true;
+            _fullMicRecycle('deaf: rebuilding without the grammar');
+        } else if (_deafStrikes === 3 && c.recLang !== 'en-US') {
+            _langFellBack = true;
+            logEvent('warn', 'still no words in ' + c.recLang + ' - trying plain en-US');
+            c.recLang = 'en-US';
+            _fullMicRecycle('deaf: plain en-US');
+        } else if (_deafStrikes >= 4) {
+            if (!_earStart('the browser returned no words for clear speech') && c.ear.mode === 'off' && !_earSaid) {
+                _earSaid = true;
+                speak('I can hear you, but the browser is returning no words for what you say. My on-device listening is switched off in the Lab - switch it on there, or type to me.');
+            }
+        }
+        $scope.$applyAsync();
+    }
     var _notAllowedStrikes = 0;
     var _lastLowConfNudgeAt = 0;
     var _floorStuckStrikes = 0;
@@ -2697,6 +2990,10 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     function startContinuous() {
+        if (!_ctrlDestroyed && !c.ear.on && c.ear.status !== 'loading') {
+            if (!c.hasSR) _earStart('this browser has no speech recognizer', true);
+            else if (c.ear.mode === 'on') _earStart('switched on in the Lab', true);
+        }
         if (!c.hasSR || _ctrlDestroyed) return;
         try { if (contRec) contRec.stop(); } catch (e) {}
 
@@ -2705,7 +3002,9 @@ api.controller = function ($scope, $timeout, $window) {
         contRec.interimResults = true;
         contRec.lang           = c.recLang || 'en-IN';   // R9 - Lab language selector
         contRec.maxAlternatives = 5;   // R2.2 - get top 5 guesses to re-rank against personal vocab
-        attachGrammar(contRec);
+        // the grammar list is a hint Chrome's service tolerates; Edge's and
+        // a deaf session are better off without it
+        if (!_srNoGrammar && !_edgeBrowser) attachGrammar(contRec);
         recLastStartTime = Date.now();
 
         contRec.onstart = function () {
@@ -2724,10 +3023,23 @@ api.controller = function ($scope, $timeout, $window) {
             recLastActivityAt = Date.now();   // R1.1 - silent-rec heartbeat
             _notAllowedStrikes = 0;           // R8.1 - real results = mic healthy
             if (_netErrStreak) { _netErrStreak = 0; c.micHealth.speechService = 'ok'; }
+            if (_deafStrikes && !c.ear.on) _deafStrikes = 0;
             for (var i = ev.resultIndex; i < ev.results.length; i++) {
                 var res = ev.results[i];
                 var t = (res[0] && res[0].transcript) || '';
                 var conf = (res[0] && res[0].confidence) || 0;
+                // while the on-device ear listens, the browser's own results
+                // stay out of the way - unless they keep coming, which means
+                // the recognizer healed and the ear can rest (automatic mode)
+                if (c.ear.on && res.isFinal) {
+                    _earNativeSeen++;
+                    if (c.ear.mode === 'auto' && _earNativeSeen >= 3) {
+                        _earStop('the browser recognizer is hearing again');
+                    } else {
+                        _heardLog(t, conf, 'ignored: the on-device ear is listening');
+                        continue;
+                    }
+                }
                 if (!res.isFinal) {
                     // R8.1 - zombie-session heartbeat: remember the interim so
                     // the watchdog can promote it if a final never arrives.
@@ -2832,8 +3144,9 @@ api.controller = function ($scope, $timeout, $window) {
                 c.micHealth.networkErrors = (c.micHealth.networkErrors || 0) + 1;
                 if (_netErrStreak === 3) {
                     c.micHealth.speechService = 'unreachable';
-                    logEvent('err', 'speech service unreachable - 3 network errors in a row (the browser can not reach Google speech recognition: network, VPN or proxy)');
-                    if (Date.now() - _lastNetErrSaidAt > 300000 && !_speakingNow) {
+                    logEvent('err', 'speech service unreachable - 3 network errors in a row (the browser can not reach its speech service: network, VPN or proxy)');
+                    // the ear needs no speech service: it takes over now
+                    if (!_earStart('the browser can not reach its speech service') && Date.now() - _lastNetErrSaidAt > 300000 && !_speakingNow) {
                         _lastNetErrSaidAt = Date.now();
                         speak('I can hear sound, but the browser can not reach its speech service right now, so I can not make out words. That is usually the network or a VPN. You can still type to me in the Lab.');
                     }
@@ -2848,6 +3161,19 @@ api.controller = function ($scope, $timeout, $window) {
             }
             if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
                 _handleNotAllowed(ev.error);
+                return;
+            }
+            if (ev.error === 'language-not-supported') {
+                // this browser's service will not take the language: plain
+                // en-US next, and the ear if even that is refused
+                if (c.recLang !== 'en-US') {
+                    logEvent('warn', 'the browser will not recognise ' + c.recLang + ' - switching to en-US');
+                    var refusedLang = c.recLang;
+                    c.recLang = 'en-US'; _langFellBack = true;
+                    if (!_earSaid) speak('This browser will not recognise ' + refusedLang + ' speech here, so I am listening in plain English now.');
+                } else {
+                    _earStart('the browser refuses the language');
+                }
                 return;
             }
             logEvent('err', 'recognition error: ' + ev.error);
@@ -3026,6 +3352,9 @@ api.controller = function ($scope, $timeout, $window) {
             } else {
                 watchdogLastSpeakingStart = 0;
             }
+
+            // R19 - sound without words: heal the recognizer, then open the ear
+            _deafCheck(now);
 
             // R8.1 - FLOOR SANITY: _speakingNow claims Netra holds the
             // floor, but no audio element is actually playing and no TTS
@@ -8624,6 +8953,7 @@ api.controller = function ($scope, $timeout, $window) {
     border-radius: 0 8px 8px 0;
     padding: 7px 10px;
 }
+.netra-lab-ear-status { font-style: normal; opacity: .8; font-size: 11px; margin-left: 8px; }
 .netra-lab-hearing {
   min-height: 2.2em; padding: 6px 8px; margin: 4px 0 6px; border-radius: 6px;
   background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.55); font-size: 12px; line-height: 1.4;
@@ -18835,7 +19165,7 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
 })();
-]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>82</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 10:38:57</sys_updated_on><template><![CDATA[<!--
+]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>86</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 12:16:50</sys_updated_on><template><![CDATA[<!--
   Netra Mic widget template - R9 "Prism"
 
   R8.1: the prism hue engine drives every colour in this template via
@@ -19619,8 +19949,16 @@ api.controller = function ($scope, $timeout, $window) {
         <div class="netra-lab-sec-title">HEARD (LIVE)
           <span class="netra-lab-chip" ng-class="{'ok': c.interim, 'bad': !c.recRunning}">{{c.interim ? 'hearing…' : (c.recRunning ? 'listening' : 'mic off')}}</span>
           <span class="netra-lab-chip bad" ng-show="c.micHealth.speechService === 'unreachable'">speech service unreachable</span>
+          <span class="netra-lab-chip ok" ng-show="c.ear.on">on-device ear</span>
+          <span class="netra-lab-chip" ng-show="c.ear.status === 'loading'">loading ear {{c.ear.progress}}%</span>
+          <span class="netra-lab-chip bad" ng-show="c.micHealth.deafStrikes && !c.ear.on">sound without words ×{{c.micHealth.deafStrikes}}</span>
         </div>
         <div class="netra-lab-hearing" ng-class="{'on': c.interim}">{{c.interim || 'say something - words appear here as they are recognised'}}</div>
+        <div class="netra-lab-row netra-lab-selects">
+          <label>ear</label>
+          <select ng-model="c.ear.mode" ng-change="c.labSetEar()" ng-options="m as m for m in ['auto','on','off']" aria-label="Which ear hears you: automatic, the on-device one, or the browser only"></select>
+          <em class="netra-lab-ear-status">{{c.earSummary()}}</em>
+        </div>
         <div class="netra-lab-heard-row" ng-repeat="h in c.heard track by $index">
           <span class="t">{{h.t}}</span><span class="cf">{{h.conf}}</span><em>“{{h.text}}”</em><span class="f">{{h.fate}}</span>
         </div>
