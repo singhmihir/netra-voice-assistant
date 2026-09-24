@@ -24,13 +24,13 @@ NetraResponder.prototype = {
         var r;
         switch (intent.action) {
             // ---- tickets ----
-            case 'create':            r = this._create(intent.args.description); break;
+            case 'create':            r = this._gate('create', intent.args); break;
             case 'partial_create':    r = this._askForDescription(); break;
             case 'list':              r = this._list(); break;
-            case 'resolve':           r = this._resolve(intent.args.ticket_number); break;
-            case 'resolve_context':   r = this._resolveContext(); break;
+            case 'resolve':           r = this._gate('resolve', intent.args); break;
+            case 'resolve_context':   r = this._gate('resolve_context', intent.args); break;
             case 'partial_resolve':   r = this._askWhichTicketToResolve(intent.args.reprompt); break;
-            case 'update':            r = this._update(intent.args.ticket_number, intent.args.comment); break;
+            case 'update':            r = this._gate('update', intent.args); break;
             case 'status':            r = this._status(intent.args.ticket_number); break;
             case 'read':              r = this._read(intent.args.ticket_number); break;
             case 'read_context':      r = this._readContext(); break;
@@ -41,8 +41,8 @@ NetraResponder.prototype = {
 
             // ---- approvals ----
             case 'list_approvals':    r = this._listApprovals(); break;
-            case 'approve':           r = this._decideApproval(intent.args.ref_number, true); break;
-            case 'reject':            r = this._decideApproval(intent.args.ref_number, false); break;
+            case 'approve':           r = this._gate('approve', intent.args); break;
+            case 'reject':            r = this._gate('reject', intent.args); break;
 
             // ---- knowledge ----
             case 'kb_search':         r = this._kbSearch(intent.args.query); break;
@@ -51,7 +51,9 @@ NetraResponder.prototype = {
 
             // ---- chat ----
             case 'chat_read':         r = this._chatRead(); break;
-            case 'chat_send':         r = this._chatSend(intent.args.body); break;
+            case 'chat_send':         r = this._gate('chat_send', intent.args); break;
+            case 'confirm_yes':       r = this._confirmed(); break;
+            case 'confirm_no':        this.ctx.takePending(); r = this._ok('Okay - I left it, nothing was changed.', { clear_pending: true }); break;
 
             // ---- navigation ----
             case 'navigate':          r = this._navigate(intent.args.destination); break;
@@ -91,6 +93,60 @@ NetraResponder.prototype = {
         if (r && r.message && r.message !== '__REPEAT__') {
             try { this.ctx.setLastUtterance(r.message); } catch (e) {}
         }
+        return r;
+    },
+
+    // ===== confirm gate =====
+    // Every write is read back first and runs only on the caller's next
+    // "yes" (sent with pending: confirm_destructive) within ten minutes -
+    // the same rule the widget follows. Nothing here writes on one breath.
+    CONFIRM_MS: 10 * 60 * 1000,
+
+    _gate: function (action, args) {
+        args = args || {};
+        var rb;
+        if (action === 'create') {
+            if (!args.description || String(args.description).trim().length < 3) return this._askForDescription();
+            rb = 'I will raise a ticket: "' + String(args.description).trim().substring(0, 160) + '".';
+        } else if (action === 'resolve' || action === 'resolve_context') {
+            var num = args.ticket_number;
+            if (!num) {
+                var f = this.ctx.getFocus();
+                if (action === 'resolve' || !f || !f.number) return action === 'resolve' ? this._askWhichTicketToResolve(false)
+                    : this._fail("I don't have a recent ticket in mind. Please say the I N C number.");
+                num = f.number;
+            }
+            action = 'resolve';
+            args = { ticket_number: num };
+            rb = 'I will resolve ' + this._sayNumber(num) + '.';
+        } else if (action === 'update') {
+            if (!args.ticket_number) return this._fail('Which ticket should I update?');
+            if (!args.comment) return this._fail('What should I add as the comment?');
+            rb = 'I will add the comment "' + String(args.comment).substring(0, 160) + '" to ' + this._sayNumber(args.ticket_number) + '.';
+        } else if (action === 'approve' || action === 'reject') {
+            if (!args.ref_number) return this._fail('Which one should I ' + action + '?');
+            rb = 'I will ' + action + ' ' + this._sayNumber(args.ref_number) + ' - that can not be undone.';
+        } else if (action === 'chat_send') {
+            if (!args.body || !String(args.body).trim()) return this._fail('What should I send?');
+            rb = 'I will send "' + String(args.body).substring(0, 160) + '" in your latest chat.';
+        }
+        this.ctx.setPending(action, args);
+        return { ok: true, message: rb + ' Shall I?', pending: 'confirm_destructive', data: { read_back: rb, action: action } };
+    },
+
+    _confirmed: function () {
+        var p = this.ctx.takePending();
+        if (!p || !p.action || new GlideDateTime().getNumericValue() - (p.at || 0) > this.CONFIRM_MS) {
+            return this._ok('There was nothing waiting for a yes, so I changed nothing.', { clear_pending: true });
+        }
+        var a = p.args || {}, r;
+        if (p.action === 'create') r = this._create(a.description);
+        else if (p.action === 'resolve') r = this._resolve(a.ticket_number);
+        else if (p.action === 'update') r = this._update(a.ticket_number, a.comment);
+        else if (p.action === 'approve' || p.action === 'reject') r = this._decideApproval(a.ref_number, p.action === 'approve');
+        else if (p.action === 'chat_send') r = this._chatSend(a.body);
+        else r = this._fail('I lost track of what you confirmed, so I changed nothing.');
+        r.clear_pending = true;
         return r;
     },
 
@@ -427,4 +483,4 @@ NetraResponder.prototype = {
 
     type: 'NetraResponder'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:39</sys_created_on><sys_id>2cb3da9093424710e3aef0aefaba1039</sys_id><sys_mod_count>2</sys_mod_count><sys_name>NetraResponder</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_2cb3da9093424710e3aef0aefaba1039</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-11 04:31:06</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:39</sys_created_on><sys_id>2cb3da9093424710e3aef0aefaba1039</sys_id><sys_mod_count>3</sys_mod_count><sys_name>NetraResponder</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_2cb3da9093424710e3aef0aefaba1039</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 05:14:44</sys_updated_on></sys_script_include></record_update>

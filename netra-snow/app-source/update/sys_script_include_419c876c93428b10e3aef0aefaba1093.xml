@@ -89,10 +89,50 @@ NetraVulnerability.prototype = {
         };
     },
 
+    // record reads and writes go through GlideRecordSecure: the signed-in
+    // user's own VR ACLs apply, exactly as in the VR workspace
+    _vit: function () { return new GlideRecordSecure(this.VIT); },
+
     _findVit: function (number) {
-        var gr = new GlideRecord(this.VIT);
+        var gr = this._vit();
         if (gr.get('number', this._normVit(number))) return gr;
         return null;
+    },
+
+    _applyFilters: function (q, opts) {
+        q.addQuery('active', true);
+        var scope = String(opts.scope || 'me').toLowerCase();
+        if (scope === 'me') {
+            var groups = this._myGroupIds();
+            var mq = 'assigned_to=' + this.userSysId;
+            if (groups.length) mq += '^ORassignment_groupIN' + groups.join(',');
+            q.addEncodedQuery(mq);
+        } else if (scope === 'group') {
+            var g2 = this._myGroupIds();
+            if (!g2.length) return false;
+            q.addQuery('assignment_group', 'IN', g2.join(','));
+        }
+        if (opts.state) {
+            var st = this.STATE_WORD[String(opts.state).toLowerCase()] || String(opts.state);
+            q.addQuery('state', st);
+        }
+        if (opts.min_risk) q.addQuery('risk_score', '>=', parseInt(opts.min_risk, 10) || 0);
+        if (opts.band) {
+            var b = String(opts.band).toLowerCase();
+            var ranges = { critical: [80, 100], high: [60, 79], medium: [40, 59], low: [1, 39] };
+            if (ranges[b]) { q.addQuery('risk_score', '>=', ranges[b][0]); q.addQuery('risk_score', '<=', ranges[b][1]); }
+        }
+        if (opts.ci)  q.addQuery('cmdb_ci.name', 'CONTAINS', String(opts.ci));
+        if (opts.cve) q.addQuery('vulnerability.id', String(opts.cve).toUpperCase());
+        return true;
+    },
+
+    _count: function (opts) {
+        var ga = new GlideAggregate(this.VIT);
+        if (!this._applyFilters(ga, opts)) return 0;
+        ga.addAggregate('COUNT');
+        ga.query();
+        return ga.next() ? (parseInt(ga.getAggregate('COUNT'), 10) || 0) : 0;
     },
 
     // ============================================================
@@ -104,45 +144,23 @@ NetraVulnerability.prototype = {
      */
     listVulnerableItems: function (opts) {
         opts = opts || {};
-        var gr = new GlideRecord(this.VIT);
-        gr.addQuery('active', true);
-
         var scope = String(opts.scope || 'me').toLowerCase();
-        if (scope === 'me') {
-            var groups = this._myGroupIds();
-            var q = 'assigned_to=' + this.userSysId;
-            if (groups.length) q += '^ORassignment_groupIN' + groups.join(',');
-            gr.addEncodedQuery(q);
-        } else if (scope === 'group') {
-            var g2 = this._myGroupIds();
-            if (g2.length) gr.addQuery('assignment_group', 'IN', g2.join(','));
-            else return { ok: true, count: 0, items: [], note: 'You are not a member of any assignment group.' };
-        }
-
-        if (opts.state) {
-            var st = this.STATE_WORD[String(opts.state).toLowerCase()] || String(opts.state);
-            gr.addQuery('state', st);
-        }
-        if (opts.min_risk) gr.addQuery('risk_score', '>=', parseInt(opts.min_risk, 10) || 0);
-        if (opts.band) {
-            var b = String(opts.band).toLowerCase();
-            var ranges = { critical: [80, 100], high: [60, 79], medium: [40, 59], low: [1, 39] };
-            if (ranges[b]) { gr.addQuery('risk_score', '>=', ranges[b][0]); gr.addQuery('risk_score', '<=', ranges[b][1]); }
-        }
-        if (opts.ci)  gr.addQuery('cmdb_ci.name', 'CONTAINS', String(opts.ci));
-        if (opts.cve) gr.addQuery('vulnerability.id', String(opts.cve).toUpperCase());
-
+        var gr = this._vit();
+        if (!this._applyFilters(gr, opts)) return { ok: true, total: 0, shown: 0, items: [], note: 'You are not a member of any assignment group.' };
         gr.orderByDesc('risk_score');
         gr.setLimit(parseInt(opts.limit, 10) || 10);
         gr.query();
         var items = [];
         while (gr.next()) items.push(this._shapeVit(gr));
-        return { ok: true, count: items.length, scope: scope, items: items };
+        // the list is capped; the total is not - "you have 10" must mean 10
+        var total = Math.max(items.length, this._count(opts));
+        return { ok: true, total: total, shown: items.length, scope: scope, items: items,
+                 note: 'showing ' + items.length + ' of ' + total + ' - say the total, then the worst few' };
     },
 
     /** Highest-risk active vulnerable items across the whole org (exposure view). */
     topRisk: function (limit) {
-        var gr = new GlideRecord(this.VIT);
+        var gr = this._vit();
         gr.addQuery('active', true);
         gr.addQuery('state', 'NOT IN', this.STATE.CLOSED + ',' + this.STATE.RESOLVED);
         gr.orderByDesc('risk_score');
@@ -162,7 +180,7 @@ NetraVulnerability.prototype = {
         out.notes = String(gr.work_notes.getJournalEntry(1) || '').substring(0, 600);
         // pull the CVE entry for summary + solution
         if (!gr.vulnerability.nil()) {
-            var e = new GlideRecord(this.ENTRY);
+            var e = new GlideRecordSecure(this.ENTRY);
             if (e.get(String(gr.vulnerability))) {
                 out.cve_id      = String(e.id);
                 out.cve_summary = String(e.summary || '').substring(0, 800);
@@ -281,7 +299,7 @@ NetraVulnerability.prototype = {
     /** All active vulnerable items on a named asset. */
     vulnerabilitiesForCI: function (ciName) {
         if (!ciName) return { ok: false, error: 'Which asset? Give me a host or CI name.' };
-        var gr = new GlideRecord(this.VIT);
+        var gr = this._vit();
         gr.addQuery('active', true);
         gr.addQuery('cmdb_ci.name', 'CONTAINS', String(ciName));
         gr.orderByDesc('risk_score');
@@ -289,64 +307,78 @@ NetraVulnerability.prototype = {
         gr.query();
         var items = [];
         while (gr.next()) items.push(this._shapeVit(gr));
-        return { ok: true, ci: ciName, count: items.length, items: items };
+        var total = Math.max(items.length, this._count({ scope: 'all', ci: ciName }));
+        return { ok: true, ci: ciName, total: total, shown: items.length, items: items,
+                 note: 'showing ' + items.length + ' of ' + total };
     },
 
     // ============================================================
     //  Actions (mutating — Netra confirms verbally before calling)
     // ============================================================
+    /**
+     * opts: { group_id, group_name, user_id, user_name } - names already
+     * resolved by the caller (exact-first, ask when ambiguous); raw text is
+     * never pasted into an encoded query here.
+     */
     assignVulnerableItem: function (number, opts) {
         opts = opts || {};
         var gr = this._findVit(number);
-        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' not found.' };
+        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' was not found, or you can not see it.' };
+        if (!gr.canWrite()) return { ok: false, error: 'You do not have permission to reassign ' + String(gr.number) + '.' };
+        var before = { assigned_to: String(gr.getValue('assigned_to') || ''), assignment_group: String(gr.getValue('assignment_group') || '') };
+        var beforeText = [gr.assignment_group.getDisplayValue(), gr.assigned_to.getDisplayValue()].filter(function (x) { return !!x; }).join(' / ') || 'unassigned';
         var msg = [];
-        if (opts.group) {
-            var gg = new GlideRecord('sys_user_group');
-            gg.addQuery('active', true);
-            gg.addEncodedQuery('nameLIKE' + opts.group);
-            gg.setLimit(1); gg.query();
-            if (!gg.next()) return { ok: false, error: 'No group matching "' + opts.group + '".' };
-            gr.assignment_group = String(gg.sys_id);
-            msg.push('group ' + String(gg.name));
-        }
-        if (opts.user) {
-            var u = new GlideRecord('sys_user');
-            u.addQuery('active', true);
-            u.addEncodedQuery('nameLIKE' + opts.user + '^ORuser_nameLIKE' + opts.user + '^ORemailLIKE' + opts.user);
-            u.setLimit(1); u.query();
-            if (!u.next()) return { ok: false, error: 'No user matching "' + opts.user + '".' };
-            gr.assigned_to = String(u.sys_id);
-            msg.push(String(u.name));
-        }
+        if (opts.group_id) { gr.setValue('assignment_group', opts.group_id); msg.push('group ' + opts.group_name); }
+        if (opts.user_id) { gr.setValue('assigned_to', opts.user_id); msg.push(String(opts.user_name)); }
         if (!msg.length) return { ok: false, error: 'Give me a user or a group to assign to.' };
         gr.work_notes = '[Netra] Assigned to ' + msg.join(' / ') + ' by ' + this.userName + ' via voice.';
-        gr.update();
-        return { ok: true, number: String(gr.number), message: String(gr.number) + ' assigned to ' + msg.join(' and ') + '.' };
+        if (!gr.update()) return { ok: false, error: 'The platform refused the change to ' + String(gr.number) + '.' };
+        var chk = this._findVit(number);
+        var landed = chk && (!opts.group_id || String(chk.getValue('assignment_group')) === String(opts.group_id)) &&
+                            (!opts.user_id || String(chk.getValue('assigned_to')) === String(opts.user_id));
+        if (!landed) return { ok: false, error: 'I asked for the change on ' + String(gr.number) + ' but it did not stick when I read it back.' };
+        return { ok: true, verified: true, number: String(gr.number), before: before, before_text: beforeText,
+                 message: String(gr.number) + ' is now assigned to ' + msg.join(' and ') + ' - I read it back.' };
+    },
+
+    _setState: function (number, st, note) {
+        var gr = this._findVit(number);
+        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' was not found, or you can not see it.' };
+        if (!gr.canWrite()) return { ok: false, error: 'You do not have permission to change ' + String(gr.number) + '.' };
+        var oldState = String(gr.getValue('state') || '');
+        gr.setValue('state', st);
+        gr.work_notes = '[Netra] ' + note;
+        if (!gr.update()) return { ok: false, error: 'The platform refused the change to ' + String(gr.number) + ' - it is still ' + (this.STATE_LABEL[oldState] || oldState) + '.' };
+        var chk = this._findVit(number);
+        var now = chk ? String(chk.getValue('state')) : '';
+        if (now !== String(st)) {
+            return { ok: false, error: String(gr.number) + ' did not change - it is still ' + (this.STATE_LABEL[now] || now) + '. Vulnerability Response may need more fields for that step.' };
+        }
+        return { ok: true, verified: true, number: String(gr.number), state: this.STATE_LABEL[st], old_state: oldState,
+                 old_state_label: this.STATE_LABEL[oldState] || oldState,
+                 message: String(gr.number) + ' is now ' + this.STATE_LABEL[st] + ' - I read it back.' };
     },
 
     setVulnerableItemState: function (number, stateWord, note) {
-        var gr = this._findVit(number);
-        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' not found.' };
         var st = this.STATE_WORD[String(stateWord || '').toLowerCase()];
-        if (!st) return { ok: false, error: 'I did not recognise the state "' + stateWord + '". Try open, investigate, defer, resolve, or close.' };
-        gr.state = st;
-        if (note) gr.work_notes = '[Netra] ' + note;
-        else gr.work_notes = '[Netra] State set to ' + this.STATE_LABEL[st] + ' by ' + this.userName + ' via voice.';
-        gr.update();
-        return { ok: true, number: String(gr.number), state: this.STATE_LABEL[st], message: String(gr.number) + ' is now ' + this.STATE_LABEL[st] + '.' };
+        if (!st) return { ok: false, error: 'I did not recognise the state "' + stateWord + '". Try open, investigate, resolve, or close.' };
+        // accepting risk needs a reason on the record - that is defer's job
+        if (st === this.STATE.DEFERRED) return { ok: false, error: 'Deferring means accepting the risk, which needs a reason for the audit trail - use defer with the reason.' };
+        return this._setState(number, st, note || ('State set to ' + this.STATE_LABEL[st] + ' by ' + this.userName + ' via voice.'));
     },
 
     deferVulnerableItem: function (number, reason) {
         if (!reason || String(reason).trim().length < 3) return { ok: false, error: 'Deferring needs a reason for the audit trail. Why are we accepting this risk?' };
-        return this.setVulnerableItemState(number, 'defer', 'Deferred (risk accepted) by ' + this.userName + '. Reason: ' + reason);
+        return this._setState(number, this.STATE.DEFERRED, 'Deferred (risk accepted) by ' + this.userName + '. Reason: ' + reason);
     },
 
     addVulnerabilityNote: function (number, note) {
         if (!note || String(note).trim().length < 1) return { ok: false, error: 'The note is empty.' };
         var gr = this._findVit(number);
-        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' not found.' };
+        if (!gr) return { ok: false, error: 'Vulnerable item ' + this._normVit(number) + ' was not found, or you can not see it.' };
+        if (!gr.canWrite()) return { ok: false, error: 'You do not have permission to add notes to ' + String(gr.number) + '.' };
         gr.work_notes = '[Netra] ' + note;
-        gr.update();
+        if (!gr.update()) return { ok: false, error: 'The platform refused the note on ' + String(gr.number) + '.' };
         return { ok: true, number: String(gr.number), message: 'Note added to ' + String(gr.number) + '.' };
     },
 
@@ -359,4 +391,4 @@ NetraVulnerability.prototype = {
 
     type: 'NetraVulnerability'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-10 03:28:40</sys_created_on><sys_id>419c876c93428b10e3aef0aefaba1093</sys_id><sys_mod_count>1</sys_mod_count><sys_name>NetraVulnerability</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_419c876c93428b10e3aef0aefaba1093</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-10 03:29:58</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-10 03:28:40</sys_created_on><sys_id>419c876c93428b10e3aef0aefaba1093</sys_id><sys_mod_count>2</sys_mod_count><sys_name>NetraVulnerability</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_419c876c93428b10e3aef0aefaba1093</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 21:35:03</sys_updated_on></sys_script_include></record_update>

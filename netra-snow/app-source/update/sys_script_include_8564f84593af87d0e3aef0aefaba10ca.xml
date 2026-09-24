@@ -47,6 +47,9 @@ NetraSemantic.prototype = {
         // during review, so re-querying 400 rows per item is pure waste.
         // the widget leaves it off (one instance per request anyway).
         this.memoScans = !!options.memoScans;
+        // asUser: read tickets with the signed-in user's ACLs (the widget).
+        // Background jobs leave it off and read as the system.
+        this.asUser = !!options.asUser;
 
         this.embedCalls = 0;       // HTTP calls actually sent, for accounting
         this.embedErrors = 0;
@@ -323,7 +326,7 @@ NetraSemantic.prototype = {
         var src = { rows: 0, ms: 0, status: 'ok' };
         var rows = [];
         try {
-            var gr = new GlideRecord(table);
+            var gr = this.asUser ? new GlideRecordSecure(table) : new GlideRecord(table);
             if (!gr.isValid()) {
                 src.status = 'blocked';
                 src.error = 'table ' + table + ' is not readable from this scope';
@@ -342,24 +345,26 @@ NetraSemantic.prototype = {
                 gr.orderByDesc('sys_updated_on');
                 gr.setLimit(limit);
                 gr.query();
+                // by field name, never through the element: under GlideRecordSecure
+                // a field the user may not read is null and its methods throw
+                var v = function (f) { try { return String(gr.getValue(f) || ''); } catch (eV) { return ''; } };
+                var dv = function (f) { try { return String(gr.getDisplayValue(f) || ''); } catch (eD) { return ''; } };
                 while (gr.next()) {
                     rows.push({
-                        sys_id:   String(gr.sys_id),
-                        number:   String(gr.number),
-                        short_description: String(gr.short_description || ''),
-                        description: String(gr.description || '').substring(0, 900),
-                        state:    String(gr.state.getDisplayValue ? gr.state.getDisplayValue() : gr.state),
-                        priority: String(gr.priority),
-                        category: String(gr.category || ''),
-                        subcategory: String(gr.subcategory || ''),
-                        assignment_group: String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : ''),
-                        assigned_to: String(gr.assigned_to.getDisplayValue ? gr.assigned_to.getDisplayValue() : ''),
-                        close_notes: String(gr.close_notes || '').replace(/\s+/g, ' ').substring(0, 600),
-                        // getValue, not the element: a GlideElement is always truthy,
-                        // so `gr.resolved_at || gr.closed_at` never fell back
-                        resolved_at: String(gr.getValue('resolved_at') || gr.getValue('closed_at') || ''),
-                        opened: String(gr.sys_created_on || ''),
-                        _gid: String(gr.getValue('assignment_group') || ''),
+                        sys_id:   v('sys_id'),
+                        number:   v('number'),
+                        short_description: v('short_description'),
+                        description: v('description').substring(0, 900),
+                        state:    dv('state') || v('state'),
+                        priority: v('priority'),
+                        category: v('category'),
+                        subcategory: v('subcategory'),
+                        assignment_group: dv('assignment_group'),
+                        assigned_to: dv('assigned_to'),
+                        close_notes: v('close_notes').replace(/\s+/g, ' ').substring(0, 600),
+                        resolved_at: v('resolved_at') || v('closed_at'),
+                        opened: v('sys_created_on'),
+                        _gid: v('assignment_group'),
                         _table: table
                     });
                 }
@@ -392,7 +397,7 @@ NetraSemantic.prototype = {
      *          maxLive:int, queryVec:[..], withGroupIds:bool }
      * -> { ok, matches:[{sys_id, number, short_description, state, priority,
      *      category, subcategory, assignment_group, assigned_to, close_notes,
-     *      resolved_at, opened, score}], count, stats }
+     *      resolved_at, opened, score, group_id (withGroupIds only)}], count, stats }
      *  | { ok:false, error, embed_failed?, code?, retry_ms?, blocked?, stats? }
      */
     semanticIncidents: function (query, opts) {
@@ -434,7 +439,7 @@ NetraSemantic.prototype = {
         var cacheMap = this.loadVectors(table, ids, stats).map;
 
         var maxLive = (typeof opts.maxLive === 'number') ? Math.max(0, opts.maxLive) : this.INC_EMBED_MAX_LIVE;
-        var scored = [], groupIds = {}, rested = false;
+        var scored = [], rested = false;
         for (var r = 0; r < rows.length; r++) {
             var row = rows[r];
             stats.scanned++;
@@ -460,7 +465,6 @@ NetraSemantic.prototype = {
                 vec = er.vec;
                 stats.embedded_now++;
             }
-            if (row._gid && row.assignment_group) groupIds[row.assignment_group] = row._gid;
             scored.push({
                 sys_id:   row.sys_id,
                 number:   row.number,
@@ -476,6 +480,8 @@ NetraSemantic.prototype = {
                 opened: row.opened,
                 score: this.cosineSim(qVec, vec)
             });
+            // each match carries its own group sys_id: names are not unique
+            if (opts.withGroupIds) scored[scored.length - 1].group_id = row._gid;
         }
         scored.sort(function (a, b) { return b.score - a.score; });
         var thr = (typeof opts.threshold === 'number') ? opts.threshold : this.INC_SIM_THRESHOLD;
@@ -484,9 +490,7 @@ NetraSemantic.prototype = {
             if (scored[s].score >= thr) top.push(scored[s]);
         }
         stats.best_score = scored.length ? Number(scored[0].score.toFixed(3)) : 0;
-        var out = { ok: true, matches: top, count: top.length, stats: stats };
-        if (opts.withGroupIds) out.group_ids = groupIds;
-        return out;
+        return { ok: true, matches: top, count: top.length, stats: stats };
     },
 
     // ---- 1. RESOLUTION MEMORY -------------------------------------------
@@ -533,23 +537,31 @@ NetraSemantic.prototype = {
             return { ok: true, confident: false, sample_size: 0, stats: r.stats,
                      message: 'No lookalikes in the history, so I have nothing solid to base a routing guess on. Say that honestly rather than guessing.' };
         }
-        var groups = this._tally(r.matches, 'assignment_group');
+        // vote on the group's sys_id, speak its name: two groups can share a
+        // name, and pooling their votes would route to the one with fewer
+        var names = {}, voting = [];
+        for (var gv = 0; gv < r.matches.length; gv++) {
+            var gname = String(r.matches[gv].assignment_group || '').trim();
+            if (!gname || !r.matches[gv].group_id) continue;
+            names[r.matches[gv].group_id] = gname;
+            voting.push(r.matches[gv]);
+        }
+        var groups = this._tally(voting, 'group_id');
+        for (var gt = 0; gt < groups.length; gt++) { groups[gt].group_id = groups[gt].value; groups[gt].value = names[groups[gt].value]; }
         var cats   = this._tally(r.matches, 'category');
         var prios  = this._tally(r.matches, 'priority');
         var top = groups[0];
-        var pickEvidence = [];
+        var pickEvidence = [], sameName = false;
         if (top) {
             for (var i = 0; i < r.matches.length && pickEvidence.length < 3; i++) {
-                if (String(r.matches[i].assignment_group || '').trim() === top.value) pickEvidence.push(r.matches[i].number);
+                if (r.matches[i].group_id === top.group_id) pickEvidence.push(r.matches[i].number);
             }
+            for (var gk in names) if (names.hasOwnProperty(gk) && gk !== top.group_id && names[gk] === top.value) sameName = true;
         }
         // how many lookalikes actually carry a group. sample_size counts
         // unassigned lookalikes too (they cast no vote), so "confident" can
         // rest on a single voter; callers that WRITE should check this
-        var voters = 0;
-        for (var vi = 0; vi < r.matches.length; vi++) {
-            if (String(r.matches[vi].assignment_group || '').trim()) voters++;
-        }
+        var voters = voting.length;
         var evidence = [];
         for (var e = 0; e < r.matches.length && e < 3; e++) {
             var m = r.matches[e];
@@ -568,7 +580,8 @@ NetraSemantic.prototype = {
             personal_pick: null,
             evidence: evidence,
             pick_evidence: pickEvidence,
-            group_ids: r.group_ids || {},
+            // another lookalike group has the pick's exact name
+            same_name: sameName,
             stats: r.stats,
             message: 'Say it like a colleague would: "tickets like this usually go to X" with the share as a rough word (most / about half / some), name one example ticket, then ASK before actually assigning anything.'
         };
@@ -632,4 +645,4 @@ NetraSemantic.prototype = {
 
     type: 'NetraSemantic'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 19:14:52</sys_created_on><sys_id>8564f84593af87d0e3aef0aefaba10ca</sys_id><sys_mod_count>0</sys_mod_count><sys_name>NetraSemantic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_8564f84593af87d0e3aef0aefaba10ca</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 19:14:52</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 19:14:52</sys_created_on><sys_id>8564f84593af87d0e3aef0aefaba10ca</sys_id><sys_mod_count>1</sys_mod_count><sys_name>NetraSemantic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_8564f84593af87d0e3aef0aefaba10ca</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 05:43:43</sys_updated_on></sys_script_include></record_update>

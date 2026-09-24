@@ -100,9 +100,10 @@ Proactive scan check:
 ## Path B — Update Set XML (v7.0 batch, RECOMMENDED)
 
 The complete app ships as ONE file now: `update-set/Netra_v7.0_Batch.xml`
-(parent "Netra - v7.0" + six children, ~390 updates - tables including the
-v7 quota ledger and mission items, 15 script includes, widget + page, REST
-API, automation, app shell, properties and the navigator menu).
+(parent "Netra - v7.0" + six children, ~410 updates - tables including the
+v7 quota ledger and mission items, 16 script includes, widget + page, REST
+API, automation, app shell, properties including the trust settings, and
+the navigator menu).
 
 1. *System Update Sets → Retrieved Update Sets → Import Update Set from XML*
 2. Upload `Netra_v7.0_Batch.xml`

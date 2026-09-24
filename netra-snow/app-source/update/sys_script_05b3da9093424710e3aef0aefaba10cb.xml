@@ -180,6 +180,15 @@
             gs.info('[NetraNotify]   skipped ' + userName + ' (is author of comment, field=' + fieldName + ')');
             continue;
         }
+        if (!_wantsComments(userSysId)) {
+            gs.info('[NetraNotify]   skipped ' + userName + ' (no Netra pref, or comment alerts off)');
+            continue;
+        }
+        // work notes are internal: a caller or watcher must never hear one read aloud
+        if (element == 'work_notes' && !_isFulfiller(userSysId)) {
+            gs.info('[NetraNotify]   skipped ' + userName + ' (work note, not a fulfiller)');
+            continue;
+        }
 
         var inserted = _enqueue(userSysId, recordId, num, spokenNum, kindLabel,
                                  body, authorDisplay, element, tableLabel);
@@ -211,5 +220,26 @@
         return String(n.insert() || '');
     }
 
+    // booleans read back '1'/'0' through getValue on the platform
+    function _off(v) { v = String(v); return v === '0' || v === 'false'; }
+
+    function _wantsComments(userSysId) {
+        var p = new GlideRecord('x_196061_netra_v1_user_pref');
+        p.addQuery('user', userSysId);
+        p.setLimit(1);
+        p.query();
+        return p.next() && !_off(p.getValue('active')) && !_off(p.getValue('watch_comments'));
+    }
+
+    function _isFulfiller(userSysId) {
+        var roles = String(gs.getProperty('x_196061_netra_v1.fulfiller_roles', 'itil,admin,sn_incident_read,sn_incident_write')).replace(/\s+/g, '');
+        var hr = new GlideRecord('sys_user_has_role');
+        hr.addQuery('user', userSysId);
+        hr.addQuery('role.name', 'IN', roles);
+        hr.setLimit(1);
+        hr.query();
+        return hr.next();
+    }
+
 })(current, previous);
-]]></script><sys_class_name>sys_script</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:41</sys_created_on><sys_domain>global</sys_domain><sys_domain_path>/</sys_domain_path><sys_id>05b3da9093424710e3aef0aefaba10cb</sys_id><sys_mod_count>0</sys_mod_count><sys_name>Netra Notify On Comment</sys_name><sys_overrides/><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_05b3da9093424710e3aef0aefaba10cb</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-09 04:41:41</sys_updated_on><template/><when>async</when></sys_script><sys_translated_text action="delete_multiple" query="documentkey=05b3da9093424710e3aef0aefaba10cb"/></record_update>
+]]></script><sys_class_name>sys_script</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:41</sys_created_on><sys_domain>global</sys_domain><sys_domain_path>/</sys_domain_path><sys_id>05b3da9093424710e3aef0aefaba10cb</sys_id><sys_mod_count>1</sys_mod_count><sys_name>Netra Notify On Comment</sys_name><sys_overrides/><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_05b3da9093424710e3aef0aefaba10cb</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 05:34:39</sys_updated_on><template/><when>async</when></sys_script><sys_translated_text action="delete_multiple" query="documentkey=05b3da9093424710e3aef0aefaba10cb"/></record_update>

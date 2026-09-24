@@ -30,6 +30,9 @@
  *  - every write is re-read; a write that didnt stick is reported as such
  *  - undo only touches tickets nobody has touched since we did
  *  - duplicates are reported, never merged
+ *  - only someone allowed to read and change incidents can start, apply,
+ *    read or undo one; the queue snapshot holds only tickets they can read
+ *  - priority is only ever raised, never on a P1/P2, never to P1
  *  - 48h expiry, reported out loud, never silent
  *
  * Concurrency: header lease (write-then-reread token in condition_json) so
@@ -87,6 +90,7 @@ NetraMissionRunner.prototype = {
             return { ok: false, count: 0, oldest: null, eta_minutes: 0,
                      message: 'Missions are not installed yet - the ' + this.ITEM + ' table is missing, so I cannot start one.' };
         }
+        if (!this._mayTriage()) return { ok: false, count: 0, oldest: null, eta_minutes: 0, message: this._noTriage('I did not start a mission') };
         var live = this._liveMission(userSysId);
         if (live) {
             return { ok: false, existing: String(live.nt_number), count: 0, oldest: null, eta_minutes: 0,
@@ -114,6 +118,7 @@ NetraMissionRunner.prototype = {
     launch: function (userSysId, utterance) {
         if (!userSysId) return { ok: false, error: 'No user to run the mission for.' };
         if (!this._itemTableOk()) return { ok: false, error: 'Missions are not installed yet - the ' + this.ITEM + ' table is missing. Nothing started.' };
+        if (!this._mayTriage()) return { ok: false, error: this._noTriage('I did not start a mission') };
         var live = this._liveMission(userSysId);
         if (live) return { ok: false, existing: String(live.nt_number), error: this._missionName(live.nt_number) + ' is already on the unassigned queue.' };
         var q = this._queue(this.MAX_ITEMS);
@@ -230,8 +235,8 @@ NetraMissionRunner.prototype = {
         var st = String(m.state);
         var act = String(action || '').toLowerCase();
         var self = this;
-        var c = this._cond(m);
-        var counts = c.counts || {};
+        // from the items, not the header: a pass mid-apply has not committed its counts yet
+        var counts = this._recount(m.getUniqueValue());
 
         if (act === 'pause') {
             if (st !== 'running' && st !== 'applying') {
@@ -266,13 +271,12 @@ NetraMissionRunner.prototype = {
                 fresh.state = 'cancelled';
                 cond.lease_until_ms = 0;
                 cond.lease_owner = '';
+                // clearing the lease refuses a running pass's own count write
+                cond.counts = counts;
                 self._log(fresh, 'cancelled by ' + self._name(userSysId));
             });
-            var applied = counts.applied || 0;
             return { ok: true, state: 'cancelled',
-                     message: name + ' cancelled. ' + (applied
-                        ? this._plural(applied, 'routing') + ' it already applied stay as they are - say undo mission ' + this._digits(m.nt_number) + ' if you want those back.'
-                        : 'It never changed a ticket.') };
+                     message: name + ' cancelled. ' + (this._changedPhrase(counts, m.nt_number) || 'It never changed a ticket.') };
         }
         return { ok: false, error: 'I can pause, resume or cancel a mission.' };
     },
@@ -303,6 +307,7 @@ NetraMissionRunner.prototype = {
         if (!this.writesEnabled()) {
             return { ok: false, confident_count: 0, error: 'Ticket writes are switched off right now, so I cannot apply anything. Nothing changed.' };
         }
+        if (!this._mayTriage()) return { ok: false, confident_count: 0, error: this._noTriage('I did not apply anything. Nothing changed') };
         var fresh = this._recount(m.getUniqueValue());
         var n = fresh.confident_pending;
         if (!n) return { ok: false, confident_count: 0, error: name + ' has nothing confident enough to apply.' };
@@ -310,7 +315,8 @@ NetraMissionRunner.prototype = {
         this._commit(m.getUniqueValue(), null, function (h, cond) {
             h.state = 'applying';
             cond.phase = 'apply';
-            cond.apply = { by: String(userSysId), at_ms: self._now(), count: n };
+            // checked in the user's own session; the scanner job that writes is not them
+            cond.apply = { by: String(userSysId), at_ms: self._now(), count: n, entitled: true };
             cond.counts = fresh;
             cond.wait = null;
             self._log(h, 'apply authorised by ' + self._name(userSysId) + ' for ' + self._plural(n, 'confident routing'));
@@ -330,6 +336,7 @@ NetraMissionRunner.prototype = {
     report: function (nt, userSysId, page) {
         var m = this._findMission(nt, userSysId);
         if (!m) return { ok: false, error: 'No mission ' + this._digits(this._ntKey(nt) || nt) + ' of yours.' };
+        if (!this._mayTriage()) return { ok: false, error: this._noTriage('I can not read you its report') };
         var rows = this._itemRows(m.getUniqueValue());
         var done = [];
         for (var i = 0; i < rows.length; i++) {
@@ -341,11 +348,14 @@ NetraMissionRunner.prototype = {
         var items = [], lines = [];
         for (var j = 0; j < slice.length; j++) {
             var f = slice[j].findings || {};
+            // a failed routing can still leave a change of ours in place
+            var kept = [], ku = slice[j].state === 'error' ? this._parse(slice[j].undo) : null;
+            if (ku && ku.restore) for (var kf in ku.restore) if (ku.restore.hasOwnProperty(kf)) kept.push(kf.replace('_', ' '));
             var item = {
                 number: slice[j].target_number, short_description: f.sd || '', state: slice[j].state,
                 proposal: f.proposal || null, duplicate_of: f.duplicate_of || null, known_fix: f.known_fix || null,
                 skip_reason: f.skip_reason || '', applied: f.applied || null, error: f.error || f.apply_error || '',
-                undone: !!f.undone
+                undone: !!f.undone, coverage: f.coverage || null, kept: kept
             };
             items.push(item);
             lines.push(this.reportLine(item));
@@ -373,6 +383,7 @@ NetraMissionRunner.prototype = {
         if (!this.writesEnabled()) {
             return { ok: false, restored: 0, skipped_touched: 0, error: 'Ticket writes are switched off, so I cannot undo right now. Nothing changed.' };
         }
+        if (!this._mayTriage()) return { ok: false, restored: 0, skipped_touched: 0, error: this._noTriage('I can not undo it. Nothing changed') };
         var self = this;
         var mid = m.getUniqueValue();
         var st0 = String(m.state), c0 = this._cond(m);
@@ -602,6 +613,11 @@ NetraMissionRunner.prototype = {
             if (bad) return this._itemFailed(it, f, attempts, bad);
 
             var nf = this.buildFindings(f.sd, tri, dup, fix, inMission, this._now());
+            // what the report reads out and the only priority apply may move from
+            nf.proposal.cur_priority = String(t.getValue('priority') || '');
+            // how much history the routing vote really saw: a cold cache is not "nothing similar"
+            var ts = tri.stats || {};
+            nf.coverage = { scored: (ts.cached || 0) + (ts.embedded_now || 0), skipped: (ts.skipped_uncached || 0) + (ts.embed_errors || 0) };
             nf.embeds = { live: this.LIVE_EMBEDS_PER_ITEM - budget + this._liveUsed(fix) };
             nf.src = this._srcSummary({ tri: tri, dup: dup, fix: fix });
             var degraded = this._degraded([tri, dup, fix]);
@@ -659,6 +675,10 @@ NetraMissionRunner.prototype = {
     _applyPass: function (m, token, out) {
         var mid = m.getUniqueValue();
         var cond = this._cond(m);
+        if (!cond.apply || !cond.apply.entitled) {
+            this._finishApply(mid, token, null, 'nothing shows the person who said apply may change incidents', out);
+            return;
+        }
         var auth = (cond.apply && cond.apply.by) || String(m.user);
         var authName = this._name(auth);
         var ntNum = String(m.nt_number);
@@ -704,11 +724,15 @@ NetraMissionRunner.prototype = {
         // if our group is on the ticket, that was us - finish the paperwork
         var pend = this._parse(it.getValue('undo_json'));
         if (pend && pend.pending && pend.set && String(t.getValue('assignment_group') || '') === pend.set.assignment_group) {
-            if (cur !== atReview + 1) {
+            // our one write set exactly pend.set and never an assignee - a person
+            // picking it up to the same group looks alike, and undo would strip them
+            var ours = !t.getValue('assigned_to');
+            for (var ps in pend.set) if (pend.set.hasOwnProperty(ps) && String(t.getValue(ps) || '') !== String(pend.set[ps])) ours = false;
+            if (cur !== atReview + 1 || !ours) {
                 // our write is ONE update. anything more means a person (or a
                 // rule) also touched it - cant tell our change from theirs, so
                 // no undo record that could later stomp their edit
-                return this._applyError(it, f, 'a scan stopped mid-write and the ticket shows more changes than my one write, so I cannot tell my change from anyone else\'s - check it yourself', null);
+                return this._applyError(it, f, 'a scan stopped mid-write and the ticket shows changes that are not just my one write, so I cannot tell my change from anyone else\'s - check it yourself', null);
             }
             delete pend.pending;
             pend.mod_after = cur;
@@ -763,16 +787,21 @@ NetraMissionRunner.prototype = {
         if (setCat && !catDone) notes.push('category did not stick (reads ' + (gotC || 'empty') + ')');
 
         var prioDone = '';
-        if (p.priority && p.priority_share >= this.APPLY_SHARE && String(chk.priority) !== String(p.priority)) {
-            if (String(p.priority) === '1') {
-                notes.push('left priority 1 for a person to decide');
-            } else if (!this.writesEnabled()) {
+        var curP = String(chk.getValue('priority') || '');
+        // only the raise the report and the apply read-back announced: never
+        // lower a priority, never touch a P1/P2, never set P1
+        var prioTo = (p.cur_priority === curP) ? this.priorityRaise(p, curP) : '';
+        if (!prioTo && p.priority && p.priority_share >= this.APPLY_SHARE && String(p.priority) !== curP) {
+            notes.push('left priority ' + (curP || 'empty') + ' as it was' + (String(p.priority) === '1' ? ' - priority 1 is for a person to decide' : ''));
+        }
+        if (prioTo) {
+            if (!this.writesEnabled()) {
                 notes.push('priority held: ticket writes were switched off');
             } else {
                 var PF = ['priority', 'impact', 'urgency'];
                 var pBefore = {};
                 for (var pb = 0; pb < PF.length; pb++) if (chk.isValidField(PF[pb])) pBefore[PF[pb]] = String(chk.getValue(PF[pb]) || '');
-                var pr = new NetraTaskRunner().setPriority(chk, String(p.priority));
+                var pr = new NetraTaskRunner().setPriority(chk, prioTo);
                 var pc = this._get(table, sysId);
                 if (pr.ok) {
                     for (var k in pr.before) {
@@ -780,8 +809,8 @@ NetraMissionRunner.prototype = {
                         undo.restore[k] = pr.before[k];
                         if (pc) undo.set[k] = String(pc.getValue(k) || '');
                     }
-                    undo.set.priority = String(p.priority);
-                    prioDone = String(p.priority);
+                    undo.set.priority = prioTo;
+                    prioDone = prioTo;
                 } else {
                     // setPriority can give up AFTER moving impact/urgency (the
                     // matrix route) and returns no before-values then. whatever
@@ -840,13 +869,12 @@ NetraMissionRunner.prototype = {
             ntNum = String(h.nt_number);
             cond.counts = counts;
             cond.passes = (cond.passes || 0) + 1;
-            if (counts.applied) h.undo_json = JSON.stringify({ mission: ntNum, applied: counts.applied, undo: 'undo mission' });
+            if (counts.applied || counts.apply_partial) h.undo_json = JSON.stringify({ mission: ntNum, applied: counts.applied, undo: 'undo mission' });
             if (fatal) {
                 h.state = 'error';
                 self._log(h, 'ERROR: ' + fatal);
                 notify = self._missionName(ntNum) + ' hit a problem and stopped: ' + fatal + '. ' +
-                         (counts.applied ? self._plural(counts.applied, 'routing') + ' it already applied stay - say undo mission ' + self._digits(ntNum) + ' to reverse them.'
-                                         : 'Nothing was changed.');
+                         (self._changedPhrase(counts, ntNum) || 'Nothing was changed.');
                 return;
             }
             if (hold) {
@@ -863,8 +891,9 @@ NetraMissionRunner.prototype = {
                 h.state = 'done';
                 cond.phase = 'done';
                 self._log(h, 'applied ' + self._plural(counts.applied, 'routing') +
-                             (counts.apply_skipped ? ', ' + counts.apply_skipped + ' skipped because someone changed them after my review' : ''),
-                          counts.applied ? { undoable: true } : null);
+                             (counts.apply_skipped ? ', ' + counts.apply_skipped + ' skipped because someone changed them after my review' : '') +
+                             (counts.apply_failed ? ', ' + counts.apply_failed + ' could not be routed' : ''),
+                          (counts.applied || counts.apply_partial) ? { undoable: true } : null);
                 notify = self.applyDoneMessage(ntNum, counts);
             }
         });
@@ -1042,17 +1071,21 @@ NetraMissionRunner.prototype = {
     _failMission: function (mid, why, out) {
         var self = this, notify = null, userId = '', ntNum = '';
         try {
+            // the header counts date from the last finished pass; a pass that
+            // threw mid-apply may have routed tickets since
+            var counts = null;
+            try { counts = this._recount(mid); } catch (eC) {}
             var ok = this._commit(mid, null, function (h, cond) {
                 userId = String(h.user);
                 ntNum = String(h.nt_number);
-                var applied = (cond.counts && cond.counts.applied) || 0;
+                if (counts) cond.counts = counts;
+                if (counts && (counts.applied || counts.apply_partial)) h.undo_json = JSON.stringify({ mission: ntNum, applied: counts.applied, undo: 'undo mission' });
                 h.state = 'error';
                 cond.lease_until_ms = 0;
                 cond.lease_owner = '';
                 self._log(h, 'ERROR: ' + why);
                 notify = self._missionName(ntNum) + ' hit a problem and stopped: ' + why + '. ' +
-                         (applied ? self._plural(applied, 'routing') + ' it already applied stay - say undo mission ' + self._digits(ntNum) + ' to reverse them.'
-                                  : 'Nothing was changed.');
+                         (self._changedPhrase(cond.counts || {}, ntNum) || 'Nothing was changed.');
             });
             if (ok && notify) {
                 this._notifyUser(userId, ntNum, notify);
@@ -1073,7 +1106,8 @@ NetraMissionRunner.prototype = {
      */
     countsFrom: function (rows) {
         var c = { total: 0, processed: 0, reviewed: 0, skipped: 0, confident: 0, duplicates: 0, known_fix: 0,
-                  applied: 0, error: 0, queued: 0, working: 0, apply_skipped: 0, confident_pending: 0 };
+                  applied: 0, error: 0, queued: 0, working: 0, apply_skipped: 0, confident_pending: 0,
+                  apply_failed: 0, apply_partial: 0, priority_raise: 0, cold: 0 };
         for (var i = 0; i < rows.length; i++) {
             var st = rows[i].state;
             var f = rows[i].findings || {};
@@ -1089,9 +1123,18 @@ NetraMissionRunner.prototype = {
                 if (f.proposal.confident) c.confident++;
                 if (f.duplicate_of) c.duplicates++;
                 if (f.known_fix) c.known_fix++;
-                if (st === 'reviewed' && f.proposal.confident && !f.undone) c.confident_pending++;
+                if (st === 'reviewed' && f.proposal.confident && !f.undone) {
+                    c.confident_pending++;
+                    if (this.priorityRaise(f.proposal, f.proposal.cur_priority)) c.priority_raise++;
+                }
+                if (this._isCold(f.coverage)) c.cold++;
             }
             if (f.apply_skip) c.apply_skipped++;
+            // an authorised routing that did not stick; partial = a change of ours stayed anyway
+            if (st === 'error' && f.apply_error) {
+                c.apply_failed++;
+                if (rows[i].undo) c.apply_partial++;
+            }
         }
         return c;
     },
@@ -1103,7 +1146,8 @@ NetraMissionRunner.prototype = {
         if (tri && tri.instance_pick) {
             p.group = tri.instance_pick.value;
             p.group_share = tri.instance_pick.share;
-            p.group_id = (tri.group_ids && tri.group_ids[p.group]) || '';
+            // the sys_id that won the vote - never looked up by name
+            p.group_id = tri.instance_pick.group_id || '';
         }
         if (tri && tri.category && tri.category.length) { p.category = tri.category[0].value; p.category_share = tri.category[0].share; }
         if (tri && tri.priority && tri.priority.length) { p.priority = tri.priority[0].value; p.priority_share = tri.priority[0].share; }
@@ -1118,7 +1162,10 @@ NetraMissionRunner.prototype = {
         // minimum, so one assigned ticket could route a whole batch. require
         // three lookalikes that actually carry a group
         p.voters = (tri && typeof tri.voters === 'number') ? tri.voters : 0;
-        p.confident = !!(tri && tri.confident && p.group_id && p.voters >= this.MIN_VOTERS);
+        // two lookalike groups share the winner's name: by ear nobody can tell
+        // which one "send to Network" means, so it is never routed blind
+        p.same_name = !!(tri && tri.same_name);
+        p.confident = !!(tri && tri.confident && p.group_id && p.voters >= this.MIN_VOTERS && !p.same_name);
         f.proposal = p;
 
         var dups = (dup && dup.duplicates) || [];
@@ -1145,6 +1192,27 @@ NetraMissionRunner.prototype = {
         if (!dups || !dups.length) return null;
         for (var i = 0; i < dups.length; i++) if (!inMission[dups[i].sys_id]) return dups[i];
         return dups[0];
+    },
+
+    /**
+     * The one priority move a mission may make: the lookalikes' majority,
+     * only when it RAISES a ticket nobody has rated P1/P2 yet, never to P1.
+     * -> the new priority, or '' for "leave it"
+     */
+    priorityRaise: function (p, cur) {
+        if (!p || !p.priority || !(p.priority_share >= this.APPLY_SHARE)) return '';
+        var to = this._int(p.priority), from = this._int(cur);
+        if (to < 2 || from <= 2 || to >= from) return '';
+        return String(to);
+    },
+
+    // "apply the confident ones" read-back: says whether any priority moves
+    applyReadBack: function (n, raise) {
+        var prio = raise
+            ? 'and raise the priority on ' + (raise === n ? (n === 1 ? 'it' : 'all ' + n) : raise + ' of them')
+            : 'priorities stay as they are';
+        return 'I will route ' + this._plural(n, 'ticket') + ' the way the history suggests - group and category, ' + prio +
+               ' - re-reading each one, adding a work note, and skipping any that someone touched since my review. Duplicates I only report, never merge. Shall I?';
     },
 
     workNote: function (ntNum, p, f, catDone, prioDone, authName) {
@@ -1192,22 +1260,28 @@ NetraMissionRunner.prototype = {
             if (c.error) s += ' ' + c.error + ' I could not review.';
         } else if (state === 'awaiting_apply') {
             s = name + ' finished reviewing all ' + total + ': ' + this._findingsPhrase(c) +
-                '. Nothing has changed yet - say apply the confident ones when you are ready.';
+                '. Nothing has changed yet - say apply the confident ones when you are ready.' + this._coldPhrase(c);
         } else if (state === 'applying') {
-            s = name + ' is applying: ' + applied + ' of ' + (applied + (c.confident_pending || 0)) + ' confident routings done' +
-                (c.apply_skipped ? ', ' + c.apply_skipped + ' skipped because someone changed them after my review' : '') + '.';
+            // out of everything authorised, failures and skips included
+            var authorised = applied + (c.confident_pending || 0) + (c.apply_failed || 0) + (c.apply_skipped || 0);
+            s = name + ' is applying: ' + applied + ' of ' + authorised + ' confident routings done' +
+                (c.apply_skipped ? ', ' + c.apply_skipped + ' skipped because someone changed them after my review' : '') + '.' +
+                this._failedPhrase(c);
         } else if (state === 'paused') {
             s = name + ' is paused at ' + processed + ' of ' + total + ' reviewed' + (phase === 'apply' ? ', ' + applied + ' applied' : '') +
                 '. Say resume mission ' + this._digits(nt) + ' to carry on.';
         } else if (state === 'done') {
-            s = name + ' is done: ' + (applied ? this._plural(applied, 'routing') + ' applied' : 'reviewed ' + (c.reviewed || 0) + ', nothing applied') +
-                (c.apply_skipped ? ', ' + c.apply_skipped + ' skipped because someone changed ' + (c.apply_skipped === 1 ? 'it' : 'them') + ' after my review' : '') + '.';
+            s = name + ' is done: ' + (applied ? this._plural(applied, 'routing') + ' applied'
+                                               : 'reviewed ' + (c.reviewed || 0) + ', ' + (c.apply_failed ? 'no routing applied' : 'nothing applied')) +
+                (c.apply_skipped ? ', ' + c.apply_skipped + ' skipped because someone changed ' + (c.apply_skipped === 1 ? 'it' : 'them') + ' after my review' : '') + '.' +
+                this._failedPhrase(c) + (applied || c.apply_failed ? '' : this._coldPhrase(c));
         } else if (state === 'cancelled') {
             s = name + ' was cancelled at ' + processed + ' of ' + total + ' reviewed' + (applied ? ', ' + applied + ' applied' : '') + '.';
         } else if (state === 'expired') {
             s = name + ' expired after ' + this.EXPIRY_H + ' hours at ' + processed + ' of ' + total + ' reviewed' + (applied ? ', ' + applied + ' applied' : '') + '.';
         } else {
-            s = name + ' stopped with an error at ' + processed + ' of ' + total + ' reviewed.';
+            var left = this._changedPhrase(c, nt);
+            s = name + ' stopped with an error at ' + processed + ' of ' + total + ' reviewed.' + (left ? ' ' + left : '');
         }
         if (wait && wait.until_ms) {
             var mins = wait.minutes_left || 1;
@@ -1229,15 +1303,44 @@ NetraMissionRunner.prototype = {
                 (c.error ? ', ' + c.error + ' I could not review' : '') + '.';
         if (c.confident_pending) s += ' Nothing has changed yet. Say read the mission report, or apply the confident ones.';
         else s += ' Nothing is confident enough to apply, so it is done. Say read the mission report to hear the proposals.';
-        return s;
+        return s + this._coldPhrase(c);
     },
 
     applyDoneMessage: function (nt, c) {
         var name = this._missionName(nt);
         var s = name + ' applied ' + this._plural(c.applied || 0, 'confident routing') + ', each re-read to confirm it stuck.';
         if (c.apply_skipped) s += ' ' + c.apply_skipped + ' skipped because someone changed ' + (c.apply_skipped === 1 ? 'it' : 'them') + ' after my review.';
-        if (c.applied) s += ' Say undo mission ' + this._digits(nt) + ' to put them back.';
+        s += this._failedPhrase(c);
+        if (c.applied || c.apply_partial) s += ' Say undo mission ' + this._digits(nt) + ' to put them back.';
         return s;
+    },
+
+    // authorised routings that did not stick, and any change of ours they kept
+    _failedPhrase: function (c) {
+        var n = c.apply_failed || 0, k = c.apply_partial || 0;
+        if (!n) return '';
+        return ' ' + n + ' could not be routed' +
+               (k ? (k === n ? (n === 1 ? ', but it' : ', but all of them') : ', but ' + k + ' of them') + ' kept a category or priority change of mine' : '') +
+               ' - say read the mission report for why.';
+    },
+
+    // a stopped mission leaves its changes in place until undone - never "nothing changed"
+    _changedPhrase: function (c, nt) {
+        var n = (c.applied || 0) + (c.apply_partial || 0);
+        if (!n) return '';
+        return this._plural(n, 'ticket') + ' it already changed ' + (n === 1 ? 'stays' : 'stay') + ' as ' + (n === 1 ? 'it is' : 'they are') +
+               ' - say undo mission ' + this._digits(nt) + ' to put ' + (n === 1 ? 'it' : 'them') + ' back.';
+    },
+
+    _isCold: function (cov) {
+        return !!(cov && cov.skipped > cov.scored);
+    },
+
+    _coldPhrase: function (c) {
+        var n = c.cold || 0;
+        if (!n) return '';
+        return ' My ticket memory was still cold for ' + (n === (c.reviewed || 0) ? (n === 1 ? 'it' : 'all of them') : n + ' of them') +
+               ', so I compared ' + (n === 1 ? 'it' : 'them') + ' with only a few past tickets - say reindex my tickets, then run the mission again.';
     },
 
     reportLine: function (item) {
@@ -1246,23 +1349,44 @@ NetraMissionRunner.prototype = {
         if (item.state === 'error' && !item.proposal) return head + ': I could not review it - ' + (item.error || 'unknown error') + '.';
         var p = item.proposal || {};
         var s;
+        // a cold cache compared it with a handful of tickets: that says nothing about the history
+        var cold = this._isCold(item.coverage)
+            ? 'I could only compare it with ' + this._plural(item.coverage.scored || 0, 'past ticket') + ' - my ticket memory is still cold' : '';
         if (item.state === 'applied' && item.applied) {
-            s = head + ': routed to ' + item.applied.group + ', checked and it stuck.';
+            s = head + ': routed to ' + item.applied.group + (item.applied.category ? ', category ' + item.applied.category : '') +
+                (item.applied.priority ? ', priority raised to ' + item.applied.priority : '') + ', checked and it stuck.';
         } else if (!p.group) {
-            s = head + (p.sample_size
+            s = head + (cold ? ': ' + cold + ', so no routing guess.'
+                : p.sample_size
                 ? ': the lookalikes I found were never assigned to a group, so no routing guess.'
                 : ': nothing similar in the history, so no routing guess.');
         } else if (p.confident) {
+            // a raise still to come; a failed or undone one never happened
+            var raise = (item.state === 'reviewed' && !item.undone) ? this.priorityRaise(p, p.cur_priority) : '';
             s = head + ': send to ' + p.group + (p.category && p.category_share >= this.APPLY_SHARE ? ', category ' + p.category : '') +
+                (raise ? ', priority up from ' + p.cur_priority + ' to ' + raise : '') +
                 (p.evidence && p.evidence.length ? ', like ' + this._list(p.evidence) : '') + '.';
+        } else if (p.same_name) {
+            s = head + ': best guess ' + p.group + ', but more than one group is called ' + p.group + ', so I will not route it blind.';
+        } else if (cold) {
+            s = head + ': best guess ' + p.group + ', but ' + cold + '.';
         } else {
             // not confident = split votes OR too few lookalikes with a group
             s = head + ': best guess ' + p.group + ', but the history behind it is too thin or too split to route it blind.';
         }
         if (item.undone) s += ' I routed it, then put it back when you said undo.';
         if (item.state === 'error' && item.error) s += ' Applying it failed: ' + item.error + '.';
+        if (item.state === 'error' && item.kept && item.kept.length) {
+            s += ' My ' + this._list(item.kept) + ' change on it stayed - undoing the mission puts it back.';
+        }
         if (item.duplicate_of) s += ' Looks like a duplicate of ' + item.duplicate_of.number + '.';
-        if (item.known_fix) s += ' A similar resolved one, ' + item.known_fix.number + ', was closed with: ' + String(item.known_fix.close_notes).substring(0, 160);
+        if (item.known_fix) {
+            // quoted and ended, or the next ticket's number runs on as part of this fix
+            var full = String(item.known_fix.close_notes || '');
+            var cn = full.substring(0, 160);
+            if (full.length > 160) cn = cn.replace(/\s+\S*$/, '');
+            s += ' A similar resolved one, ' + item.known_fix.number + ', was closed with: "' + cn.replace(/[\s.]+$/, '') + '".';
+        }
         return s;
     },
 
@@ -1327,7 +1451,9 @@ NetraMissionRunner.prototype = {
             src.rows = 1;
         });
         var srcRows = this._source(sources, 'queue_rows', function (src) {
-            var gr = new GlideRecord(self.QUEUE_TABLE);
+            // runs in the user's session (preview, launch): the snapshot holds
+            // only tickets THEY may read, so the report never speaks the rest
+            var gr = new GlideRecordSecure(self.QUEUE_TABLE);
             if (!gr.isValid()) { src.status = 'blocked'; src.error = self.QUEUE_TABLE + ' not readable'; return; }
             gr.addEncodedQuery(self.QUEUE_QUERY);
             gr.orderBy('opened_at');
@@ -1345,8 +1471,9 @@ NetraMissionRunner.prototype = {
                      message: 'I could not read the incident queue from here (' + srcRows.status + (srcRows.error ? ': ' + srcRows.error : '') +
                               '), so I cannot tell you what is unassigned. That is an access problem, not an empty queue.' };
         }
-        if (srcCount.status !== 'ok' || total < rows.length || isNaN(total)) {
-            // count failed or disagrees - fall back to what we actually read
+        if (srcCount.status !== 'ok' || total < rows.length || isNaN(total) || rows.length < limit) {
+            // count failed or disagrees - fall back to what we actually read.
+            // a short read is every row the user may see; the aggregate is not ACL-checked
             total = rows.length;
         }
         return { ok: true, rows: rows, total: total, sources: sources };
@@ -1429,6 +1556,19 @@ NetraMissionRunner.prototype = {
 
     _itemTableOk: function () {
         try { return new GlideRecord(this.ITEM).isValid(); } catch (e) { return false; }
+    },
+
+    // checked in the user's own session (widget calls). reviews and writes run
+    // later in the scanner job, which is not them - this is their only check
+    _mayTriage: function () {
+        try {
+            var p = new GlideRecordSecure(this.QUEUE_TABLE);
+            return !!(p.canRead() && p.canWrite());
+        } catch (e) { return false; }
+    },
+
+    _noTriage: function (tail) {
+        return 'You do not have permission to work the incident queue, so ' + tail + '.';
     },
 
     _missionIds: function (states, orderField, limit) {
@@ -1614,4 +1754,4 @@ NetraMissionRunner.prototype = {
 
     type: 'NetraMissionRunner'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 19:14:55</sys_created_on><sys_id>65643c4593af87d0e3aef0aefaba1038</sys_id><sys_mod_count>1</sys_mod_count><sys_name>NetraMissionRunner</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_65643c4593af87d0e3aef0aefaba1038</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 19:18:41</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 19:14:55</sys_created_on><sys_id>65643c4593af87d0e3aef0aefaba1038</sys_id><sys_mod_count>2</sys_mod_count><sys_name>NetraMissionRunner</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_65643c4593af87d0e3aef0aefaba1038</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 05:43:42</sys_updated_on></sys_script_include></record_update>

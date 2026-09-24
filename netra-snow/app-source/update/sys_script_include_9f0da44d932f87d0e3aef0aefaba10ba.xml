@@ -65,11 +65,18 @@ NetraBrain.parse429 = function (bodyStr) {
         var d = details[i] || {};
         var t = String(d['@type'] || '');
         if (t.indexOf('QuotaFailure') >= 0 && d.violations && d.violations.length) {
-            var v = d.violations[0] || {};
-            out.quota_id = String(v.quotaId || '');
-            out.limit = parseInt(v.quotaValue, 10) || 0;
-            if (/PerDay/i.test(out.quota_id)) out.kind = 'per_day';
-            else if (/PerMinute/i.test(out.quota_id)) out.kind = 'per_minute';
+            // several quotas can trip at once; the daily one decides how long
+            // to rest, so it wins over a per-minute one listed first
+            for (var vi = 0; vi < d.violations.length; vi++) {
+                var v = d.violations[vi] || {};
+                var qid = String(v.quotaId || '');
+                var kind = /PerDay/i.test(qid) ? 'per_day' : (/PerMinute/i.test(qid) ? 'per_minute' : 'unknown');
+                if (out.kind === 'per_day') break;
+                if (kind === 'unknown' && out.kind !== 'unknown') continue;
+                out.kind = kind;
+                out.quota_id = qid;
+                out.limit = parseInt(v.quotaValue, 10) || 0;
+            }
         }
         if (t.indexOf('RetryInfo') >= 0 && d.retryDelay) {
             var s = parseFloat(String(d.retryDelay).replace(/[^0-9.]/g, ''));
@@ -131,6 +138,9 @@ NetraBrain.prototype = {
             r.day_key = today;
             r.used_today = 0;
             r.fails_today = 0;
+            // re-learned from the day's first per-day 429; clearing it heals
+            // rows that once stored a per-minute value as a daily cap
+            r.quota_limit = 0;
             if (r.reason === 'per_day' || r.reason === 'limit') { r.state = 'ok'; r.until_ms = 0; r.reason = ''; }
             // only persist a rollover for rows that exist - just LOOKING at a
             // model we never called shouldnt insert anything
@@ -181,7 +191,9 @@ NetraBrain.prototype = {
         var rest = 0, reason = '';
         if (code === 429) {
             var q = NetraBrain.parse429(body);
-            if (q.limit) r.quota_limit = q.limit;
+            // only a DAILY quota value is a daily cap; a per-minute value
+            // stored here would bench the model after 5 calls every day
+            if (q.kind === 'per_day' && q.limit) r.quota_limit = q.limit;
             if (q.kind === 'per_day') {
                 reason = 'per_day';
                 rest = NetraBrain.nextPtMidnightMs(nowMs) - nowMs;
@@ -262,4 +274,4 @@ NetraBrain.prototype = {
 
     type: 'NetraBrain'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 18:42:49</sys_created_on><sys_id>9f0da44d932f87d0e3aef0aefaba10ba</sys_id><sys_mod_count>0</sys_mod_count><sys_name>NetraBrain</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_9f0da44d932f87d0e3aef0aefaba10ba</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 18:42:49</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 18:42:49</sys_created_on><sys_id>9f0da44d932f87d0e3aef0aefaba10ba</sys_id><sys_mod_count>2</sys_mod_count><sys_name>NetraBrain</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_9f0da44d932f87d0e3aef0aefaba10ba</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 21:26:13</sys_updated_on></sys_script_include></record_update>

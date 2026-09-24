@@ -29,7 +29,11 @@
  */
 var NetraInvestigator = Class.create();
 NetraInvestigator.prototype = {
-    initialize: function () {
+    initialize: function (opts) {
+        // the widget reads tickets as the signed-in user (GlideRecordSecure,
+        // field ACLs on notes and audit); the scanner and task runner pass
+        // background:true
+        this.asUser = !(opts && opts.background);
         this.MAX_ITEMS = 25;
         this.RESERVE = 3;            // slots left for the widget's similar-resolved items
         this.H = 3600000;
@@ -67,7 +71,8 @@ NetraInvestigator.prototype = {
         this.ORD = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
         this.DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         this.MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        this.ROLLBACK_RE = /roll(?:ed|ing|s)?[\s\-]*back|revert|back(?:ed|ing)?[\s\-]*out|backout|\bund(?:o|id|one)\b/i;
+        // whole words only: "payroll backend" and "feedback outage" are not rollbacks
+        this.ROLLBACK_RE = /\broll(?:ed|ing|s)?[\s\-]*backs?\b|\bback(?:ed|ing)?[\s\-]*out\b|\bbackouts?\b|\brevert(?:ed|ing|s)?\b|\bund(?:o|id|one)\b/i;
         // record numbers a theory may name. also catches the spaced form a model
         // writes ("INC 0010013") - matches are compared with the space removed
         this.REC_RE = /\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK|CTASK|PTASK)(?:\d+|\s\d{4,})\b/gi;
@@ -93,6 +98,20 @@ NetraInvestigator.prototype = {
             'broken hours hour last past since please hey wrong server going on with there here is it\'s its ' +
             'did do does has have had been which who when where you your our can could would should dig digging ' +
             'keep while away doing today yesterday now just').split(' '));
+        // grading only: the rule templates' own words ("reassigned 4 times",
+        // "shared outage", "known or planned work") that any close note can echo
+        this.GRADE_STOP = {};
+        var gw = ('stuck process technical mystery reassigned unassigned times opened open hold waiting known already marked cmdb ' +
+                  'planned fault faults outage shared separate within hit depends beginning scheduled end ended progress ' +
+                  'implemented ago question').split(' ');
+        for (var gi = 0; gi < gw.length; gi++) this.GRADE_STOP[this._stem(gw[gi])] = 1;
+        // "not the apache upgrade" / "the apache upgrade was fine": a close-note
+        // word next to one of these rules a theory out, it does not confirm it
+        this.NEG = this._set(('not no never nothing without unrelated wasn\'t isn\'t weren\'t didn\'t doesn\'t ' +
+                              'wasn isn weren didn doesn').split(' '));
+        this.NEG_AFTER = this._set('unrelated innocent wasn\'t isn\'t weren\'t wasn isn weren'.split(' '));
+        this.COPULA = this._set('was is were are'.split(' '));
+        this.NEG_COPULA = this._set('not fine ok okay unrelated innocent'.split(' '));
     },
 
     // =================================================================
@@ -156,7 +175,7 @@ NetraInvestigator.prototype = {
                           REQ: 'sc_request', SCTASK: 'sc_task' };
         var gr = null, err = '';
         try {
-            var t = new GlideRecord('task');
+            var t = this._gr('task');
             t.addQuery('number', number);
             t.setLimit(1);
             t.query();
@@ -165,7 +184,7 @@ NetraInvestigator.prototype = {
         if (!gr && BY_PREFIX[prefix]) {
             // task read refused or odd install - try the concrete table once
             try {
-                var c = new GlideRecord(BY_PREFIX[prefix]);
+                var c = this._gr(BY_PREFIX[prefix]);
                 c.addQuery('number', number);
                 c.setLimit(1);
                 c.query();
@@ -174,7 +193,8 @@ NetraInvestigator.prototype = {
         }
         if (!gr) {
             return { ok: false, reason: err ? 'blocked' : 'not_found', number: number,
-                     message: err ? 'I could not read ' + number + ' (' + err + ').' : 'I could not find ' + number + '.' };
+                     message: err ? 'I could not read ' + number + ' (' + err + ').' :
+                              'I could not find ' + number + (this.asUser ? ', or you do not have access to it' : '') + '.' };
         }
         var table = this._str(gr, 'sys_class_name') || BY_PREFIX[prefix] || 'task';
         var ciId = this._str(gr, 'cmdb_ci');
@@ -315,6 +335,7 @@ NetraInvestigator.prototype = {
         res.ci_set = set.list;
 
         var lo = this._gdt(t0 - hours * this.H);
+        var hi = this._gdt(t0 + afterH * this.H);
         var pool = {};   // change sys_id -> best candidate
         var consider = function (chg, link, viaId, viaTaskNum, timeOverride) {
             var c = self._scoreCandidate(chg, link, t0, hours, afterH, timeOverride);
@@ -333,9 +354,9 @@ NetraInvestigator.prototype = {
 
         // 2a. change_request.cmdb_ci IN set
         this._run(res.sources, 'change_request', 'change_request', deadlineAt, function (src) {
-            var gr = new GlideRecord('change_request');
+            var gr = self._gr('change_request');
             gr.addQuery('cmdb_ci', 'IN', set.ids.join(','));
-            self._changeWindow(gr, lo);
+            self._changeWindow(gr, lo, hi);
             gr.orderByDesc('sys_updated_on');
             gr.setLimit(40);
             gr.query();
@@ -344,6 +365,7 @@ NetraInvestigator.prototype = {
                 var chg = self._readChange(gr);
                 consider(chg, linkFor(chg.cmdb_ci, 'direct'), chg.cmdb_ci, '', null);
             }
+            if (src.rows >= 40) src.capped = true;
         });
 
         // 2b. task_ci.ci_item IN set, only where the task is a change
@@ -357,26 +379,30 @@ NetraInvestigator.prototype = {
                 if (!byTask[rows[i].task]) { byTask[rows[i].task] = []; taskIds.push(rows[i].task); }
                 byTask[rows[i].task].push(rows[i].ci);
             }
-            var gr = new GlideRecord('change_request');   // only changes come back, whatever task_ci held
+            var gr = self._gr('change_request');   // only changes come back, whatever task_ci held
             gr.addQuery('sys_id', 'IN', taskIds.slice(0, 60).join(','));
-            self._changeWindow(gr, lo);
+            self._changeWindow(gr, lo, hi);
             gr.setLimit(40);
             gr.query();
+            var nc = 0;
             while (gr.next()) {
+                nc++;
                 var chg = self._readChange(gr);
                 var cis = byTask[chg.sys_id] || [];
                 for (var k = 0; k < cis.length; k++) consider(chg, linkFor(cis[k], 'affected_ci'), cis[k], '', null);
             }
+            if (nc >= 40 || rows.length >= 60) src.capped = true;
         });
 
         // 2c. change_task.cmdb_ci IN set, mapped to the parent change. the
         // task's own actual times win when it has them - that is when
         // someone actually touched this CI
         this._run(res.sources, 'change_task', 'change_task', deadlineAt, function (src) {
-            var gr = new GlideRecord('change_task');
+            var gr = self._gr('change_task');
             gr.addQuery('cmdb_ci', 'IN', set.ids.join(','));
             var qc = gr.addQuery('sys_updated_on', '>=', lo);
             qc.addOrCondition('active', true);
+            gr.addQuery('sys_created_on', '<=', hi);
             gr.orderByDesc('sys_updated_on');
             gr.setLimit(40);
             gr.query();
@@ -386,11 +412,13 @@ NetraInvestigator.prototype = {
                 var p = self._str(gr, 'change_request');
                 if (!p) continue;
                 var tt = self._activity(gr, ['work_end', 'work_start', 'closed_at']);
+                tt.win = self._window(gr, ['work_start'], ['work_end', 'closed_at']);
                 if (!byParent[p]) { byParent[p] = []; parents.push(p); }
                 byParent[p].push({ ci: self._str(gr, 'cmdb_ci'), number: self._str(gr, 'number'), time: tt });
             }
+            if (src.rows >= 40) src.capped = true;
             if (!parents.length) return;
-            var cr = new GlideRecord('change_request');
+            var cr = self._gr('change_request');
             cr.addQuery('sys_id', 'IN', parents.join(','));
             cr.setLimit(40);
             cr.query();
@@ -414,6 +442,7 @@ NetraInvestigator.prototype = {
         res.ticket_count = (typeof opts.ticket_count === 'number') ? opts.ticket_count : this._ticketCount(ciSysId, t0, nowMs);
         var ctx = { ci_name: ci.name, noun: res.ci.noun, ticket_count: res.ticket_count, t0_ms: t0, now_ms: nowMs,
                     t0_is_now: Math.abs(nowMs - t0) < 120000 };
+        res.t0_is_now = ctx.t0_is_now;
         for (var i = 0; i < all.length && res.suspects.length < top; i++) {
             var s = all[i];
             if (s.score < minScore - 1e-9) continue;
@@ -459,24 +488,31 @@ NetraInvestigator.prototype = {
         var scope = ci + (nb ? ' or the ' + this._num(nb) + ' thing' + (nb === 1 ? '' : 's') + ' it is linked to' : '');
         if (!r.suspects.length) {
             var hrs = r.window_hours || this.LOOKBACK_H;
-            var span = r.ticket_count ? ' in the ' + hrs + ' hours before the first ticket' : ' in the last ' + hrs + ' hours';
+            var span = r.ticket_count ? ' in the ' + hrs + ' hours before the first ticket' :
+                       (r.ticket_count === 0 && r.t0_is_now === false ? ' in the ' + hrs + ' hours before the time in question' : ' in the last ' + hrs + ' hours');
             // changes that were found but scored under the cut are not "nothing"
             var lead = r.candidates > 0 ?
                 'No change on ' + scope + ' lines up closely' + span + ' - the ' + this._num(r.candidates) +
                 ' I found were too far off in time or only loosely linked' : '';
+            // a source that hit its row cap may have left older changes unread
+            var capped = false;
+            for (var sk in r.sources) { if (r.sources.hasOwnProperty(sk) && r.sources[sk].capped) capped = true; }
+            var capNote = capped ? ' I only read the 40 most recently updated changes, so there may be older ones.' : '';
             if (gaps.length) {
                 return (lead ? lead + '. And ' : 'I found no changes on ' + scope + ', but ') + 'I could not read the ' +
-                       this._list(gaps) + ', so I cannot rule changes out.';
+                       this._list(gaps) + ', so I cannot rule changes out.' + capNote;
             }
-            return lead ? lead + '.' : 'Nothing changed on ' + scope + span + '.';
+            if (lead) return lead + '.' + capNote;
+            return capped ? 'I found no change on ' + scope + ' that lines up' + span + '.' + capNote : 'Nothing changed on ' + scope + span + '.';
         }
+        var bctx = { noun: r.ci.noun, ticket_count: r.ticket_count, t0_is_now: r.t0_is_now };
         var s0 = r.suspects[0];
         var out = 'I found ' + this._num(r.suspects.length) + ' change' + (r.suspects.length === 1 ? '' : 's') +
                   ' near the trouble on ' + ci + '. Closest: ' + st + this._shortRef(s0.number) + st +
-                  (s0.short_description ? ', ' + s0.short_description + ',' : '') + ' ' + this._suspectBrief(s0, { noun: r.ci.noun, ticket_count: r.ticket_count }, true) + '.';
+                  (s0.short_description ? ', ' + s0.short_description + ',' : '') + ' ' + this._suspectBrief(s0, bctx, true) + '.';
         if (r.suspects.length > 1) {
             var s1 = r.suspects[1];
-            out += ' Next: ' + st + this._shortRef(s1.number) + st + ', ' + this._suspectBrief(s1, { noun: r.ci.noun, ticket_count: r.ticket_count }, true) + '.';
+            out += ' Next: ' + st + this._shortRef(s1.number) + st + ', ' + this._suspectBrief(s1, bctx, true) + '.';
         }
         out += ' That is timing, not proof.';
         if (gaps.length) out += ' I could not read the ' + this._list(gaps) + ', so there may be more.';
@@ -484,10 +520,13 @@ NetraInvestigator.prototype = {
     },
 
     _scoreCandidate: function (chg, link, t0, hours, afterH, timeOverride) {
-        var t = timeOverride || { ms: chg.activity_ms, field: chg.time_basis };
+        var t = this._pickTime(timeOverride || { ms: chg.activity_ms, field: chg.time_basis, win: chg.win }, t0);
         // a cancelled change that never started did nothing to anyone
         if (chg.state_value === '4' && !chg.started) return null;
-        var tf = this._timeFactor(t.ms, t0, chg.implementing, hours, afterH);
+        // work under way when the first ticket came in is the strongest timing
+        // there is - if it began inside the look-back window
+        var tf = (t.spans && t0 - t.ms <= hours * this.H) ? { f: 1.0, in_window: true } :
+                 this._timeFactor(t.ms, t0, chg.implementing, hours, afterH);
         if (!tf.in_window) return null;
         var lw = this.LINK_W[link] || 0.4;
         var yw = this.TYPE_W[chg.type] || 1.0;
@@ -495,7 +534,7 @@ NetraInvestigator.prototype = {
         var ow = (chg.close_code === 'unsuccessful' || chg.close_code === 'successful_issues') ? 1.3 : 1.0;
         var score = lw * tf.f * yw * rw * ow;
         var delta = t.ms === null ? null : Math.round((t0 - t.ms) / 60000);
-        return {
+        var c = {
             number: chg.number, sys_id: chg.sys_id, short_description: chg.short_description,
             link: link, delta_minutes: delta, activity_ms: t.ms, time_basis: t.field,
             type: chg.type, risk: chg.risk, close_code: chg.close_code, state: chg.state, state_value: chg.state_value,
@@ -504,6 +543,21 @@ NetraInvestigator.prototype = {
             factors: { link: lw, time: tf.f, type: yw, risk: rw, outcome: ow },
             abs_delta: delta === null ? 0 : Math.abs(delta)
         };
+        if (t.spans) { c.end_basis = t.end_field; c.end_delta_minutes = Math.round((t0 - t.end_ms) / 60000); }
+        return c;
+    },
+
+    // the first non-empty time can fall after t0 while the work began before
+    // it: then the change is scored as in progress, not by its far end. both
+    // ends after t0: the nearer one counts
+    _pickTime: function (t, t0) {
+        var w = t.win;
+        if (!w || t.ms === null || t.ms <= t0) return t;
+        if (w.start_ms !== null && w.start_ms <= t0 && w.end_ms !== null && w.end_ms >= t0) {
+            return { ms: w.start_ms, field: w.start_field, end_ms: w.end_ms, end_field: w.end_field, spans: true };
+        }
+        if (w.start_ms !== null && w.start_ms > t0 && w.start_ms < t.ms) return { ms: w.start_ms, field: w.start_field };
+        return t;
     },
 
     _timeFactor: function (actMs, t0, implementing, hours, afterH) {
@@ -517,21 +571,23 @@ NetraInvestigator.prototype = {
             if (d <= 24 * H) return { f: 0.5, in_window: true };
             return { f: 0.25, in_window: true };
         }
-        if (implementing) return { f: 0.7, in_window: true };
+        // started well after the first ticket - most likely the fix, even in Implement
         if (-d > afterH * H) return { f: 0, in_window: false };
-        return { f: 0.2, in_window: true };
+        return implementing ? { f: 0.7, in_window: true } : { f: 0.2, in_window: true };
     },
 
-    _changeWindow: function (gr, lo) {
+    _changeWindow: function (gr, lo, hi) {
         // anything with a date in the window, or still in Implement. the
-        // upper bound and the "first non-empty field" rule are applied in
-        // code, in epoch ms
+        // "first non-empty field" rule is applied in code, in epoch ms
         var qc = gr.addQuery('work_end', '>=', lo);
         qc.addOrCondition('work_start', '>=', lo);
         qc.addOrCondition('closed_at', '>=', lo);
         qc.addOrCondition('end_date', '>=', lo);
         qc.addOrCondition('start_date', '>=', lo);
         qc.addOrCondition('state', '-1');
+        // raised before the trouble: on an older ticket, changes made since
+        // would otherwise fill the row cap and push the real suspects out
+        if (hi) gr.addQuery('sys_created_on', '<=', hi);
     },
 
     _readChange: function (gr) {
@@ -549,7 +605,8 @@ NetraInvestigator.prototype = {
             implementing: state === '-1',
             started: !!(this._str(gr, 'work_start') || this._str(gr, 'work_end')),
             cmdb_ci: this._str(gr, 'cmdb_ci'),
-            activity_ms: act.ms, time_basis: act.field
+            activity_ms: act.ms, time_basis: act.field,
+            win: this._window(gr, ['work_start', 'start_date'], ['work_end', 'closed_at', 'end_date'])
         };
     },
 
@@ -559,6 +616,11 @@ NetraInvestigator.prototype = {
             if (ms !== null) return { ms: ms, field: fields[i] };
         }
         return { ms: null, field: '' };
+    },
+
+    _window: function (gr, startFields, endFields) {
+        var s = this._activity(gr, startFields), e = this._activity(gr, endFields);
+        return { start_ms: s.ms, start_field: s.field, end_ms: e.ms, end_field: e.field };
     },
 
     _taskCiRows: function (ids, onlyChanges) {
@@ -638,7 +700,7 @@ NetraInvestigator.prototype = {
             body = 'it is still being implemented on ' + where;
         } else {
             body = (this.VERB[s.time_basis] || 'activity') + ' on ' + where + ' ' + this._when(s.activity_ms, ctx.now_ms) +
-                   ', ' + this._relToT0(s.delta_minutes, ctx);
+                   ', ' + this._relToT0(s.delta_minutes, ctx) + this._endClause(s, ctx, false);
         }
         var tags = [];
         var lbl = this.LINK_LABEL[s.link] || s.link;
@@ -664,11 +726,25 @@ NetraInvestigator.prototype = {
         else where = spoken ? 'on that ' + noun : 'on ' + viaName;
         if (s.activity_ms === null) return 'is still being implemented ' + where.replace(/,$/, '');
         var verb = spoken ? (this.VERB_SHORT[s.time_basis] || 'happened') : (this.VERB[s.time_basis] || 'activity');
-        var ref = (ctx.ticket_count === 1) ? 'the ticket' : 'the first ticket';
-        var d = s.delta_minutes;
-        var rel = d >= 0 ? this._span(d) + ' before ' + ref : this._span(-d) + ' after ' + ref;
+        var d = s.delta_minutes, rel;
+        // no ticket on the CI: there is no "first ticket" to be before
+        if (ctx.ticket_count === 0 && ctx.t0_is_now) rel = d >= 0 ? this._span(d) + ' ago' : 'in ' + this._span(-d);
+        else {
+            var ref = (ctx.ticket_count === 1) ? 'the ticket' : (ctx.ticket_count === 0 ? 'the time in question' : 'the first ticket');
+            rel = d >= 0 ? this._span(d) + ' before ' + ref : this._span(-d) + ' after ' + ref;
+        }
         var tail = s.implementing ? ', and it is still in progress' : '';
-        return verb + ' ' + where + ' ' + rel + tail;
+        return verb + ' ' + where + ' ' + rel + this._endClause(s, ctx, spoken) + tail;
+    },
+
+    // "..., and work finished 3 hours after that" - for a change whose work
+    // window spanned t0
+    _endClause: function (s, ctx, spoken) {
+        if (!s.end_basis || typeof s.end_delta_minutes !== 'number') return '';
+        var verb = spoken ? (this.VERB_SHORT[s.end_basis] || 'ended') : (this.VERB[s.end_basis] || 'it ended');
+        var after = -s.end_delta_minutes;
+        var rel = (ctx.ticket_count === 0 && ctx.t0_is_now) ? (after > 0 ? 'in ' + this._span(after) : 'just now') : this._span(after) + ' after that';
+        return ', and ' + verb + ' ' + rel;
     },
 
     _relToT0: function (d, ctx) {
@@ -735,7 +811,7 @@ NetraInvestigator.prototype = {
         var core = null, coreRec = null;
         if (isTicket) {
             try {
-                coreRec = new GlideRecord(anchor.table || 'task');
+                coreRec = this._gr(anchor.table || 'task');
                 if (!coreRec.get(anchor.sys_id)) coreRec = null;
             } catch (eC) { coreRec = null; }
             if (coreRec) {
@@ -844,7 +920,7 @@ NetraInvestigator.prototype = {
         f.cluster = 0;
         if (ciId) {
             this._run(d.sources, 'siblings', 'task', deadlineAt, function (src) {
-                var g = new GlideRecord('task');
+                var g = self._gr('task');
                 g.addQuery('sys_class_name', 'incident');
                 g.addQuery('cmdb_ci', ciId);
                 g.addQuery('active', true);
@@ -853,8 +929,9 @@ NetraInvestigator.prototype = {
                 g.orderByDesc('opened_at');
                 g.setLimit(30);
                 g.query();
-                var anchorIn = false;
+                var anchorIn = false, read = 0;
                 while (g.next()) {
+                    read++;
                     var sid = self._str(g, 'sys_id');
                     if (sid === anchor.sys_id) { anchorIn = true; continue; }
                     src.rows++;
@@ -875,8 +952,9 @@ NetraInvestigator.prototype = {
                 if (!f.siblings.length) return;
                 var span = '';
                 var fo = f.siblings[0].opened_ms, lo2 = f.siblings[f.siblings.length - 1].opened_ms;
-                if (fo !== null && lo2 !== null) span = ', opened between ' + self._hhmm(fo) + ' and ' + self._hhmm(lo2);
-                var t = f.siblings.length + ' other open ticket' + (f.siblings.length === 1 ? '' : 's') + ' on ' + ciName + ': ' +
+                // with the day when it is not today: the oldest can be weeks back
+                if (fo !== null && lo2 !== null) span = ', opened between ' + self._whenBare(fo, nowMs) + ' and ' + self._whenBare(lo2, nowMs);
+                var t = (read >= 30 ? 'at least ' : '') + f.siblings.length + ' other open ticket' + (f.siblings.length === 1 ? '' : 's') + ' on ' + ciName + ': ' +
                         nums.join(', ') + (f.siblings.length > nums.length ? ' and more' : '') + span +
                         (cl >= 3 ? '; ' + cl + ' tickets within 2 hours of the first' : '');
                 f.siblings_item = add(5, 4, 'siblings', f.siblings[0].number, fo, t, cl >= 3 ? 'strong' : 'medium',
@@ -907,14 +985,14 @@ NetraInvestigator.prototype = {
                     f.problems.push(p);
                 };
                 if (f.problem_id) {
-                    var pl = new GlideRecord('task');
+                    var pl = self._gr('task');
                     pl.addQuery('sys_id', f.problem_id);
                     pl.setLimit(1);
                     pl.query();
                     if (pl.next()) take(pl, true);
                 }
                 if (ciId) {
-                    var pg = new GlideRecord('task');
+                    var pg = self._gr('task');
                     pg.addQuery('sys_class_name', 'problem');
                     pg.addQuery('cmdb_ci', ciId);
                     pg.addQuery('active', true);
@@ -948,11 +1026,13 @@ NetraInvestigator.prototype = {
                     by[nbs[i].sys_id] = { sys_id: nbs[i].sys_id, name: nbs[i].name, link: nbs[i].link, rel_type: nbs[i].rel_type,
                                           open: 0, before: 0, first_ms: null, first_number: '', first_sd: '', numbers: [] };
                 }
-                var g = new GlideRecord('task');
+                // only the 24h before t0, earliest first: one neighbour's
+                // months-old open tickets must not fill the row cap
+                var g = self._gr('task');
                 g.addQuery('sys_class_name', 'incident');
                 g.addQuery('cmdb_ci', 'IN', ids.join(','));
-                var qc = g.addQuery('active', true);
-                qc.addOrCondition('opened_at', '>=', self._gdt(t0 - 24 * self.H));
+                g.addQuery('opened_at', '>=', self._gdt(t0 - 24 * self.H));
+                g.addQuery('opened_at', '<', self._gdt(t0));
                 g.orderBy('opened_at');
                 g.setLimit(100);
                 g.query();
@@ -961,28 +1041,45 @@ NetraInvestigator.prototype = {
                     var nb = by[self._str(g, 'cmdb_ci')];
                     if (!nb) continue;
                     var om = self._ms(g, 'opened_at');
-                    if (self._bool(g, 'active')) nb.open++;
-                    if (om !== null && om < t0 && om >= t0 - 24 * self.H) {
-                        nb.before++;
-                        if (nb.first_ms === null || om < nb.first_ms) {
-                            nb.first_ms = om; nb.first_number = self._str(g, 'number');
-                            nb.first_sd = self._cut(self._str(g, 'short_description'), 80);
-                        }
+                    if (om === null || om >= t0 || om < t0 - 24 * self.H) continue;
+                    nb.before++;
+                    if (nb.first_ms === null || om < nb.first_ms) {
+                        nb.first_ms = om; nb.first_number = self._str(g, 'number');
+                        nb.first_sd = self._cut(self._str(g, 'short_description'), 80);
                     }
                     if (nb.numbers.length < 3) nb.numbers.push(self._str(g, 'number'));
                 }
+                var capped = src.rows >= 100;
+                // open counts are totals, not what fitted in the rows above
+                var ga = new GlideAggregate('task');
+                ga.addQuery('sys_class_name', 'incident');
+                ga.addQuery('cmdb_ci', 'IN', ids.join(','));
+                ga.addQuery('active', true);
+                ga.addAggregate('COUNT');
+                ga.groupBy('cmdb_ci');
+                ga.query();
+                while (ga.next()) {
+                    var nbo = by[String(ga.getValue('cmdb_ci') || '')];
+                    if (!nbo) continue;
+                    nbo.open = parseInt(ga.getAggregate('COUNT'), 10) || 0;
+                    src.rows += nbo.open;
+                }
+                // no ticket on this CI: "the first ticket here" does not exist
+                var noTk = f.ticket_count === 0, t0Now = Math.abs(nowMs - t0) < 120000;
                 var quiet = [];
                 for (var j = 0; j < nbs.length; j++) {
                     var n = by[nbs[j].sys_id];
+                    if (capped) n.capped = true;
                     f.neighbours.push(n);
-                    if (!n.open && !n.before) { quiet.push(n.name + ' (' + n.link + ')'); continue; }
+                    if (!n.open && !n.before) { if (!capped) quiet.push(n.name + ' (' + n.link + ')'); continue; }
                     var dir = n.link === 'upstream' ? ', which ' + ciName + ' depends on' : ', which depends on ' + ciName;
                     var t = n.name + dir + ': ' + n.open + ' open ticket' + (n.open === 1 ? '' : 's');
                     if (n.before) {
-                        t += '; ' + n.before + ' opened before the first ticket here, starting with ' + n.first_number + ' ' +
-                             self._span(Math.round((t0 - n.first_ms) / 60000)) + ' earlier';
+                        t += '; ' + (capped ? 'at least ' : '') + n.before + ' opened ' +
+                             (noTk ? (t0Now ? 'in the last 24 hours' : 'in the 24 hours before the time in question') : 'before the first ticket here') +
+                             ', starting with ' + n.first_number + ' ' + self._span(Math.round((t0 - n.first_ms) / 60000)) + (noTk && t0Now ? ' ago' : ' earlier');
                     }
-                    t += ' (' + (n.numbers.join(', ')) + ')';
+                    if (n.numbers.length) t += ' (' + (n.numbers.join(', ')) + ')';
                     var w = (n.before && n.link === 'upstream') ? 'strong' : (n.before ? 'medium' : 'weak');
                     n.item = add(6, 5, 'neighbour', n.first_number || n.numbers[0] || n.name, n.first_ms, t, w,
                                  { sys_id: n.sys_id, refs: n.numbers, link: n.link });
@@ -993,12 +1090,16 @@ NetraInvestigator.prototype = {
 
         // ---- audit: field history on the ticket ----
         f.audit_reassign = 0;
-        if (isTicket) {
+        // only the history of fields the user may read on this ticket
+        var auditFields = this.asUser ? this._readable(coreRec, this.AUDIT_FIELDS) : this.AUDIT_FIELDS;
+        if (isTicket && !auditFields.length) {
+            d.sources.audit = { rows: 0, ms: 0, status: 'blocked', note: 'no access to the fields whose history I read' };
+        } else if (isTicket) {
             this._run(d.sources, 'audit', null, deadlineAt, function (src) {
                 var a = new GlideRecord('sys_audit');
                 a.addQuery('tablename', anchor.table);
                 a.addQuery('documentkey', anchor.sys_id);
-                a.addQuery('fieldname', 'IN', self.AUDIT_FIELDS.join(','));
+                a.addQuery('fieldname', 'IN', auditFields.join(','));
                 a.orderByDesc('sys_created_on');
                 a.setLimit(30);
                 a.query();
@@ -1048,11 +1149,15 @@ NetraInvestigator.prototype = {
         f.reassignments = Math.max(f.reassignments || 0, f.audit_reassign || 0);
 
         // ---- journal: last 8 comments / work notes (same query as NetraTools._recentJournal) ----
-        if (isTicket) {
+        // gated on the ticket's own field ACLs, like the widget's _journalEls
+        var jEls = this.asUser ? this._readable(coreRec, ['comments', 'work_notes']) : ['comments', 'work_notes'];
+        if (isTicket && !jEls.length) {
+            d.sources.journal = { rows: 0, ms: 0, status: 'blocked', note: 'no access to the work notes or comments' };
+        } else if (isTicket) {
             this._run(d.sources, 'journal', 'sys_journal_field', deadlineAt, function (src) {
                 var j = new GlideRecord('sys_journal_field');
                 j.addQuery('element_id', anchor.sys_id);
-                j.addQuery('element', 'IN', 'comments,work_notes');
+                j.addQuery('element', 'IN', jEls.join(','));
                 j.orderByDesc('sys_created_on');
                 j.setLimit(8);
                 j.query();
@@ -1068,7 +1173,7 @@ NetraInvestigator.prototype = {
             });
             if (d.sources.journal && d.sources.journal.status === 'empty') d.missing.push('any work notes or comments on the ticket');
         } else {
-            d.sources.journal = { rows: 0, ms: 0, status: 'skipped', note: 'not a ticket' };
+            d.sources.journal = { rows: 0, ms: 0, status: 'skipped', note: isTicket ? 'no journal you can read' : 'not a ticket' };
         }
 
         // ---- KB keyword hits ----
@@ -1218,10 +1323,11 @@ NetraInvestigator.prototype = {
 
         // change: top suspect scoring 0.5 or more
         var top = dossier.suspects && dossier.suspects[0];
+        var t0Now = Math.abs(nowMs - (dossier.t0_ms || nowMs)) < 120000;
         if (top && top.score >= 0.5 && this._itemById(dossier, top.item)) {
             var via = (top.via_ci && top.via_ci.name) || ci;
-            var ctx = { noun: noun, ticket_count: f.ticket_count, ci_name: ci };
-            var clock = top.activity_ms !== null ? this._hhmm(top.activity_ms) : '';
+            var ctx = { noun: noun, ticket_count: f.ticket_count, ci_name: ci, t0_is_now: t0Now };
+            var clock = top.activity_ms !== null ? this._whenBare(top.activity_ms, nowMs) : '';
             H.push({
                 rule: 'change',
                 statement: 'The trouble may be linked to ' + top.number + " '" + top.short_description + "': " +
@@ -1229,7 +1335,7 @@ NetraInvestigator.prototype = {
                 confidence: top.score >= 0.9 ? 'high' : (top.score >= 0.7 ? 'medium' : 'low'),
                 cites: [top.item],
                 confirm_by: 'Ask whoever implemented ' + top.number + ' what it touched on ' + via +
-                            ', and check whether the errors began right after its work window' +
+                            ', and check whether the errors began ' + (top.end_basis ? 'during' : 'right after') + ' its work window' +
                             (top.close_code === 'unsuccessful' ? ' - it was closed unsuccessful' : '') + '.',
                 rule_out_by: 'If the errors started before ' + (clock || 'that change') + ', or ' + top.number + ' never touched ' + via +
                              ', the timing is a coincidence.',
@@ -1281,11 +1387,12 @@ NetraInvestigator.prototype = {
         if (nbBest) {
             var mins = Math.round(((dossier.t0_ms || nowMs) - nbBest.first_ms) / 60000);
             var up = nbBest.link === 'upstream';
+            var since = f.ticket_count !== 0 ? ' before the first ticket here' : (t0Now ? ' ago' : ' before the time in question');
             H.push({
                 rule: 'upstream',
                 statement: 'The trouble may have started on ' + nbBest.name + (up ? ', which ' + ci + ' depends on' : ', which depends on ' + ci) +
-                           ': it had ' + this._num(nbBest.before) + ' ticket' + (nbBest.before === 1 ? '' : 's') + ' starting ' +
-                           this._span(mins) + ' before the first ticket here, beginning with ' + nbBest.first_number + '.',
+                           ': it had ' + (nbBest.capped ? 'at least ' : '') + this._num(nbBest.before) + ' ticket' + (nbBest.before === 1 ? '' : 's') + ' starting ' +
+                           this._span(mins) + since + ', beginning with ' + nbBest.first_number + '.',
                 confidence: up ? 'medium' : 'low',
                 cites: [nbBest.item],
                 confirm_by: 'Check ' + nbBest.name + "'s health and read " + nbBest.first_number + '.',
@@ -1577,19 +1684,25 @@ NetraInvestigator.prototype = {
                 snap.sib = sib;
             });
             tryPart('res', function () {
-                // updated-since rather than resolved_at: a resolve done with
-                // workflow off never stamps resolved_at
-                var g = new GlideRecord('task');
-                g.addQuery('sys_class_name', 'incident');
+                // touched since the last pass, then kept only if RESOLVED since:
+                // auto-close or a late comment touches tickets resolved days
+                // ago. incident, not task - resolved_at lives there. a resolve
+                // done with workflow off stamps neither date, so updated-on is
+                // the last resort
+                var g = new GlideRecord('incident');
                 g.addQuery('cmdb_ci', ciId);
                 g.addQuery('state', 'IN', '6,7');
                 g.addQuery('sys_id', '!=', id);
                 g.addQuery('sys_updated_on', '>=', self._gdt(since));
                 g.orderByDesc('sys_updated_on');
-                g.setLimit(8);
+                g.setLimit(20);
                 g.query();
                 var res = [];
-                while (g.next()) {
+                while (res.length < 8 && g.next()) {
+                    var rm = self._ms(g, 'resolved_at');
+                    if (rm === null) rm = self._ms(g, 'closed_at');
+                    if (rm === null) rm = self._ms(g, 'sys_updated_on');
+                    if (rm !== null && rm < since) continue;
                     var n = self._str(g, 'number');
                     res.push(n);
                     snap.x.res[n] = self._cut(self._str(g, 'close_notes').replace(/\s+/g, ' '), 200);
@@ -1612,7 +1725,9 @@ NetraInvestigator.prototype = {
                 seen[n] = 1;
                 var cm = self._ms(g, 'sys_created_on');
                 chg.push({ n: n, s: self._dv(g, 'state') || self._str(g, 'state'), cc: self._str(g, 'close_code') });
-                snap.x.chg[n] = { d: self._cut(self._str(g, 'short_description'), 60), f: !!fresh, c: cm !== null && cm >= since };
+                // k/ci: the CI the change is on - it may be a linked one, not the ticket's
+                snap.x.chg[n] = { d: self._cut(self._str(g, 'short_description'), 60), f: !!fresh, c: cm !== null && cm >= since,
+                                  k: self._str(g, 'cmdb_ci'), ci: self._dv(g, 'cmdb_ci') };
             };
             var track = [];
             for (var i = 0; opts.track && i < opts.track.length; i++) {
@@ -1719,7 +1834,8 @@ NetraInvestigator.prototype = {
                 var desc = xc.d;
                 if (!oc) {
                     if (xc.f === false) continue;   // tracked but untouched: baseline, not news
-                    facts.push((xc.c === false ? 'a change on ' + ci + ' was updated: ' : 'a new change touches ' + ci + ': ') +
+                    var on = this._chgWhere(xc, newSnap, ci);
+                    facts.push((xc.c === false ? 'a change on ' + on + ' was updated: ' : 'a new change touches ' + on + ': ') +
                                nc.n + (desc ? " '" + desc + "'" : '') + (nc.s ? ' (' + nc.s + ')' : ''));
                 } else if (oc.cc !== nc.cc && nc.cc) {
                     facts.push('the change ' + nc.n + ' was ' + (this.CLOSE_LABEL[nc.cc] || 'closed ' + nc.cc));
@@ -1774,18 +1890,19 @@ NetraInvestigator.prototype = {
                 if (nc && nc.cc === 'unsuccessful' && (oc ? oc.cc !== 'unsuccessful' : ncx.f !== false)) {
                     text = 'the change ' + ref + ' was closed unsuccessful' + tail;
                 }
+                // every rollback note contains "rollback" once canonicalised, so
+                // that keyword alone can't tie a note or a change to THIS change
+                var kwNoRb = {};
+                for (var kk in kw) { if (kw.hasOwnProperty(kk) && kk !== 'rollback') kwNoRb[kk] = 1; }
                 for (k = 0; !text && !switched && newSnap.chg && k < newSnap.chg.length; k++) {
                     var c2 = newSnap.chg[k];
                     var c2x = (x.chg && x.chg[c2.n]) || {};
                     var d2 = c2x.d || '';
-                    if (!this._findChg(oldSnap.chg, c2.n) && c2x.f !== false && this.ROLLBACK_RE.test(d2)) {
-                        text = "a new change on " + ci + ", " + c2.n + " '" + d2 + "', looks like a rollback" + tail;
+                    if (!this._findChg(oldSnap.chg, c2.n) && c2x.f !== false && this.ROLLBACK_RE.test(d2) &&
+                        ((ref && d2.toUpperCase().indexOf(ref) >= 0) || this._hits(kwNoRb, d2) >= 1)) {
+                        text = "a new change on " + this._chgWhere(c2x, newSnap, ci) + ", " + c2.n + " '" + d2 + "', looks like a rollback" + tail;
                     }
                 }
-                // every rollback note contains "rollback" once canonicalised, so
-                // that keyword alone can't tie a note to THIS change
-                var kwNoRb = {};
-                for (var kk in kw) { if (kw.hasOwnProperty(kk) && kk !== 'rollback') kwNoRb[kk] = 1; }
                 for (k = 0; !text && k < resolved.length; k++) {
                     cn = x.res[resolved[k]] || '';
                     if (this.ROLLBACK_RE.test(cn) && ((ref && cn.toUpperCase().indexOf(ref) >= 0) || this._hits(kwNoRb, cn) >= 1)) {
@@ -1816,8 +1933,9 @@ NetraInvestigator.prototype = {
 
     /**
      * grade the theories against the real close notes.
-     * hypotheses: validated ones ({statement, signal:{keywords}}) or the
-     * stored sig form ({n, s, kw}). opts.exclude = extra tokens to ignore.
+     * hypotheses: validated ones ({statement, signal:{keywords, ref}}) or the
+     * stored sig form ({n, s, kw, ref}). opts.exclude = extra tokens to
+     * ignore, opts.anchor = the graded ticket's own number.
      * -> {outcome:'matched'|'missed'|'unclear', n, snippet, hits:[], text}
      */
     grade: function (hypotheses, closeNotes, opts) {
@@ -1832,13 +1950,55 @@ NetraInvestigator.prototype = {
             return { outcome: 'unclear', n: 0, snippet: snippet, hits: [],
                      text: "I can't tell whether my theories were right - the close notes are too thin" + (snippet ? " ('" + snippet + "')" : '') + '.' };
         }
+        var self = this;
         var exclude = this._stems((opts.exclude || []).join(' '));
-        var sets = [];
+        var own = String(opts.anchor || '').toLowerCase().replace(/\s+/g, '');
+        // close-note words in order, each flagged when a negation sits next to it
+        var seq = this._noteSeq(notes.replace(/\b(INC|CHG|PRB|KB|RITM|REQ|SCTASK|CTASK|PTASK)\s+(\d{4,})\b/gi, '$1$2'));
+        var pos = {}, neg = {}, distinct = 0;
+        for (var q = 0; q < seq.length; q++) {
+            var qs = this._stemOf(seq[q].w);
+            if (!qs || exclude[qs]) continue;
+            if (!pos[qs] && !neg[qs]) distinct++;
+            if (seq[q].neg) neg[qs] = 1; else pos[qs] = 1;
+        }
+        var matched = function (i, hits) {
+            var n = parseInt((hypotheses[i] && hypotheses[i].n), 10) || (i + 1);
+            return { outcome: 'matched', n: n, snippet: snippet, hits: hits,
+                     text: 'that matches my theory ' + self._num(n) + ". The close notes say '" + snippet + "'." };
+        };
+        var unsure = false;
+        // 1. the record a theory blamed, named in the close notes ("rolled back CHG0030042")
         for (var i = 0; i < count; i++) {
-            var h = hypotheses[i] || {};
+            var refs = this._gradeRefs(hypotheses[i] || {}, own);
+            for (var r = 0; r < refs.length; r++) {
+                for (var q2 = 0; q2 < seq.length; q2++) {
+                    if (seq[q2].w !== refs[r]) continue;
+                    if (!seq[q2].neg) return matched(i, [refs[r].toUpperCase()]);
+                    unsure = true;
+                }
+            }
+        }
+        // 2. words: the signal keywords and the quoted record description are
+        // the evidence; the rest of the statement only counts off the rule
+        // template's own vocabulary. a match needs one evidence word
+        var sets = [], spec = [];
+        for (var h0 = 0; h0 < count; h0++) {
+            var h = hypotheses[h0] || {};
             var kws = (h.signal && h.signal.keywords) || h.kw || h.keywords || [];
-            var terms = this._stems((h.statement || h.s || '') + ' ' + kws.join(' '));
+            var st = String(h.statement || h.s || '');
+            var quoted = [], qm, qre = /(^|\s)'([^']+)'/g;
+            while ((qm = qre.exec(st)) !== null) quoted.push(qm[2]);
+            var sp = this._stems(kws.join(' ') + ' ' + quoted.join(' '));
+            delete sp.rollback;
+            var terms = this._stems(st + ' ' + kws.join(' '));
+            for (var gt in terms) { if (terms.hasOwnProperty(gt) && this.GRADE_STOP[gt] && !sp[gt]) delete terms[gt]; }
+            var anySp = false;
+            for (var s1 in sp) { if (sp.hasOwnProperty(s1)) { anySp = true; terms[s1] = 1; } }
+            // a theory with no keywords at all stands on its statement words
+            if (!anySp) { for (var t1 in terms) { if (terms.hasOwnProperty(t1) && t1 !== 'rollback') sp[t1] = 1; } }
             sets.push(terms);
+            spec.push(sp);
         }
         // a term every theory shares (usually the CI) can't tell them apart
         if (count > 1) {
@@ -1846,25 +2006,61 @@ NetraInvestigator.prototype = {
                 if (!sets[0].hasOwnProperty(t)) continue;
                 var everywhere = true;
                 for (var j = 1; j < count; j++) { if (!sets[j][t]) { everywhere = false; break; } }
-                if (everywhere) { for (var j2 = 0; j2 < count; j2++) delete sets[j2][t]; }
+                if (everywhere) { for (var j2 = 0; j2 < count; j2++) { delete sets[j2][t]; delete spec[j2][t]; } }
             }
         }
         var best = -1, bestHits = [];
         for (var a = 0; a < count; a++) {
-            var hits = [];
+            var hits = [], evid = false;
             for (var term in sets[a]) {
-                if (sets[a].hasOwnProperty(term) && closeTerms[term] && !exclude[term]) hits.push(term);
+                if (!sets[a].hasOwnProperty(term) || exclude[term]) continue;
+                if (pos[term]) { hits.push(term); if (spec[a][term]) evid = true; }
+                else if (neg[term]) unsure = true;
             }
-            if (hits.length >= 2 && hits.length > bestHits.length) { best = a; bestHits = hits; }
+            if (hits.length) unsure = true;
+            if (hits.length >= 2 && evid && hits.length > bestHits.length) { best = a; bestHits = hits; }
         }
-        if (best < 0) {
+        if (best >= 0) return matched(best, bestHits);
+        // "I got this one wrong" only when the notes say plenty and none of it
+        // touches any theory; anything in between is honestly unclear
+        if (!unsure && distinct >= 3) {
             return { outcome: 'missed', n: 0, snippet: snippet, hits: [],
                      text: "it doesn't match " + (count === 1 ? 'my theory' : 'any of my ' + this._num(count) + ' theories') +
                            ", I got this one wrong. The close notes say '" + snippet + "'." };
         }
-        var n = parseInt((hypotheses[best] && hypotheses[best].n), 10) || (best + 1);
-        return { outcome: 'matched', n: n, snippet: snippet, hits: bestHits,
-                 text: "that matches my theory " + this._num(n) + ". The close notes say '" + snippet + "'." };
+        return { outcome: 'unclear', n: 0, snippet: snippet, hits: [],
+                 text: "I can't tell whether that matches " + (count === 1 ? 'my theory' : 'my theories') + ". The close notes say '" + snippet + "'." };
+    },
+
+    // record numbers a theory named (its signal ref, numbers in its
+    // statement), lower case, without the graded ticket's own number
+    _gradeRefs: function (h, own) {
+        var out = [], m, re = new RegExp(this.REC_RE.source, 'gi');
+        var src = String(h.ref || (h.signal && h.signal.ref) || '') + ' ' + String(h.statement || h.s || '');
+        while ((m = re.exec(src)) !== null) {
+            var rn = m[0].toLowerCase().replace(/\s+/g, '');
+            if (rn !== own && out.indexOf(rn) < 0) out.push(rn);
+        }
+        return out;
+    },
+
+    // [{w, neg}]: a word is negated when not/no/unrelated... is up to four
+    // words before it in the same sentence, or it is followed by "was fine" /
+    // "wasn't" / "unrelated" ("Restart did not help. Rolled back X" is not)
+    _noteSeq: function (s) {
+        var parts = String(s || '').split(/[.;!?]+(?:\s+|$)/), out = [];
+        for (var p = 0; p < parts.length; p++) {
+            var t = this._tokens(parts[p]);
+            for (var i = 0; i < t.length; i++) {
+                var ng = false;
+                for (var b = Math.max(0, i - 4); b < i && !ng; b++) { if (this.NEG[t[b]]) ng = true; }
+                for (var a = i + 1; a <= i + 3 && a < t.length && !ng; a++) {
+                    if (this.NEG_AFTER[t[a]] || (this.COPULA[t[a]] && this.NEG_COPULA[t[a + 1]])) ng = true;
+                }
+                out.push({ w: t[i], neg: ng });
+            }
+        }
+        return out;
     },
 
     // the snapshot's CI changed between passes (someone set or fixed it)
@@ -1892,6 +2088,12 @@ NetraInvestigator.prototype = {
     _findChg: function (list, num) {
         for (var i = 0; list && i < list.length; i++) { if (String(list[i].n).toUpperCase() === String(num).toUpperCase()) return list[i]; }
         return null;
+    },
+
+    // snapshot changes come from the CI and its linked CIs: name the one it is on
+    _chgWhere: function (xc, snap, ci) {
+        if (!xc || !xc.k || xc.k === snap.ci) return ci;
+        return (xc.ci || 'a linked CI') + ' (linked to ' + ci + ')';
     },
 
     _isDone: function (tbl, t) {
@@ -1942,13 +2144,17 @@ NetraInvestigator.prototype = {
     _stems: function (s) {
         var t = this._tokens(s), set = {};
         for (var i = 0; i < t.length; i++) {
-            var w = t[i];
-            if (w.length < 3 || /\d/.test(w) || this.STOP[w]) continue;
-            var st = this._stem(w);
-            if (st.length < 3 || this.STOP[st]) continue;
-            set[st] = 1;
+            var st = this._stemOf(t[i]);
+            if (st) set[st] = 1;
         }
         return set;
+    },
+
+    // one token -> its content stem, or '' when it never counts
+    _stemOf: function (w) {
+        if (w.length < 3 || /\d/.test(w) || this.STOP[w]) return '';
+        var st = this._stem(w);
+        return (st.length < 3 || this.STOP[st]) ? '' : st;
     },
 
     _hits: function (termSet, text) {
@@ -2161,6 +2367,11 @@ NetraInvestigator.prototype = {
         return 'on ' + this.MONTHS[loc.getUTCMonth()] + ' ' + loc.getUTCDate() + ' ' + at;
     },
 
+    // "14:20" / "yesterday at 14:20" / "Monday at 14:20" - for "between X and Y"
+    _whenBare: function (ms, nowMs) {
+        return this._when(ms, nowMs).replace(/^(at|on) /, '');
+    },
+
     // =================================================================
     //  glide plumbing
     // =================================================================
@@ -2195,6 +2406,21 @@ NetraInvestigator.prototype = {
             gs.warn('[NetraInvestigator] ' + name + ' failed: ' + src.note);
         }
         src.ms = this._clock() - start;
+    },
+
+    // tickets and other user data: the signed-in user's ACLs decide
+    _gr: function (table) {
+        return this.asUser ? new GlideRecordSecure(table) : new GlideRecord(table);
+    },
+
+    // the fields of a loaded record the user may read
+    _readable: function (gr, fields) {
+        var out = [];
+        if (!gr) return out;
+        for (var i = 0; i < fields.length; i++) {
+            try { if (gr.isValidField(fields[i]) && gr[fields[i]].canRead()) out.push(fields[i]); } catch (e) {}
+        }
+        return out;
     },
 
     _canSeeAny: function (table) {
@@ -2269,4 +2495,4 @@ NetraInvestigator.prototype = {
 
     type: 'NetraInvestigator'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 19:05:00</sys_created_on><sys_id>682230c9936f87d0e3aef0aefaba10ad</sys_id><sys_mod_count>2</sys_mod_count><sys_name>NetraInvestigator</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_682230c9936f87d0e3aef0aefaba10ad</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 19:23:05</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 19:05:00</sys_created_on><sys_id>682230c9936f87d0e3aef0aefaba10ad</sys_id><sys_mod_count>4</sys_mod_count><sys_name>NetraInvestigator</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_682230c9936f87d0e3aef0aefaba10ad</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 05:43:41</sys_updated_on></sys_script_include></record_update>

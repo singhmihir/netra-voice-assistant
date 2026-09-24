@@ -19,7 +19,9 @@ NetraKnowledge.prototype = {
         if (q.length < 2) return { ok: false, articles: [], query: q };
         var keywords = this._tokenize(q);
 
-        var gr = new GlideRecord('kb_knowledge');
+        // GlideRecordSecure: the KB read ACLs and user criteria apply, so an
+        // HR or security article is never read out to someone who can not open it
+        var gr = new GlideRecordSecure('kb_knowledge');
         gr.addQuery('workflow_state', 'published');
         gr.addQuery('active', true);
         // Build a CONTAINS query for the strongest keyword first to narrow the set
@@ -52,13 +54,18 @@ NetraKnowledge.prototype = {
 
     /** Read one article in full (returns title + plain-text body). */
     read: function (numberOrSysId) {
-        var gr = new GlideRecord('kb_knowledge');
+        var gr = new GlideRecordSecure('kb_knowledge');
         if (String(numberOrSysId).match(/^[0-9a-f]{32}$/)) {
-            if (!gr.get(numberOrSysId)) return { ok: false, error: 'Article not found.' };
+            if (!gr.get(numberOrSysId)) return { ok: false, error: 'Article not found, or it is not available to you.' };
         } else {
+            // one number can have several versions: only the current published one
             gr.addQuery('number', numberOrSysId);
+            gr.addQuery('workflow_state', 'published');
+            gr.addQuery('active', true);
+            gr.orderByDesc('sys_updated_on');
+            gr.setLimit(1);
             gr.query();
-            if (!gr.next()) return { ok: false, error: 'Article not found.' };
+            if (!gr.next()) return { ok: false, error: 'There is no published article ' + numberOrSysId + ' that you can read.' };
         }
         return {
             ok: true,
@@ -125,4 +132,4 @@ var STOP_WORDS = {
     'you':1,'your':1,'how':1,'what':1,'when':1,'why':1,'can':1,'will':1,'all':1,
     'about':1,'has':1,'was':1,'were':1,'they':1,'their':1,'them':1,'into':1
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:39</sys_created_on><sys_id>2cb3da9093424710e3aef0aefaba1041</sys_id><sys_mod_count>0</sys_mod_count><sys_name>NetraKnowledge</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_2cb3da9093424710e3aef0aefaba1041</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-09 04:41:39</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:39</sys_created_on><sys_id>2cb3da9093424710e3aef0aefaba1041</sys_id><sys_mod_count>1</sys_mod_count><sys_name>NetraKnowledge</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_2cb3da9093424710e3aef0aefaba1041</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 21:34:59</sys_updated_on></sys_script_include></record_update>
