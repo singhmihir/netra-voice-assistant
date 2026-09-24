@@ -47,6 +47,9 @@ NetraSemantic.prototype = {
         // during review, so re-querying 400 rows per item is pure waste.
         // the widget leaves it off (one instance per request anyway).
         this.memoScans = !!options.memoScans;
+        // asUser: read tickets with the signed-in user's ACLs (the widget).
+        // Background jobs leave it off and read as the system.
+        this.asUser = !!options.asUser;
 
         this.embedCalls = 0;       // HTTP calls actually sent, for accounting
         this.embedErrors = 0;
@@ -323,7 +326,7 @@ NetraSemantic.prototype = {
         var src = { rows: 0, ms: 0, status: 'ok' };
         var rows = [];
         try {
-            var gr = new GlideRecord(table);
+            var gr = this.asUser ? new GlideRecordSecure(table) : new GlideRecord(table);
             if (!gr.isValid()) {
                 src.status = 'blocked';
                 src.error = 'table ' + table + ' is not readable from this scope';
@@ -342,24 +345,26 @@ NetraSemantic.prototype = {
                 gr.orderByDesc('sys_updated_on');
                 gr.setLimit(limit);
                 gr.query();
+                // by field name, never through the element: under GlideRecordSecure
+                // a field the user may not read is null and its methods throw
+                var v = function (f) { try { return String(gr.getValue(f) || ''); } catch (eV) { return ''; } };
+                var dv = function (f) { try { return String(gr.getDisplayValue(f) || ''); } catch (eD) { return ''; } };
                 while (gr.next()) {
                     rows.push({
-                        sys_id:   String(gr.sys_id),
-                        number:   String(gr.number),
-                        short_description: String(gr.short_description || ''),
-                        description: String(gr.description || '').substring(0, 900),
-                        state:    String(gr.state.getDisplayValue ? gr.state.getDisplayValue() : gr.state),
-                        priority: String(gr.priority),
-                        category: String(gr.category || ''),
-                        subcategory: String(gr.subcategory || ''),
-                        assignment_group: String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : ''),
-                        assigned_to: String(gr.assigned_to.getDisplayValue ? gr.assigned_to.getDisplayValue() : ''),
-                        close_notes: String(gr.close_notes || '').replace(/\s+/g, ' ').substring(0, 600),
-                        // getValue, not the element: a GlideElement is always truthy,
-                        // so `gr.resolved_at || gr.closed_at` never fell back
-                        resolved_at: String(gr.getValue('resolved_at') || gr.getValue('closed_at') || ''),
-                        opened: String(gr.sys_created_on || ''),
-                        _gid: String(gr.getValue('assignment_group') || ''),
+                        sys_id:   v('sys_id'),
+                        number:   v('number'),
+                        short_description: v('short_description'),
+                        description: v('description').substring(0, 900),
+                        state:    dv('state') || v('state'),
+                        priority: v('priority'),
+                        category: v('category'),
+                        subcategory: v('subcategory'),
+                        assignment_group: dv('assignment_group'),
+                        assigned_to: dv('assigned_to'),
+                        close_notes: v('close_notes').replace(/\s+/g, ' ').substring(0, 600),
+                        resolved_at: v('resolved_at') || v('closed_at'),
+                        opened: v('sys_created_on'),
+                        _gid: v('assignment_group'),
                         _table: table
                     });
                 }

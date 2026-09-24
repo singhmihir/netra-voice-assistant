@@ -7686,7 +7686,8 @@
         if (!query) return { ok: false, error: 'Give me something to look for.' };
         if (!_semEngine) _semEngine = { inst: null, failed: false };
         if (!_semEngine.inst && !_semEngine.failed) {
-            try { _semEngine.inst = new NetraSemantic(); } catch (eSem) { _semEngine.failed = true; }
+            // the user's own ACLs: similar tickets are only ones they could open
+            try { _semEngine.inst = new NetraSemantic({ asUser: true }); } catch (eSem) { _semEngine.failed = true; }
         }
         if (_semEngine.inst) {
             var r = _semEngine.inst.semanticIncidents(query, opts);

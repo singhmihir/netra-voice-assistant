@@ -197,4 +197,19 @@ T.test('a caller who may not see work notes: write-up and link are refused polit
     T.match(r.error, /You do not have permission to add work notes on INC0010015/);
 });
 
+T.test('similar past tickets are only ones the user could open themselves', function () {
+    var s = new S.Session();
+    g.put('incident', { sys_id: 'r1', number: 'INC0019001', caller_id: 'u_beth', state: '6', active: 'false', short_description: 'VPN drops every hour at home',
+                        close_notes: 'Replaced the VPN client profile', resolved_at: g.fmtUtc(g.P.now - 86400000) });
+    g.put('incident', { sys_id: 'r2', number: 'INC0019002', caller_id: 'u_admin', state: '6', active: 'false', short_description: 'VPN keeps dropping for the CFO',
+                        close_notes: 'Executive VPN exception granted (confidential)', resolved_at: g.fmtUtc(g.P.now - 86400000) });
+    g.P.user = BETH;
+    g.P.ACL = function (table, op, rec) { return table !== 'incident' || (op === 'read' && rec.caller_id === 'u_beth'); };
+    s.model(gem.call('find_similar_resolved', { query: 'my vpn drops' }), gem.text('Found one.'));
+    s.say('has my vpn problem happened before?');
+    var res = lastResult(s);
+    T.match(res, /INC0019001/);
+    T.notMatch(res, /INC0019002|confidential/, 'someone else\'s ticket and its close notes stay out');
+});
+
 T.run(__filename);
