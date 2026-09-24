@@ -78,6 +78,14 @@ function loadClient() {
     var ctrl = {};
     global.api.controller.call(ctrl, { $on: function () {}, $applyAsync: function () {} }, function (f) { return f; }, {});
     delete global.__NETRA_CLIENT_EXPORT__;
+    // the hook returns before the rest of the controller body runs, so the
+    // UPPER_CASE constants declared below it (regexes, thresholds, lists on
+    // one line) are hoisted but undefined: give them their real values, so
+    // a test exercises the same thresholds the page does
+    var constRe = /^    var ([A-Z][A-Z0-9_]*)\s*=\s*(\/(?:[^\/\\\n]|\\.)+\/[gimuy]*|-?\d+(?:\.\d+)?|'[^'\n]*'|\[[^\]]*\]|true|false);/gm, cm;
+    while ((cm = constRe.exec(src))) {
+        try { if (out.get(cm[1]) === undefined) out.set(cm[1], vm.runInThisContext('(' + cm[2] + ')')); } catch (e) {}
+    }
     return out;
 }
 

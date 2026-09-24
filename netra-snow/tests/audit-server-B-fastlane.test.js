@@ -225,7 +225,7 @@ T.test('status reads in a partial answer say the state, not "I ran"', function (
     for (var i = 0; i < 3; i++) reads.push(['get_ticket_status', { ticket_number: 'INC00100' + (13 + i) }]);
     s.model(gem.calls(reads), gem.quota429('day'), gem.quota429('day'), gem.quota429('day'), gem.quota429('day'));
     var r = s.say('check tickets 13 14 and 15');
-    T.match(r.message, /incident ending 0 1 3\*\* is in progress/);
+    T.match(r.message, /incident ending 0 1 3\*\*, VPN drops every few minutes, is in progress, priority moderate/);
     T.notMatch(r.message, /I ran get ticket status/);
 });
 

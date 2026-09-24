@@ -1331,14 +1331,33 @@
         return 'in about ' + h + ' hour' + (h === 1 ? '' : 's');
     }
 
+    // The browser's clock offset (minutes east of UTC) rides every chat
+    // request: someone in Bengaluru whose profile still says Pacific must
+    // hear Bengaluru times. Without it, the profile timezone decides.
+    function _tzOffsetMs() {
+        var m = input && input.tz_offset_min;
+        if (typeof m === 'string' && m !== '') m = parseInt(m, 10);
+        if (typeof m !== 'number' || isNaN(m) || m < -14 * 60 || m > 14 * 60) return null;
+        return m * 60000;
+    }
+    // "YYYY-MM-DD HH:MM" in the user's timezone
+    function _localStamp(ms) {
+        var off = _tzOffsetMs();
+        if (off !== null) {
+            var d = new Date(ms + off), p = function (n) { return (n < 10 ? '0' : '') + n; };
+            return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
+        }
+        var g = new GlideDateTime();
+        g.setNumericValue(ms);
+        // internal format in the profile timezone - the plain display value
+        // follows their format preference ("03:05:00 PM" broke the parse)
+        return String(g.getDisplayValueInternal()).substring(0, 16);
+    }
+    function _localHour(ms) { return parseInt(_localStamp(ms).substring(11, 13), 10); }
+
     function _clockAt(ms) {
-        // the user's own timezone, via the display value
         try {
-            var g = new GlideDateTime();
-            g.setNumericValue(ms);
-            // internal format in the user's timezone - the plain display value
-            // follows their format preference ("03:05:00 PM" broke the parse)
-            var dv = String(g.getDisplayValueInternal());   // e.g. 2026-09-24 00:30:00
+            var dv = _localStamp(ms);   // e.g. 2026-09-24 00:30
             var hm = dv.split(' ')[1] || '';
             var hh = parseInt(hm.split(':')[0], 10), mm = hm.split(':')[1] || '00';
             var ap = hh >= 12 ? 'PM' : 'AM';
@@ -1353,10 +1372,8 @@
         var clock = _clockAt(ms);
         if (!clock) return '';
         try {
-            var g = new GlideDateTime();
-            g.setNumericValue(ms);
-            var day = String(g.getDisplayValueInternal()).substring(0, 10);
-            var today = String(new GlideDateTime().getDisplayValueInternal()).substring(0, 10);
+            var day = _localStamp(ms).substring(0, 10);
+            var today = _localStamp(new GlideDateTime().getNumericValue()).substring(0, 10);
             if (day === today) return 'at ' + clock;
             var dUtc = Date.UTC(parseInt(day.substring(0, 4), 10), parseInt(day.substring(5, 7), 10) - 1, parseInt(day.substring(8, 10), 10));
             var tUtc = Date.UTC(parseInt(today.substring(0, 4), 10), parseInt(today.substring(5, 7), 10) - 1, parseInt(today.substring(8, 10), 10));
@@ -1811,6 +1828,15 @@
      */
     function _fastIntents() {
         return [
+            // an explicit web search - real results, no model call
+            function (lc, norm, contents) {
+                // "such the web", "surge the web": what recognizers make of "search"
+                var m = lc.match(/^(?:please |netra )?(?:(?:search|such|surge|sir|look ?up|check|find)(?: (?:it|this|that))?(?: (?:on|in))?(?: the)? (?:web|internet|net|online|google|bing)(?: for| about)?|google|bing|web search(?: for)?|what does the (?:web|internet) say about)[:,]?\s+(.{3,})$/);
+                if (!m) return null;
+                var q = m[1].replace(/[?.!]+$/, '');
+                var res = _searchWeb(q);
+                return _flReply(_saySearch(res, q), contents, 'search_web', 'fast_lane', { search: res.ok ? { source: res.source, heading: res.heading, url: res.url } : null });
+            },
             // quota / health - honest, from the ledger, free
             function (lc, norm, contents) {
                 if (!/^(quota status|quota|brain status|model status|how'?s your brain|how is your brain|are you (ok|okay|alright)|are you in basic mode|how are your models|what'?s your quota|how much quota( do you have)?( left)?|how much (brain|thinking|model|ai|quota|capacity)( power)?( do you have| have you got| is there)? left|how many (calls|questions|requests)( do you have| have you got)? left|(what'?s|what is) (your|the) (brain|model|ai) status|are you running low)$/.test(lc)) return null;
@@ -1849,7 +1875,7 @@
             },
             // my tickets
             function (lc, norm, contents) {
-                if (!/^((list|show|read|tell me|give me|what are)( me)?( all)? )?my( open)? tickets( please)?$|^what'?s on my plate$|^any (new |open )?tickets( for me)?$/.test(lc)) return null;
+                if (!/^((list|show|read|tell me|give me|what are|check)( me)?( all)?( of)? )?my( open| current| active)? (tickets?|incidents?|cases?|work|queue)( please)?$|^what'?s on my plate$|^any (new |open )?(tickets?|incidents?)( for me)?$|^(what|which) tickets? (do i have|are mine|are on me)$/.test(lc)) return null;
                 var tl = _runTool('list_tickets', {});
                 _parkMore('tickets', tl, 3);
                 return _flReply(_sayTicketList(tl), contents, 'list_tickets');
@@ -2219,6 +2245,14 @@
         if (/^(resolve|close|approve|reject|assign|reassign|update|change|set|delete|cancel) /.test(lc) || /\b(escalate|reassign)\b/.test(lc)) {
             return _flReply(notice + 'I will not make that kind of change in basic mode - I want my full reasoning for anything beyond raising a ticket. ' + _offlineWhen(why && why.resting_until_ms) + ' I can still read tickets, list your work, and give you the debrief.', contents, 'offline_refuse', 'offline');
         }
+        // a general question: the web still answers with no model at all
+        if (/^(what|who|where|when|why|how)('s| is| are| was| were| does| do| did| much| many| long| far| old)\b|^(tell me about|explain|define|meaning of|who was)\b/.test(lc) &&
+            !/\b(ticket|tickets|incident|incidents|change|changes|problem|problems|request|requests|approval|approvals|task|tasks|my|netra|you|your|queue|watch|debrief|mission|order|plan|kb\d|inc\d|chg\d|prb\d|ritm\d)\b/.test(lc)) {
+            try {
+                var web = _searchWeb(clean.replace(/[?.!]+$/, ''));
+                if (web && web.ok) return _flReply(notice + _saySearch(web, clean), contents, 'search_web', 'offline', { search: { source: web.source, heading: web.heading, url: web.url } });
+            } catch (eWeb) {}
+        }
         // a described problem: search by meaning (separate embedding quota)
         if (clean.split(/\s+/).length >= 4) {
             try {
@@ -2291,7 +2325,11 @@
         if (name === 'list_tickets') return _sayTicketList(res);
         if (name === 'list_approvals') return _sayApprovals(res);
         if (name === 'summarize_ticket') return _saySummary(res);
-        if (name === 'get_ticket_status' && res.ticket && res.ticket.number) return _spkNum(res.ticket.number) + ' is ' + String(res.ticket.state || 'in an unknown state').toLowerCase();
+        if (name === 'get_ticket_status' && res.ticket && res.ticket.number) {
+            var tk = res.ticket;
+            return _spkNum(tk.number) + (tk.short_description ? ', ' + String(tk.short_description).substring(0, 90) + ',' : '') + ' is ' + String(tk.state || 'in an unknown state').toLowerCase() +
+                   (tk.priority ? ', priority ' + String(tk.priority).replace(/^\d+ - /, '').toLowerCase() : '') + (tk.assigned_to ? ', with ' + tk.assigned_to : '');
+        }
         if (name === 'find_similar_resolved' && res.count) return _spkNum(res.matches[0].number) + ' looked similar' + (res.matches[0].close_notes ? ', fixed with "' + String(res.matches[0].close_notes).substring(0, 100) + '"' : '');
         if (name === 'away_report') return _sayAway(res);
         if (name === 'suspect_changes' && res.suspects && res.suspects.length) return res.suspects[0].sentence;
@@ -3478,7 +3516,7 @@
 '- NEVER say "I cannot access scripts" or "my tools only handle records" - that is wrong. You CAN read scripts. Use read_script.\n' +
 '\n' +
 'R2 - WEB SEARCH + IN-TAB CONTROL:\n' +
-'- For general-knowledge questions OUTSIDE ServiceNow (definitions, facts, "what is X", "who is X", "tell me about X"), call search_web. It uses free DuckDuckGo + Wikipedia. Cite the source briefly in your reply: "According to Wikipedia, ..." or "DuckDuckGo says, ...".\n' +
+'- For general-knowledge questions OUTSIDE ServiceNow (definitions, facts, news, "what is X", "who is X", "tell me about X"), call search_web: it returns real results (Wikipedia, Bing, DuckDuckGo) with the source named. Answer from the top result in a sentence or two and name the source ("According to Wikipedia, ..."); never read a URL aloud.\n' +
 '- When user says "open INC...", "show me INC...", "take me to INC..." - call navigate_to_record. It navigates the users existing ServiceNow tab to that record. Announce it briefly: "Opening INC zero zero one two now."\n' +
 '- When user says "click resolve", "submit this form", "approve it" - call click_button with the button label. Limited to standard form buttons.\n' +
 '- When user says "open YouTube / Google / BBC / any external site", call open_url with the full https:// URL. Use the well-known URL: YouTube=https://www.youtube.com, Google=https://www.google.com, BBC=https://www.bbc.com, GitHub=https://github.com, etc. ALWAYS confirm verbally first: "Want me to open YouTube in a new tab?".\n' +
@@ -4144,7 +4182,7 @@
                 // ------- R2 - WEB SEARCH + IN-TAB CONTROL -------
                 {
                     name: 'search_web',
-                    description: 'Search the public internet for general-knowledge information (definitions, facts, news, encyclopaedic summaries). Uses DuckDuckGo Instant Answer + Wikipedia (both free). Use for questions OUTSIDE ServiceNow: "what is GLP-1", "who is the CEO of NVIDIA", "what is the time difference between London and Bangalore", "explain Kubernetes". Do NOT use for ServiceNow questions - use the ticket / knowledge tools for those.',
+                    description: 'Search the public internet for general-knowledge information (definitions, facts, news, encyclopaedic summaries): real results from Wikipedia, Bing and DuckDuckGo, each with its source. Use for questions OUTSIDE ServiceNow: "what is GLP-1", "who is the CEO of NVIDIA", "latest on the Windows outage", "explain Kubernetes". Do NOT use for ServiceNow questions - use the ticket / knowledge tools for those.',
                     parameters: { type: 'object', properties: {
                         query: { type: 'string', description: 'The search query in natural language' }
                     }, required: ['query'] }
@@ -5534,8 +5572,7 @@
         // Time-of-day greeting
         // internal format in the user's timezone: the display value follows
         // their 12-hour preference, where "08" can be 8 PM
-        var hour = new GlideDateTime().getDisplayValueInternal().substring(11, 13);
-        var hrNum = parseInt(hour, 10);
+        var hrNum = _localHour(new GlideDateTime().getNumericValue());
         if (isNaN(hrNum)) hrNum = 12;
         var greet = hrNum < 12 ? 'Good morning' : (hrNum < 17 ? 'Good afternoon' : 'Good evening');
         var firstName = gs.getUserDisplayName().split(' ')[0];
@@ -7501,104 +7538,142 @@
      *  factoids / definitions / abstracts; Wikipedia REST API handles
      *  encyclopaedic summaries when DDG comes back empty.
      * =================================================================== */
-    function _searchWeb(query) {
-        if (!query) return { ok: false, error: 'Query is required.' };
-
-        // 1. Try DuckDuckGo Instant Answer first
+    // text out of HTML/XML: tags gone, entities decoded, whitespace folded
+    function _stripHtml(x) {
+        var dec = function (t) {
+            return String(t).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+                .replace(/&nbsp;/g, ' ').replace(/&#(\d+);/g, function (m0, n) { return String.fromCharCode(parseInt(n, 10)); }).replace(/&amp;/g, '&');
+        };
+        // feeds carry escaped HTML inside XML: decode, drop the tags, decode again
+        return dec(dec(String(x || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')).replace(/<[^>]+>/g, ' '))
+            .replace(/\s+/g, ' ').replace(/\s+([.,;:!?])/g, '$1').replace(/^\s+|\s+$/g, '');
+    }
+    function _httpGet(url, ua, accept) {
+        var rm = new sn_ws.RESTMessageV2();
+        rm.setEndpoint(url);
+        rm.setHttpMethod('GET');
+        rm.setHttpTimeout(8000);
+        rm.setRequestHeader('User-Agent', ua || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) NetraVoiceAssistant/7');
+        if (accept) rm.setRequestHeader('Accept', accept);
+        var r = rm.execute();
+        var body = String(r.getBody() || '');
+        // R4.5 - cap the body: a misbehaving endpoint must not block the
+        // request thread on a huge parse
+        if (body.length > 300000) body = body.substring(0, 300000);
+        return { status: r.getStatusCode(), body: body };
+    }
+    // the same words the user used, so a result about something else
+    // ("A Carinae" for "a carina engine") is not read out as an answer
+    function _contentWords(q) {
+        return String(q || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) { return w.length > 2 && !/^(the|and|for|what|who|where|when|why|how|does|did|are|was|were|about|tell|explain|define|meaning|between|search|web|internet|online|google|look|find)$/.test(w); });
+    }
+    function _shareWords(q, text) {
+        var qs = _contentWords(q);
+        var t = ' ' + String(text || '').toLowerCase() + ' ';
+        var hit = 0;
+        for (var i = 0; i < qs.length; i++) if (t.indexOf(' ' + qs[i]) >= 0) hit++;
+        return qs.length ? hit / qs.length : 1;
+    }
+    function _bingSearch(query) {
+        var r = _httpGet('https://www.bing.com/search?format=rss&q=' + encodeURIComponent(query), 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36');
+        if (r.status !== 200) return [];
+        var out = [], re = /<item>([\s\S]*?)<\/item>/g, m;
+        while ((m = re.exec(r.body)) && out.length < 4) {
+            var it = m[1];
+            var title = _stripHtml((it.match(/<title>([\s\S]*?)<\/title>/) || ['', ''])[1]);
+            var link = _stripHtml((it.match(/<link>([\s\S]*?)<\/link>/) || ['', ''])[1]);
+            var desc = _stripHtml((it.match(/<description>([\s\S]*?)<\/description>/) || ['', ''])[1]);
+            if (title && desc) out.push({ title: title, snippet: desc.substring(0, 400), url: link, source: 'Bing' });
+        }
+        return out;
+    }
+    function _ddgSearch(query) {
+        var r = _httpGet('https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(query), 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36');
+        if (r.status !== 200) return [];
+        var out = [];
+        var links = [], re = /<a[^>]+class="result-link"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g, m;
+        while ((m = re.exec(r.body)) && links.length < 6) links.push({ url: _stripHtml(m[1]), title: _stripHtml(m[2]) });
+        var snips = [], re2 = /<td[^>]+class="result-snippet"[^>]*>([\s\S]*?)<\/td>/g;
+        while ((m = re2.exec(r.body)) && snips.length < 6) snips.push(_stripHtml(m[1]));
+        for (var i = 0; i < links.length && out.length < 4; i++) {
+            if (links[i].title && snips[i]) out.push({ title: links[i].title, snippet: snips[i].substring(0, 400), url: links[i].url, source: 'DuckDuckGo' });
+        }
+        return out;
+    }
+    // the thing a question is about, for the encyclopaedia's search box:
+    // "who founded ServiceNow" -> "ServiceNow", "how tall is the Eiffel
+    // tower" -> "Eiffel tower", "what does GLP-1 stand for" -> "GLP-1"
+    function _wikiTerm(query) {
+        var t = String(query || '').replace(/\?+$/, '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        t = t.replace(/^(what|who|which|where|when|how (many|much|old|tall|big|far|long|high|deep|fast|heavy))('s| is| are| was| were| did| does| do| will)?\s+/i, '')
+             .replace(/^(founded|created|invented|wrote|made|built|owns|runs|discovered|started|directed|painted|composed|leads|born|died)\s+/i, '')
+             .replace(/^(define|definition of|meaning of|explain|tell me about|the meaning of)\s+/i, '')
+             .replace(/\s+(mean|stand for|born|die|founded|invented|made|built|located|situated)$/i, '')
+             .replace(/^(a|an|the)\s+/i, '');
+        return t || String(query || '');
+    }
+    function _wikiSearch(query) {
+        var r = _httpGet('https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=3&srsearch=' + encodeURIComponent(query), 'NetraVoiceAssistant/7 (ServiceNow widget)', 'application/json');
+        if (r.status !== 200) return null;
+        var j;
+        try { j = JSON.parse(r.body); } catch (e) { return null; }
+        var hits = (j && j.query && j.query.search) || [];
+        if (!hits.length) return null;
+        var top = hits[0];
+        var extract = '';
         try {
-            var ddgUrl = 'https://api.duckduckgo.com/?q=' + encodeURIComponent(query) +
-                         '&format=json&no_html=1&skip_disambig=1&t=netra';
-            var rm = new sn_ws.RESTMessageV2();
-            rm.setEndpoint(ddgUrl);
-            rm.setHttpMethod('GET');
-            rm.setHttpTimeout(8000);
-            var r = rm.execute();
-            if (r.getStatusCode() === 200) {
-                // R4.5 - cap response body at 200 KB before parsing.
-                // A misbehaving endpoint returning 50 MB would block the
-                // request thread on JSON.parse for many seconds.
-                var _rawBody = r.getBody() || '{}';
-                if (_rawBody.length > 200000) _rawBody = _rawBody.substring(0, 200000);
-                var body;
-                try { body = JSON.parse(_rawBody); } catch (eJ) { body = {}; }
-                var abstract = String(body.AbstractText || body.Abstract || '').trim();
-                var url      = String(body.AbstractURL  || body.URL      || '').trim();
-                var source   = String(body.AbstractSource || '').trim();
-                var heading  = String(body.Heading || query).trim();
-                if (abstract) {
-                    return {
-                        ok: true, source: 'DuckDuckGo / ' + (source || 'web'),
-                        heading: heading,
-                        answer: abstract.substring(0, 1200),
-                        url: url,
-                        message: 'Found a definition for ' + heading + '.'
-                    };
-                }
-                // DDG also returns RelatedTopics with text snippets
-                if (body.RelatedTopics && body.RelatedTopics.length > 0) {
-                    var snippets = [];
-                    for (var i = 0; i < body.RelatedTopics.length && snippets.length < 3; i++) {
-                        var t = body.RelatedTopics[i];
-                        if (t.Text) snippets.push(t.Text);
-                        else if (t.Topics && t.Topics[0] && t.Topics[0].Text) snippets.push(t.Topics[0].Text);
-                    }
-                    if (snippets.length) {
-                        return {
-                            ok: true, source: 'DuckDuckGo',
-                            heading: query,
-                            answer: snippets.join(' '),
-                            url: url || 'https://duckduckgo.com/?q=' + encodeURIComponent(query),
-                            message: 'Found ' + snippets.length + ' relevant snippets.'
-                        };
-                    }
-                }
-            }
-        } catch (e) { /* fall through to Wikipedia */ }
-
-        // 2. Fall through to Wikipedia REST API summary
-        try {
-            var title = query.replace(/\s+/g, '_');
-            var wikiUrl = 'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title);
-            var rm2 = new sn_ws.RESTMessageV2();
-            rm2.setEndpoint(wikiUrl);
-            rm2.setHttpMethod('GET');
-            rm2.setRequestHeader('Accept', 'application/json');
-            rm2.setHttpTimeout(8000);
-            var r2 = rm2.execute();
-            if (r2.getStatusCode() === 200) {
-                var w = JSON.parse(r2.getBody() || '{}');
-                if (w.extract) {
-                    return {
-                        ok: true, source: 'Wikipedia',
-                        heading: String(w.title || query),
-                        answer: String(w.extract).substring(0, 1200),
-                        url: w.content_urls && w.content_urls.desktop ? w.content_urls.desktop.page : '',
-                        message: 'Found a Wikipedia entry for ' + (w.title || query) + '.'
-                    };
-                }
-            }
-            // 3. As a last resort, Wikipedia OpenSearch for fuzzy match
-            var osUrl = 'https://en.wikipedia.org/w/api.php?action=opensearch&format=json&limit=1&search=' + encodeURIComponent(query);
-            var rm3 = new sn_ws.RESTMessageV2();
-            rm3.setEndpoint(osUrl);
-            rm3.setHttpMethod('GET');
-            rm3.setHttpTimeout(8000);
-            var r3 = rm3.execute();
-            if (r3.getStatusCode() === 200) {
-                var arr = JSON.parse(r3.getBody() || '[]');
-                if (arr && arr.length >= 3 && arr[1] && arr[1].length && arr[2] && arr[2].length) {
-                    return {
-                        ok: true, source: 'Wikipedia (fuzzy)',
-                        heading: String(arr[1][0] || query),
-                        answer: String(arr[2][0] || ''),
-                        url: arr[3] && arr[3][0] ? arr[3][0] : '',
-                        message: 'Closest match via Wikipedia OpenSearch.'
-                    };
-                }
-            }
+            var r2 = _httpGet('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(String(top.title).replace(/ /g, '_')), 'NetraVoiceAssistant/7 (ServiceNow widget)', 'application/json');
+            if (r2.status === 200) extract = String(JSON.parse(r2.body).extract || '');
         } catch (e2) {}
+        return { title: String(top.title), snippet: (extract || _stripHtml(top.snippet)).substring(0, 1200),
+                 url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(String(top.title).replace(/ /g, '_')), source: 'Wikipedia' };
+    }
 
-        return { ok: false, error: 'No information found for "' + query + '". The internet did not return a clear answer.' };
+    // The public web, for questions outside ServiceNow. Encyclopaedic
+    // questions ("what is", "who is") go to Wikipedia first; anything else
+    // to a real web search (Bing, then DuckDuckGo), with Wikipedia last.
+    // Every result names its source so the answer can be attributed.
+    function _searchWeb(query) {
+        query = String(query || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        if (!query) return { ok: false, error: 'Query is required.' };
+        var newsy = /\b(latest|news|today|yesterday|tonight|this (week|month|year)|current(ly)?|right now|price|weather|forecast|score|result|outage|down\b|update|announc|release[sd]?|launch|schedule|live)\b/i.test(query);
+        var encyclopaedic = !newsy && (/^(what|who|which|where|when)('s| is| are| was| were| did| does| do)\b|^(define|definition of|meaning of|explain|tell me about|what does .+ (mean|stand for))|^who (founded|created|invented|wrote|made|built|owns|runs|discovered|started|directed|painted|composed|leads)\b|^how (many|much|old|tall|big|far|long|high|deep|fast|heavy)\b|^when (was|were|did|does|is|will)\b|^where (is|are|was|does|do)\b/i.test(query));
+        var results = [], wiki = null;
+        var addWiki = function () {
+            try { wiki = _wikiSearch(_wikiTerm(query)); } catch (eW) {}
+            if (wiki && wiki.snippet && _shareWords(query, wiki.title + ' ' + wiki.snippet) >= 0.5) results.push(wiki);
+        };
+        var addWeb = function () {
+            var web = [];
+            try { web = _bingSearch(query); } catch (eB) {}
+            if (!web.length) { try { web = _ddgSearch(query); } catch (eD) {} }
+            // the hit that is about the question first, not the row Bing put
+            // first ("Home - Founded" for "who founded ServiceNow")
+            web.forEach(function (x, i) { x._score = _shareWords(query, x.title + ' ' + x.snippet); x._i = i; });
+            web.sort(function (a, b) { return (b._score - a._score) || (a._i - b._i); });
+            // a hit sharing under a third of the user's words is about
+            // something else (a tweet about a pool for "what is cuban it"):
+            // better to say nothing was found than to read it out
+            if (_contentWords(query).length) web = web.filter(function (x) { return x._score >= 0.34; });
+            results = results.concat(web);
+        };
+        if (encyclopaedic) { addWiki(); if (!results.length) addWeb(); } else { addWeb(); if (!results.length) addWiki(); }
+        if (!results.length) return { ok: false, error: 'The web search returned nothing for "' + query + '" - say it another way, or ask me to try again.' };
+        var top = results[0];
+        return {
+            ok: true, source: top.source, heading: top.title, answer: top.snippet, url: top.url,
+            results: results.slice(0, 4).map(function (x) { return { title: x.title, snippet: x.snippet.substring(0, 300), url: x.url, source: x.source }; }),
+            message: 'Read the answer to the user in a sentence or two and name the source ("according to Wikipedia", "Bing says"). Do not read URLs aloud.'
+        };
+    }
+    // the search result as Netra says it, zero model calls
+    function _saySearch(res, query) {
+        if (!res || res.ok === false) return 'I searched the web for "' + String(query || '').substring(0, 80) + '" and found nothing clear. Say it another way and I will try again.';
+        var ans = String(res.answer || '').replace(/\s+/g, ' ');
+        var cut = ans.length > 420 ? ans.substring(0, 420).replace(/\s+\S*$/, '') + '...' : ans;
+        var more = (res.results || []).slice(1, 3).map(function (x) { return String(x.title || '').substring(0, 70); }).filter(Boolean);
+        return (res.source === 'Wikipedia' ? 'According to Wikipedia, ' + res.heading + ': ' : 'From ' + res.source + ', "' + res.heading + '": ') + cut +
+               (more.length ? ' Other results: ' + more.join('; ') + '.' : '') + ' Ask for more and I will read the next one.';
     }
 
     /* ===================================================================

@@ -129,6 +129,37 @@ The v7 code was also put through an adversarial whole-codebase audit - an
 auditor per slice, then a skeptic per slice trying to refute each finding -
 and the confirmed defects were fixed with a test each.
 
+### Her voice (v7.1)
+
+Two things had quietly broken the neural voice, so every reply fell through
+to the browser's default voice (the "tin can"):
+
+- Microsoft's read-aloud service now closes the socket with *"SSML is
+  invalid"* for anything but `<voice>` with one `<prosody>` round plain text.
+  Every reply carried `<break>` and `<emphasis>` tags, so none was ever
+  served. The pauses now live in punctuation (sentence ends, commas, dashes
+  and "..."), which the voice honours anyway.
+- The service also refuses the handshake from any browser that is not
+  **Microsoft Edge** (the user agent cannot be changed for a socket), so in
+  Chrome the neural voice is not on offer: Netra says so once in the Lab,
+  skips the doomed handshake and uses the best voice the browser has
+  (Google's online voices in Chrome). Open her in Edge for the neural voice.
+
+Along with that: the Lab's **HEARD (LIVE)** section shows the live
+transcript and, for every final, what became of it ("answered on the page",
+"sent to Netra", "dropped: my own echo", "asked to repeat"); the Lab's
+**voice** row says what is really speaking; a bare "stop" is a quiet
+acknowledgement, not sleep ("stop listening" still sleeps); "stop" spoken
+over her voice stops her even when the mic catches a word of her own after
+it, and a garbled barge-in is asked again rather than sent as a command;
+clock times and greetings use the browser's timezone, not the profile's;
+"search the web for X" (and "who founded X", "what is X") answers from
+Wikipedia or Bing with the source named, and says so when nothing relevant
+came back; the recognizer's network failures are reported instead of
+swallowed. The whole loop was tested with real speech: Indian-English
+audio played into the page's own recognition handlers, replies from the
+real instance, echo from the speakers simulated.
+
 **Known limits.** Free keys allow 20 generate calls per model per day, so a
 heavy day will still put Netra into basic mode for a while — she says so and
 says when she is back. Instances without a `caused_by` field on incident get

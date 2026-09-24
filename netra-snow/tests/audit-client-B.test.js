@@ -218,11 +218,14 @@ T.test('plan: the last hop interrupted while thinking is still reported', functi
     T.match(p.said[p.said.length - 1], /^About your earlier request: /, 'the finished plan is still reported');
 });
 
-T.test('with no plan running and nothing to answer, a bare "stop" still means sleep', function () {
+T.test('with no plan running and nothing to answer, a bare "stop" is a quiet acknowledgement - never sleep', function () {
     var p = new Page();
     p.hear('stop');
-    T.ok(!p.c.alert, 'asleep');
+    T.ok(p.c.alert, 'still awake: a bare stop put her to sleep and everything after was ignored');
     T.eq(p.sent, []);
+    T.eq(p.said, [], 'nothing to talk over');
+    p.hear('stop listening');
+    T.ok(!p.c.alert, 'the explicit phrase still means sleep');
 });
 
 /* ---- #3 "no" and "ok" are answers ---- */
@@ -433,9 +436,10 @@ T.test('dictation containing a sleep phrase is dictation, not sleep', function (
      'the user said goodbye to the old laptop', 'add a note user was told to be quiet'].forEach(function (u) {
         T.ok(!f.matchSleep(u), u);
     });
-    ['stop listening', 'Stop listening.', 'Netra, go to sleep', 'that\'s all', 'okay, that\'s all', 'thanks, goodbye Netra', 'goodbye', 'good night', 'stop'].forEach(function (u) {
+    ['stop listening', 'Stop listening.', 'Netra, go to sleep', 'that\'s all', 'okay, that\'s all', 'thanks, goodbye Netra', 'goodbye', 'good night'].forEach(function (u) {
         T.ok(f.matchSleep(u), u);
     });
+    T.ok(!f.matchSleep('stop'), 'a bare stop is an interruption, not sleep');
     var p = new Page();
     p.model(gem.text('Added.'));
     p.hear('add a work note to INC0010013 the popup does not go away after reboot'); p.flush(100);

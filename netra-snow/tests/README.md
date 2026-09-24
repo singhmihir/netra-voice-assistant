@@ -17,7 +17,9 @@ node:
 - `lib/netra.js` loads the code. The widget server script is one IIFE whose
   router runs first; the loader injects a hook just before the router that
   exports every function, so tests see the same hoisting behaviour a live
-  chat turn does. `request(input)` runs a whole widget request through the
+  chat turn does. The client loader also gives the controller's UPPER_CASE
+  constants (regexes, thresholds, lists) their real values, so a test
+  exercises the same thresholds the page does. `request(input)` runs a whole widget request through the
   real router.
 - `lib/gemini.js` is a scripted model: a test queues exactly what the model
   replies, and every generate call is counted - so "this costs zero calls"
@@ -50,6 +52,7 @@ node:
 | `audit-server-A-core.test.js` | a yes said before a reply was heard confirms nothing; model replies end on the draft's own read-back; writes asked for after reading other people's text wait for a heard yes; notifications are delivered only once spoken; history cuts keep tool calls with their responses; partial answers name every write; the digest keeps the oldest prompts; the voice tag does not pick the model |
 | `audit-client-B.test.js` | the page wired to the real server: a running plan stops on "stop"/"wait"/"no" (on the server, not just her voice) and its next hop waits until the progress was heard; a bare "no" or "ok" reaches the server; "no, I meant X" is a command; a mid-sentence name never cuts a command and never wakes her from sleep; sleep phrases count only as the whole utterance; an interrupted reply is still said; blocked tabs and look-alike buttons are reported; spoken ticket numbers keep the next word |
 | `audit-server-H-learning-misc.test.js` | update_field writes the group, person or CI the user meant, on the right urgency/priority scale, and leaves an undo; a button is pressed only when it can be told apart; script narration reads the real code, admins only; approval triage names real records with true totals; build_query accepts the helpers it teaches, on ticket tables only; a stopped plan needs a fresh yes |
+| `voice.test.js` | clock times and greetings in the browser's timezone; web search on the fast lane and in basic mode with the source named, unrelated hits refused, ticket questions never sent to the web; her own words stripped from a barge-in; the SSML the voice service serves; "stop" over her voice with a tail, a garbled barge-in asked again, the stop that already yielded |
 | `audit-server-B-fastlane.test.js` | undo reaches only the latest write, says its age and never clobbers a later edit; the debrief speaks every report; spoken numbers parse exactly; investigations respect ACLs; partial answers name every write; board, "pardon" and "read the rest" keep a yes answerable; true timing facts |
 
 CI runs the suite on every push and pull request that touches `netra-snow/`

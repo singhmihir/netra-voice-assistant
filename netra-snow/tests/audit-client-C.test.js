@@ -49,6 +49,7 @@ function engine() {
     set('_edgeWssUrl', function (cb) { cb('wss://edge.test/tts', 'req1'); });
     set('_CONTRACTION_PAIRS', []);
     set('REMOTE_FAIL_LIMIT', 2); set('_streamFails', 0); set('_edgeFails', 0); set('REMOTE_TTS_VOICE', 'Raveena');
+    set('EDGE_GEC_VERSIONS', ['1-143.0.3650.75', '1-140.0.3485.14']); set('_edgeVerIdx', 0); set('_edgeVerTried', 0); set('_edgeVerOpenedAt', 0); set('_edgeLiveBroken', false);
     set('BARGE_GUARD_MS', 450); set('TTS_GUARD_MS', 350);
     set('_speakSessionId', 0); set('_turnEpoch', 0); set('_speakingNow', false); set('_speakingText', '');
     set('_calibActive', false); set('_localReminderTimers', {}); set('_ackIds', []); set('seenIds', {});

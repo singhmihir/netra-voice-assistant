@@ -131,6 +131,7 @@ api.controller = function ($scope, $timeout, $window) {
 
     c.events      = [];
     c.interim     = '';
+    c.heard       = [];   // last finals: {t, text, conf, fate} - the Lab shows them live
     c.confidence  = '';
     c.voiceName   = '(picking...)';
     c.permission  = '(unknown)';
@@ -667,6 +668,20 @@ api.controller = function ($scope, $timeout, $window) {
         // R13 - out-of-box experience: the very first visit opens the
         // setup panel so a new user starts with their preferences
         if (firstEver) { c.setupOn = true; $scope.$applyAsync(); }
+        // a mic that scored well recently is not checked again on every
+        // load: the check read a sentence at the user each time and swallowed
+        // their first command. "Mic check" or the Lab runs it any time.
+        var saved = null;
+        try { saved = JSON.parse(localStorage.getItem('netra_calib') || 'null'); } catch (eSv) {}
+        var recentGood = !!(saved && typeof saved.score === 'number' && saved.score >= 75 && saved.at &&
+                            Date.now() - Date.parse(saved.at) < 14 * 86400000);
+        if (!firstEver && recentGood && micOk) {
+            logEvent('lab', 'mic check skipped - scored ' + saved.score + '% recently; say "mic check" to run it again');
+            c.labCalib = { stage: 'saved', heard: '', score: saved.score, verdict: 'last run ' + String(saved.at).substring(0, 10) + ' - say "mic check" to run again' };
+            speak('I am listening - just speak.');
+            $scope.$applyAsync();
+            return;
+        }
         startCalibration(firstEver, uiLine);
     }
     c.calibSkip = function () {
@@ -1472,7 +1487,7 @@ api.controller = function ($scope, $timeout, $window) {
      * ============================================================ */
     var WAKE_WORDS = [
         // direct
-        'netra','neetra','naitra','naytra','naetra','neetraa','netraa','netaa','netraah',
+        'netra','neetra','naitra','naytra','naetra','neetraa','netraa','netaa','netraah','nada','nadra','nadar',
         // vowel variations
         'nitra','natra','neatra','neutra','noitra','nutra','natraa','neitra','noetra',
         // soft consonant (Hindi dh/th influence)
@@ -1557,8 +1572,9 @@ api.controller = function ($scope, $timeout, $window) {
     function matchSleep(s) {
         if (!s) return false;
         var t = String(s).trim();
-        return /^((ok|okay|alright|thanks|thank you)[,.!]*\s+)?((hey |ok |okay )?netra[,!.]*\s*)?(stop listening|go to sleep|sleep mode|sleep now|pause listening|be quiet|stop now|that'?s all|that is all|go away|goodbye|good ?night)([,\s]+netra)?[.!,?\s]*$/i.test(t)
-            || /^stop$/i.test(t);
+        // a bare "stop" is an interruption, never sleep: she went dormant on
+        // it and everything said after was ignored ("she stopped hearing me")
+        return /^((ok|okay|alright|thanks|thank you)[,.!]*\s+)?((hey |ok |okay )?netra[,!.]*\s*)?(stop listening|go to sleep|sleep mode|sleep now|pause listening|be quiet|stop now|that'?s all|that is all|go away|goodbye|good ?night)([,\s]+netra)?[.!,?\s]*$/i.test(t);
     }
     function matchExplicitWakeUp(s) {
         if (!s) return false;
@@ -1649,7 +1665,7 @@ api.controller = function ($scope, $timeout, $window) {
             return { intent: 'time', reply: 'The time is ' + h12 + ' ' + mmTxt + ' ' + ampm + '.' };
         }
         // date
-        if (/^(what(\s+is|'s)?(\s+the|\s+today'?s)?\s+date( today)?|today'?s\s+date|what day is (it|today)|aaj\s+kya\s+tareekh\s+hai|tareekh)$/.test(bare)) {
+        if (/^(what(\s+is|'s)?(\s+the|\s+today'?s)?\s+date( today| now)?|today'?s\s+date|(what|which) day (is|of the week is) (it|today)( today)?|what('s| is) (the )?day( today)?|aaj\s+kya\s+tareekh\s+hai|aaj\s+kaun\s+sa\s+din\s+hai|tareekh)$/.test(bare)) {
             var d = new Date();
             var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
             var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -2663,7 +2679,10 @@ api.controller = function ($scope, $timeout, $window) {
     var _floorStuckStrikes = 0;
     // R8.2 - prosody capture (speech-delivery sentiment hints for the brain)
     var _prosFirstAt = 0, _prosSum = 0, _prosN = 0, _prosPeak = 0;
+    var _netErrStreak = 0, _lastNetErrSaidAt = 0;
     c.micHealth = {
+        speechService: 'ok',    // 'unreachable' after 3 network errors in a row
+        networkErrors: 0,
         srRestarts: 0,          // onend->restart cycles
         fullRecycles: 0,        // full mic+SR teardown/rebuilds
         preventiveRecycles: 0,  // proactive session refreshes (age > 4 min)
@@ -2702,6 +2721,7 @@ api.controller = function ($scope, $timeout, $window) {
         contRec.onresult = function (ev) {
             recLastActivityAt = Date.now();   // R1.1 - silent-rec heartbeat
             _notAllowedStrikes = 0;           // R8.1 - real results = mic healthy
+            if (_netErrStreak) { _netErrStreak = 0; c.micHealth.speechService = 'ok'; }
             for (var i = ev.resultIndex; i < ev.results.length; i++) {
                 var res = ev.results[i];
                 var t = (res[0] && res[0].transcript) || '';
@@ -2754,6 +2774,7 @@ api.controller = function ($scope, $timeout, $window) {
                 // every final is echo-scored instead of blanket-dropped.
                 if (Date.now() < ignoreFinalsUntil) {
                     logEvent('rec.echo', '"' + t.trim() + '" (ignored - within TTS guard)');
+                    _heardLog(t, conf, 'dropped: right after my own voice');
                     continue;
                 }
                 // R7 - echo tail after an instant yield: her audio stopped
@@ -2762,6 +2783,7 @@ api.controller = function ($scope, $timeout, $window) {
                 // and drop pure echo, while the user's real command passes.
                 if (Date.now() - _lastYieldAt < 1200 && _looksLikeEcho(t)) {
                     logEvent('rec.echo', '"' + t.trim() + '" (post-yield echo tail)');
+                    _heardLog(t, conf, 'dropped: my own echo');
                     continue;
                 }
                 // R6 - BARGE-IN: Netra currently holds the floor (speaking,
@@ -2771,6 +2793,7 @@ api.controller = function ($scope, $timeout, $window) {
                 // falls through to be processed as the next command.
                 if (_speakingNow || _fillerChainActive || currentFillerAudio || currentFillerUtter) {
                     if (_handleFinalWhileSpeaking(t, conf)) continue;
+                    if (_lastBargeText) { t = _lastBargeText; _lastBargeText = ''; }
                 }
                 // R2.2 - pick the best alternative against personal vocab
                 var picked = pickBestAlternative(res);
@@ -2796,10 +2819,26 @@ api.controller = function ($scope, $timeout, $window) {
             //   'aborted'       = deliberate stop OR Chrome's 5-min session limit
             //   'network'       = transient network blip (also self-recovers)
             // Silently ignore so they do not pollute the dev log.
+            if (ev.error === 'network') {
+                // the browser could not reach its speech service: sound is
+                // captured but no words come back. Silent before, so it read
+                // as "she does not understand me" - say what it is, once.
+                _netErrStreak++;
+                c.micHealth.networkErrors = (c.micHealth.networkErrors || 0) + 1;
+                if (_netErrStreak === 3) {
+                    c.micHealth.speechService = 'unreachable';
+                    logEvent('err', 'speech service unreachable - 3 network errors in a row (the browser can not reach Google speech recognition: network, VPN or proxy)');
+                    if (Date.now() - _lastNetErrSaidAt > 300000 && !_speakingNow) {
+                        _lastNetErrSaidAt = Date.now();
+                        speak('I can hear sound, but the browser can not reach its speech service right now, so I can not make out words. That is usually the network or a VPN. You can still type to me in the Lab.');
+                    }
+                    $scope.$applyAsync();
+                }
+                return;
+            }
             if (ev.error === 'no-speech' ||
                 ev.error === 'audio-capture' ||
-                ev.error === 'aborted' ||
-                ev.error === 'network') {
+                ev.error === 'aborted') {
                 return;
             }
             if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
@@ -3286,6 +3325,19 @@ api.controller = function ($scope, $timeout, $window) {
         if (words > 0 && words <= 6) return 850;    // short command shape
         return FINAL_DEBOUNCE_MS;                    // long dictation - be patient
     }
+    function _heardLog(text, conf, fate) {
+        try {
+            if (!c.heard) c.heard = [];
+            var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+            c.heard.unshift({ t: p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()),
+                              text: String(text || '').trim().substring(0, 160),
+                              conf: (typeof conf === 'number' && conf > 0) ? conf.toFixed(2) : '-', fate: fate || 'heard' });
+            if (c.heard.length > 12) c.heard.length = 12;
+            $scope.$applyAsync();
+        } catch (e) {}
+    }
+    function _heardFate(fate) { if (c.heard && c.heard.length) { c.heard[0].fate = fate; $scope.$applyAsync(); } }
+
     function _enqueueFinalTranscript(text, conf) {
         if (!text || !text.trim()) return;
         _finalBuffer.push(text.trim());
@@ -3328,7 +3380,7 @@ api.controller = function ($scope, $timeout, $window) {
         var clean = (text || '').trim().substring(0, 12000);
         if (!clean) return;
         // R8.1 - calibration read-back has priority over command routing
-        if (_calibConsume(clean)) return;
+        if (_calibConsume(clean)) { _heardLog(clean, conf, 'mic check read-back'); return; }
         var lower = clean.toLowerCase();
         c._hushed = false;   // "quiet" lasts until the user speaks again
         c.prevHeard  = c.lastHeard;   // what "I said X" / "no, I meant X" corrects
@@ -3336,6 +3388,7 @@ api.controller = function ($scope, $timeout, $window) {
         c.confidence = conf ? conf.toFixed(2) : '-';
         if (typeof conf === 'number') _pushConfidence(conf);   // R1 chart
         logEvent('rec.f', '"' + clean + '" conf=' + c.confidence);
+        _heardLog(clean, conf, 'heard');
         // R2.2 - auto-learn: every word in a confident utterance becomes
         // part of the personal vocabulary, so frequent names/projects
         // self-reinforce over time.
@@ -3345,12 +3398,14 @@ api.controller = function ($scope, $timeout, $window) {
         // ---- 0. "no" / "stop" to a running plan or a waiting read-back is
         // the server's answer - not sleep, and never too short to count ----
         if (c.alert && c.conversationOpen && _isNoAnswer(clean)) {
+            _heardFate('answer: no');
             _answerNo(clean);
             return;
         }
 
         // ---- 1. Sleep command works in any mode ----
         if (matchSleep(lower)) {
+            _heardFate('sleep');
             _cancelPlanContinue();
             commandMode = false;
             if (commandTimer) $timeout.cancel(commandTimer);
@@ -3363,6 +3418,36 @@ api.controller = function ($scope, $timeout, $window) {
             return;
         }
 
+        // ---- 1b. "stop" / "wait" with nothing playing: a quiet acknowledgement.
+        // She has already stopped; a spoken reply here would be one more
+        // thing to talk over ----
+        if (c.alert) {
+            // by any spelling the recognizer gives her name ("nada stop")
+            var afterName = matchesWake(clean);
+            var stopBody = (afterName !== null && afterName.length) ? afterName : clean;
+            var stopLead = stopBody.match(LEADING_STOP_RE);
+            if (stopLead) {
+                var stopTail = String(stopLead[stopLead.length - 1] || '').trim();
+                if (stopTail.split(/\s+/).filter(Boolean).length < 3) {
+                    // the live transcript already stopped her a moment ago:
+                    // this final is that same "stop", plus whatever the mic
+                    // caught of her last word
+                    if (Date.now() - _bargeStoppedAt < 3000) {
+                        _heardFate('stop - yielded');
+                        logEvent('conv', '"' + clean + '" - the stop that already yielded');
+                        return;
+                    }
+                    _heardFate('stop - nothing was playing');
+                    logEvent('conv', '"' + clean + '" - nothing to stop');
+                    cue('pause');
+                    return;
+                }
+                // "stop, what time is it": the command after the stop
+                clean = stopTail; lower = clean.toLowerCase();
+                logEvent('conv', 'stop, then: "' + clean + '"');
+            }
+        }
+
         // ---- 2. Dormant mode: only wake commands resume ----
         if (!c.alert) {
             // Accept: "Netra ..." leading the utterance, or a whole "wake up" /
@@ -3370,6 +3455,7 @@ api.controller = function ($scope, $timeout, $window) {
             // phone or a colleague named Neha is not the user asking for her.
             var wakePhrase = !(conf > 0 && conf < MIN_CONFIDENCE) && matchExplicitWakeUp(clean);
             if (wakePhrase) {
+                _heardFate('woke her');
                 c.alert = true;
                 setState('idle');
                 cue('resume');
@@ -3384,6 +3470,7 @@ api.controller = function ($scope, $timeout, $window) {
                 }
             } else {
                 logEvent('rec', 'dormant - ignored');
+                _heardFate('ignored: asleep - say "Netra" to wake her');
             }
             return;
         }
@@ -3400,15 +3487,18 @@ api.controller = function ($scope, $timeout, $window) {
             if (stripped !== null && (stripped.length === 0 || stripped.length < 2)) {
                 cue('wake');
                 logEvent('conv', 'name only heard (still listening)');
+                _heardFate('my name - listening');
                 return;
             }
             // Filter chatter - but "no" and "ok" are whole answers
             if (input.length < MIN_LENGTH && !/^(no|ok)$/i.test(input)) {
                 logEvent('rec', 'ignored (too short: "' + input + '")');
+                _heardFate('ignored: too short');
                 return;
             }
             if (conf > 0 && conf < MIN_CONFIDENCE) {
                 logEvent('rec', 'ignored (low conf ' + conf.toFixed(2) + ': "' + input + '")');
+                _heardFate('ignored: low confidence');
                 // R8.1 - a substantial utterance heard badly used to vanish in
                 // silence, which reads as "Netra stopped responding". Nudge
                 // once (30s throttle) so the user knows to repeat.
@@ -3456,10 +3546,20 @@ api.controller = function ($scope, $timeout, $window) {
 
         // ---- 6. Otherwise - background chatter, ignore ----
         logEvent('rec', 'ignored (not addressed to Netra)');
+        _heardFate('ignored: not addressed to Netra');
     }
 
     function processCommand(text, conf) {
         var lower = (text || '').toLowerCase();
+
+        // the mic check on request, since it no longer runs on every load
+        if (/^((hey |ok |okay )?netra[,!.\s]*)?(run (a |the )?)?(mic|microphone|voice) (check|test|calibration)( please)?$|^(calibrate|recalibrate)( (the |my )?(mic|microphone))?( please)?$/i.test(lower.replace(/[.!?]+$/, '').trim())) {
+            _heardFate('mic check');
+            logEvent('lab', 'mic check requested by voice');
+            c.labCalib = { stage: 'idle', heard: '', score: null, verdict: '' };
+            startCalibration(false, '');
+            return;
+        }
 
         // Re-check sleep / wake locally
         if (matchSleep(lower)) {
@@ -3482,6 +3582,7 @@ api.controller = function ($scope, $timeout, $window) {
                 return;
             }
             logEvent('local', 'intent=' + local.intent);
+            _heardFate('answered on the page (' + local.intent + ')');
             if (local.intent === 'pace') local.reply = _stepPace(/faster|quicker|hurry|jaldi/.test(lower));
             if (local.intent === 'quiet') c._hushed = true;
             // R2.10 - intent may carry a server-side _action (e.g. rewind_mem)
@@ -3516,6 +3617,7 @@ api.controller = function ($scope, $timeout, $window) {
         // Confidence check - if too low, ask for repetition
         if (conf > 0 && conf < MIN_CONFIDENCE) {
             logEvent('warn', 'low confidence ' + conf.toFixed(2) + ' - asking for repeat');
+            _heardFate('asked to repeat (low confidence)');
             speak('Sorry, I did not catch that clearly. Kindly say it once more.', function () {
                 setState('idle');
             });
@@ -3539,6 +3641,7 @@ api.controller = function ($scope, $timeout, $window) {
         // and fire it the moment the in-flight call settles (its reply is
         // already stale via the turn epoch, so it won't be spoken).
         if (_chatInFlight) {
+            _heardFate('queued behind the current turn');
             _queuedUtterance = transcript;
             // said before the in-flight reply was heard: it can not answer it
             c._lastReplyUnheard = true;
@@ -3549,6 +3652,7 @@ api.controller = function ($scope, $timeout, $window) {
         _chatInFlight = true;
         if (transcript !== '[continue plan]') _cancelPlanContinue();
         if (_bargedReply) { logEvent('barge', 'interrupted reply superseded by a new request - not said'); _bargedReply = null; }
+        _heardFate('sent to Netra');
         var myEpoch = ++_turnEpoch;
         // a reply released by the hung timer is still on its way: this turn
         // makes it stale, so it will never be heard
@@ -3560,6 +3664,7 @@ api.controller = function ($scope, $timeout, $window) {
         setState('thinking');
         cue('think');
         logEvent('srv', 'sending: "' + transcript + '"');
+        _lastSentText = transcript;
         logEvent('mem', 'carrying ' + c.mem.prompts + ' of your prompts (' + geminiHistory.length + ' turns, ~' + c.mem.kb + 'KB) to the brain');
         _convoPush('you', transcript);   // R7 - chat tab
 
@@ -3575,6 +3680,11 @@ api.controller = function ($scope, $timeout, $window) {
         if (!c.data.auto) c._lastReplyUnheard = false;
         // R8.2 - live-stage flag (server strips navigation tools) + prosody
         c.data.live_mode = !!c.liveMode;
+        // spoken clock times follow this clock, not the profile's timezone
+        try {
+            c.data.tz_offset_min = -new Date().getTimezoneOffset();
+            c.data.tz_name = (Intl.DateTimeFormat().resolvedOptions() || {}).timeZone || '';
+        } catch (eTz) {}
         var prosOut = null;
         if (_prosFirstAt) {
             var durMin = (Date.now() - _prosFirstAt) / 60000;
@@ -3985,6 +4095,9 @@ api.controller = function ($scope, $timeout, $window) {
 
     // Reflex interrupts - yield immediately even on a single word.
     var HARD_INTERRUPT_RE = /^(netra[,!.\s]*)?(stop|wait|hold on|hang on|one sec(ond)?|shut up|be quiet|quiet|silence|pause|enough|okay okay|ok ok|no no|never ?mind|ruko|chup|bas)[.!,?\s]*$/i;
+    // the same reflex with something after it
+    var LEADING_STOP_RE = /^((hey|ok|okay) )?(netra[,!.\s]*)?(stop|wait|hold on|hang on|shut up|be quiet|quiet|silence|pause|enough|ruko|chup|bas)\b[.!,?\s]*(.*)$/i;
+    var BARGE_ASK_CONF = 0.66;   // a barge-in below this is asked again, not sent as a command
 
     function _normTokens(s) {
         return String(s || '').toLowerCase()
@@ -4008,6 +4121,30 @@ api.controller = function ($scope, $timeout, $window) {
         if (heardToks.length <= 2 && ratio >= 0.99) return true;
         return ratio >= ECHO_OVERLAP_RATIO;
     }
+
+    // With speakers, the recognizer hears her too: a final can be HER last
+    // words followed by the user's ("...your tickets what is the status of
+    // ten thirteen"). Strip her words from the edges; keep what the user said.
+    function _stripEchoEdges(heard) {
+        var own = {};
+        _normTokens(_speakingText).forEach(function (w) { own[w] = 1; });
+        _normTokens(_fillerEchoText).forEach(function (w) { own[w] = 1; });
+        var words = String(heard || '').trim().split(/\s+/).filter(Boolean);
+        if (words.length < 3) return heard;
+        var tok = words.map(function (w) { return w.toLowerCase().replace(/[^a-z0-9']/g, ''); });
+        // one-letter words ("I", "a") ride with whichever run they sit in
+        var hers = function (i) { return tok[i].length <= 1 || !!own[tok[i]]; };
+        var real = function (i) { return tok[i].length > 1 && !!own[tok[i]]; };
+        var a = 0, b = words.length, anyA = false, anyB = false;
+        while (a < b && hers(a)) { if (real(a)) anyA = true; a++; }
+        if (!anyA) a = 0;
+        while (b > a && hers(b - 1)) { if (real(b - 1)) anyB = true; b--; }
+        if (!anyB) b = words.length;
+        if (a === 0 && b === words.length) return heard;
+        if (b - a < 2) return heard;   // too little left to be a command on its own
+        return words.slice(a, b).join(' ');
+    }
+    var _lastBargeText = '';
 
     function _markSpeaking(text) {
         _speakingNow   = true;
@@ -4039,7 +4176,9 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     // Universal silencer - every engine, every filler, the pipeline queue.
+    var _bargeStoppedAt = 0;   // when the user's voice last cut her off
     function stopSpeaking(reason) {
+        if (/barge|reflex|unsure/i.test(String(reason || ''))) _bargeStoppedAt = Date.now();
         _speakSessionId++;                      // aborts pipelined sentence queue
         _turnEpoch++;                           // any in-flight reply is now stale
         // a cut-off calibration prompt never reaches its tone (edge-live
@@ -4128,6 +4267,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (!trimmed) return true;
         if (_looksLikeEcho(trimmed)) {
             logEvent('rec.echo', '"' + trimmed + '" (my own voice, overlap-matched)');
+            _heardLog(trimmed, conf, 'dropped: my own voice');
             _restoreDuck();
             return true;
         }
@@ -4144,13 +4284,48 @@ api.controller = function ($scope, $timeout, $window) {
             _dropFinalBuffer('reflex interrupt');
             return true;
         }
+        // "stop" with a tail the mic caught from the speakers ("stop a
+        // way"): the stop is the command, a short tail is noise, a longer
+        // one ("stop, what time is it") is the next command
+        var lead = trimmed.match(LEADING_STOP_RE);
+        if (lead) {
+            var tail = String(lead[lead.length - 1] || '').trim();
+            stopSpeaking('reflex "' + trimmed + '"');
+            if (tail.split(/\s+/).filter(Boolean).length < 3) {
+                logEvent('rec.echo', '"' + trimmed + '" - stopped; the tail is noise from my own voice');
+                _heardLog(trimmed, conf, 'stop - yielded');
+                _dropFinalBuffer('reflex interrupt');
+                return true;
+            }
+            _lastBargeText = tail;
+            return false;
+        }
+        var stripped = _stripEchoEdges(trimmed);
+        if (stripped !== trimmed) {
+            logEvent('rec.echo', 'my own words stripped: "' + trimmed + '" -> "' + stripped + '"');
+            trimmed = stripped;
+        }
         var words = trimmed.split(/\s+/).length;
         if (trimmed.length < BARGE_MIN_CHARS || words < 2 || (conf > 0 && conf < BARGE_MIN_CONF)) {
             logEvent('rec.echo', '"' + trimmed + '" (too weak to barge: conf=' + (conf || 0).toFixed(2) + ')');
+            _heardLog(trimmed, conf, 'dropped: too weak to interrupt');
+            return true;
+        }
+        // Speech over her own voice comes through garbled ("health and
+        // cute" for "Netra stop"): a barge-in the recognizer is unsure of
+        // stops her - the user clearly spoke - but is asked again rather
+        // than sent to the model as a command
+        if (conf > 0 && conf < BARGE_ASK_CONF && !matchLocal(trimmed.toLowerCase())) {
+            stopSpeaking('unsure barge-in "' + trimmed + '"');
+            _dropFinalBuffer('unsure barge-in');
+            _heardLog(trimmed, conf, 'asked to repeat (spoken over my voice, low confidence)');
+            logEvent('rec', 'barge-in "' + trimmed + '" conf=' + conf.toFixed(2) + ' - asking again rather than guessing');
+            $timeout(function () { speak('Sorry, say that again?', function () { setState('idle'); }); }, 250);
             return true;
         }
         // Genuine barge-in: yield the floor, let the utterance flow on
         // into the normal pipeline as the next command.
+        _lastBargeText = trimmed !== String(t || '').trim() ? trimmed : '';
         stopSpeaking('user barge-in');
         return false;
     }
@@ -4307,6 +4482,13 @@ api.controller = function ($scope, $timeout, $window) {
         // sounds most like Gemini chat). Otherwise fall through to
         // Edge / StreamElements / browser as before.
         var engine = c.ttsEngine || (c.useRemoteTTS ? 'edge' : 'browser');
+        if (engine === 'edge' && !_edgeVoiceAvailable()) {
+            if (!_edgeUnavailableSaid) {
+                _edgeUnavailableSaid = true;
+                logEvent('tts', 'the Microsoft neural voice is only served to Microsoft Edge - using the browser voice ' + (c.voiceName || '') + '. Open Netra in Edge for the neural voice, or pick the Gemini engine.');
+            }
+            engine = 'browser';
+        }
         if (engine === 'gemini') {
             speakGemini(clean, wrappedDone);
         } else if (engine === 'edge') {
@@ -4434,12 +4616,13 @@ api.controller = function ($scope, $timeout, $window) {
     function speakEdgeLive(text, done) {
         if (_edgeCircuitOpen()) return speakStreamElements(text, done);
         if (typeof WebSocket === 'undefined') return speakStreamElements(text, done);
-        if (typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported('audio/mpeg')) {
+        if (_edgeLiveBroken || typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported('audio/mpeg')) {
             return (text.length > 220 ? speakEdgePipelined(text, done) : speakEdgeTTS(text, done));
         }
         var session = ++_speakSessionId;
         var settled = false, audioStarted = false, playRequested = false;
-        var gotAnyAudio = false, wsEnded = false;
+        var gotAnyAudio = false, wsEnded = false, wsOpened = false;
+        var myVer = _edgeVersion();
         var ws = null, sb = null, audio = null, url = null;
         var pendingChunks = [];
         var msrc = new MediaSource();
@@ -4476,8 +4659,15 @@ api.controller = function ($scope, $timeout, $window) {
             $timeout.cancel(watchdog);
             cleanup();
             if (session !== _speakSessionId) return;   // user barged - stay silent
+            if (wsOpened || gotAnyAudio) {
+                // the service answered: what broke is streamed playback in
+                // this browser, so keep the neural voice through a plain blob
+                _edgeLiveBroken = true;
+                logEvent('warn', 'edge-live: ' + reason + ' - streamed playback is off for this session, using the buffered neural voice');
+                return (text.length > 220 ? speakEdgePipelined(text, done) : speakEdgeTTS(text, done));
+            }
             logEvent('warn', 'edge-live: ' + reason + ' - falling back');
-            _edgeFallback(text, done);
+            _edgeFallback(text, done, myVer, true);
         }
         var watchdog = $timeout(function () { if (!audioStarted) bail('no audio in 6s'); }, 6000);
 
@@ -4525,12 +4715,13 @@ api.controller = function ($scope, $timeout, $window) {
                 $timeout.cancel(watchdog);
                 _edgeFails = 0;
                 _ssSet('netra_edgeFails', 0);
+                _edgeVersionWorked();
                 logEvent('tts', 'edge-live playing: ' + c.edgeVoice + ' (streamed, ' + text.length + ' chars)');
             };
             audio.onended = finish;
             audio.onerror = function () {
                 if (audioStarted) finish();   // mid-play glitch: never respeak
-                else bail('audio element error');
+                else bail('audio element error ' + (audio.error ? audio.error.code + ' ' + String(audio.error.message || '').substring(0, 80) : '') + ' (chunks ' + pendingChunks.length + ', source ' + msrc.readyState + ')');
             };
 
             _edgeWssUrl(function (wssUrl, requestId) {
@@ -4541,6 +4732,8 @@ api.controller = function ($scope, $timeout, $window) {
             ws.binaryType = 'arraybuffer';
             ws.onopen = function () {
                 if (settled) return;
+                wsOpened = true;
+                _edgeVersionOpened();
                 var cfg = '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"' + EDGE_AUDIO_FORMAT + '"}}}}';
                 ws.send('X-Timestamp:' + new Date().toISOString() + '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' + cfg);
                 var ssml = _buildHumanSSML(text, c.edgeVoice);
@@ -4583,7 +4776,13 @@ api.controller = function ($scope, $timeout, $window) {
     // SSML-aware variant of _edgeBlob: same WSS transport, but runs the
     // text through _buildHumanSSML so pipelined segments keep the stress /
     // breath / hesitation prosody of the single-shot path.
-    function _edgeSsmlBlob(text, voice, cb) {
+    function _edgeSsmlBlob(text, voice, cb0, retried) {
+        var myVer = _edgeVersion(), opened = false;
+        var cb = function (blob) {
+            if (blob) { _edgeVersionWorked(); return cb0(blob); }
+            if (!retried && !opened && _edgeVersionRotate(myVer)) return _edgeSsmlBlob(text, voice, cb0, true);
+            cb0(null);
+        };
         _edgeWssUrl(function (wssUrl, requestId) {
         try {
             var ws = new WebSocket(wssUrl);
@@ -4594,6 +4793,8 @@ api.controller = function ($scope, $timeout, $window) {
                 if (!settled) { settled = true; try { ws.close(); } catch (e) {} cb(null); }
             }, 6000);
             ws.onopen = function () {
+                opened = true;
+                _edgeVersionOpened();
                 var cfg = '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"' + EDGE_AUDIO_FORMAT + '"}}}}';
                 ws.send('X-Timestamp:' + new Date().toISOString() + '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' + cfg);
                 var ssml = _buildHumanSSML(text, voice || c.edgeVoice);
@@ -4624,66 +4825,35 @@ api.controller = function ($scope, $timeout, $window) {
     // Build SSML body with natural breath breaks between sentences.
     // Splits on .!? boundaries and inserts <break time="180ms"/>.
     function _buildHumanSSML(text, voice) {
-        // R3.8 - human prosody: stress emphasis, longer breaths, ellipsis
-        // pauses, and pitch-dip on natural verbal fillers. Order matters:
-        // we replace markdown markers with placeholder sentinels first so
-        // they survive the XML escape pass, then insert breaks, then expand
-        // sentinels into real SSML tags.
-        // R4.5 - cap input length. Edge TTS hard-limits SSML to ~4 KB and
-        // each replace() copies the string, so 50 KB input does ~400 KB
-        // garbage. Real LLM replies are <2 KB; anything bigger is an
-        // error path leaking a stack trace.
+        // The read-aloud service only serves <voice> with one <prosody>
+        // (rate / pitch / volume) round plain text: a <break>, an
+        // <emphasis> or a nested <prosody> closes the socket with
+        // "SSML is invalid" (1007) - checked live 2026-09-24 - and every
+        // reply used to carry them, which is why the neural voice was
+        // never heard and the browser's default voice spoke instead. The
+        // pauses now live in the punctuation the voice already honours:
+        // sentence ends, commas, dashes and "..." (a real thinking pause).
+        // Input is capped: the service limits SSML to a few KB.
         var t = String(text || '').substring(0, 6000);
-        // R4 - if Gemini emitted an odd number of "**" markers, the last
-        // emphasis block never closes. Heuristic: close it at the next
-        // sentence boundary so we keep the stress instead of losing it.
-        var doubleCount = (t.match(/\*\*/g) || []).length;
-        if (doubleCount % 2 === 1) {
-            t = t.replace(/\*\*([^*]*)$/, function(_, tail) {
-                var idx = tail.search(/[.!?]/);
-                return idx >= 0 ? '**' + tail.substring(0, idx) + '**' + tail.substring(idx)
-                                : '**' + tail + '**';
-            });
-        }
-        // Step 1: collapse runs of asterisks. **word** -> emphasis sentinel.
-        t = t.replace(/\*\*([^*]+)\*\*/g, '\uE000EM\uE000$1\uE000/EM\uE000');
-        // Strip any leftover lone asterisks so they don't leak in.
-        t = t.replace(/\*/g, '');
-        // Step 2: ellipsis = thinking pause (~350ms)
-        t = t.replace(/\.{3,}/g, '\uE000LP\uE000');
-        // Step 3: XML escape everything else
+        // markdown emphasis markers are for the eye: drop them
+        t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*`_#]+/g, ' ');
+        // an ellipsis is the pause; longer runs are not longer pauses
+        t = t.replace(/\.{3,}/g, '...');
+        // a dash between words reads as a short pause
+        t = t.replace(/\s+(--|—)\s+/g, ' - ');
+        // XML escape
         t = t.replace(/&/g, '&amp;')
              .replace(/</g, '&lt;')
              .replace(/>/g, '&gt;')
              .replace(/"/g, '&quot;')
              .replace(/'/g, '&apos;');
-        // Step 4: sentence / comma / em-dash breath breaks (lengthened)
-        // R6 - vary the sentence breath with the sentence that FOLLOWS
-        // was implicit; instead vary by simple alternation so back-to-back
-        // sentences never get the identical metronome gap (280/340/300ms).
-        var _breathSeq = [280, 340, 300], _breathIx = 0;
-        t = t.replace(/([.!?]+)(\s|$)/g, function (_, p, sp) {
-            var ms = _breathSeq[_breathIx++ % _breathSeq.length];
-            return p + '<break time="' + ms + 'ms"/>' + sp;
-        });
-        t = t.replace(/(,)(\s)/g, '$1<break time="150ms"/>$2');
-        t = t.replace(/( - | -- | — )/g, '<break time="240ms"/>$1');
-        // Step 5: pitch-dip on natural verbal fillers so umm/uh/ah sound
-        // like real human hesitation, not flat words.
-        t = t.replace(/\b(umm+|uhh*|ahh+|hmm+|mm+|well)\b(?=,)/gi,
-                      '<prosody pitch="-2st" rate="-15%" volume="-2dB">$1</prosody>');
-        // Step 6: expand sentinels
-        t = t.replace(/\uE000EM\uE000/g, '<emphasis level="strong">');
-        t = t.replace(/\uE000\/EM\uE000/g, '</emphasis>');
-        t = t.replace(/\uE000LP\uE000/g, '<break time="380ms"/>');
-        // R7 - pace from the user-tunable c.speechRate rendered natively by
-        // the vocoder; pitch stays neutral (the multilingual voices handle
-        // their own intonation far better than a blanket +1st shift did).
+        t = t.replace(/\s{2,}/g, ' ').replace(/^\s+|\s+$/g, '');
+        // pace from the user-tunable c.speechRate, rendered by the vocoder
         var ratePct = Math.round(((c.speechRate || 1.06) - 1) * 100);
         var rateStr = (ratePct >= 0 ? '+' : '') + ratePct + '%';
         return '<speak version=\'1.0\' xml:lang=\'en-US\'>' +
                '<voice name=\'' + voice + '\'>' +
-               '<prosody rate=\'' + rateStr + '\' pitch=\'+0st\'>' + t + '</prosody>' +
+               '<prosody rate=\'' + rateStr + '\' pitch=\'+0Hz\'>' + t + '</prosody>' +
                '</voice></speak>';
     }
 
@@ -4888,7 +5058,65 @@ api.controller = function ($scope, $timeout, $window) {
     // the edge-tts library implements. Without this EVERY Edge synthesis
     // fails and Netra falls back to the robotic voices, or silence.
     var EDGE_TRUSTED_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
-    var EDGE_GEC_VERSION = '1-130.0.2849.68';
+    // Microsoft refuses a client version it considers too old (a 403 at the
+    // handshake, which the browser only shows as a socket error) - and that
+    // is how the neural voice silently became the robotic browser voice.
+    // The version is a list, newest first, plus this browser's own build; a
+    // failed synthesis moves to the next one before any fallback voice.
+    var EDGE_GEC_VERSIONS = ['1-143.0.3650.75', '1-140.0.3485.14', '1-130.0.2849.68'];
+    var _edgeUnavailableSaid = false;
+    var _edgeVerIdx = -1, _edgeVerTried = 0;
+    try {
+        if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+            navigator.userAgentData.getHighEntropyValues(['fullVersionList']).then(function (ua) {
+                var list = (ua && ua.fullVersionList) || [];
+                for (var i = 0; i < list.length; i++) {
+                    if (/^(Chromium|Microsoft Edge|Google Chrome)$/.test(String(list[i].brand)) && /^\d+\.\d+\.\d+\.\d+$/.test(String(list[i].version))) {
+                        // last, not first: Microsoft refused a plain Chromium build
+                        // number where the known Edge builds passed
+                        var v = '1-' + list[i].version;
+                        if (EDGE_GEC_VERSIONS.indexOf(v) < 0) EDGE_GEC_VERSIONS.push(v);
+                        break;
+                    }
+                }
+            }, function () {});
+        }
+    } catch (eUA) {}
+    // Microsoft's read-aloud service now refuses the handshake from any
+    // browser whose user agent is not Edge (checked: every Chrome UA gets
+    // 403 whatever version it sends). A browser can not change that
+    // header for a socket, so in Chrome the neural voice is simply not on
+    // offer - use the best voice the browser has, and say so once.
+    var _edgeBrowser = /\bEdg(e|A|iOS)?\//.test(navigator.userAgent || '');
+    function _edgeVoiceAvailable() { return _edgeBrowser && typeof WebSocket !== 'undefined'; }
+    function _edgeVersion() {
+        if (_edgeVerIdx < 0) {
+            _edgeVerIdx = 0;
+            try {
+                var saved = _store ? String(_store.getItem('netra_edgeVer') || '') : '';
+                if (saved && EDGE_GEC_VERSIONS.indexOf(saved) >= 0) _edgeVerIdx = EDGE_GEC_VERSIONS.indexOf(saved);
+            } catch (e) {}
+        }
+        return EDGE_GEC_VERSIONS[Math.min(_edgeVerIdx, EDGE_GEC_VERSIONS.length - 1)];
+    }
+    var _edgeVerOpenedAt = 0;   // when the current version last got a socket open
+    function _edgeVersionOpened() { _edgeVerOpenedAt = Date.now(); }
+    function _edgeVersionWorked() {
+        _edgeVerTried = 0;
+        try { if (_store) _store.setItem('netra_edgeVer', _edgeVersion()); } catch (e) {}
+    }
+    // failedVer: the version the failed request used - parallel failures of
+    // the same version rotate once, not once each
+    function _edgeVersionRotate(failedVer) {
+        if (failedVer && failedVer !== _edgeVersion()) return true;   // already moved on; retry on the new one
+        if (_edgeVerOpenedAt && Date.now() - _edgeVerOpenedAt < 120000) return false;   // this version works: a passing refusal
+        if (_edgeVerTried >= EDGE_GEC_VERSIONS.length - 1) return false;
+        _edgeVerTried++;
+        _edgeVerIdx = (Math.max(0, _edgeVerIdx) + 1) % EDGE_GEC_VERSIONS.length;
+        _gecCache = { win: 0, val: '' };
+        logEvent('tts', 'edge refused the handshake - trying client version ' + _edgeVersion());
+        return true;
+    }
     var _gecCache = { win: 0, val: '' };
     function _edgeSecMsGec(cb) {
         var win = Math.floor((Date.now() / 1000 + 11644473600) / 300) * 300;
@@ -4910,7 +5138,7 @@ api.controller = function ($scope, $timeout, $window) {
         _edgeSecMsGec(function (gec) {
             var id = _edgeConnectId();
             var url = EDGE_WSS_URL +
-                (gec ? '&Sec-MS-GEC=' + gec + '&Sec-MS-GEC-Version=' + EDGE_GEC_VERSION : '') +
+                (gec ? '&Sec-MS-GEC=' + gec + '&Sec-MS-GEC-Version=' + _edgeVersion() : '') +
                 '&ConnectionId=' + id;
             cb(url, id);
         });
@@ -5076,7 +5304,7 @@ api.controller = function ($scope, $timeout, $window) {
     // a genuinely-broken build (e.g. the pre-GEC Edge 403 storm) stayed
     // open in localStorage across every future session, permanently
     // pinning Netra to the robotic fallback even after the fix shipped.
-    var NETRA_BUILD = 'R13-prefs-1';   // bumped: reopens Edge TTS for everyone whose breaker tripped on an old build
+    var NETRA_BUILD = 'v7.2-voice';   // bumped: reopens Edge TTS for everyone whose breaker tripped on an old build
     try {
         if (_store && _store.getItem('netra_build') !== NETRA_BUILD) {
             _store.removeItem('netra_edgeFails');
@@ -5090,7 +5318,12 @@ api.controller = function ($scope, $timeout, $window) {
     if (_edgeFails >= REMOTE_FAIL_LIMIT) logEvent('tts', 'edge circuit was open from previous session (' + _edgeFails + ' fails) - skipping Edge');
     if (_streamFails >= REMOTE_FAIL_LIMIT) logEvent('tts', 'stream circuit was open from previous session (' + _streamFails + ' fails) - skipping Stream');
 
-    function _edgeFallback(text, done) {
+    var _edgeLiveBroken = false;   // streamed (MediaSource) playback failed once this session: use blobs
+    function _edgeFallback(text, done, failedVer, handshakeRefused) {
+        // before giving up the neural voice, try the next client version -
+        // but only when the service refused the handshake, never for a
+        // playback problem on this side
+        if (handshakeRefused && _edgeVersionRotate(failedVer)) return speakEdgeLive(text, done);
         _edgeFails++;
         _ssSet('netra_edgeFails', _edgeFails);
         _ssSet('netra_edgeFailsAt', Date.now());   // R13 - lets the breaker half-open later
@@ -5105,6 +5338,7 @@ api.controller = function ($scope, $timeout, $window) {
     // the circuit lets ONE fresh edge attempt through; success resets it,
     // failure re-latches for another 10.
     function _edgeCircuitOpen() {
+        if (!_edgeVoiceAvailable()) return true;
         if (_edgeFails < REMOTE_FAIL_LIMIT) return false;
         var trippedAt = _ssGet('netra_edgeFailsAt', 0);
         if (!trippedAt || Date.now() - trippedAt > 600000) {
@@ -5144,16 +5378,18 @@ api.controller = function ($scope, $timeout, $window) {
             var ws = new WebSocket(wssUrl);
             ws.binaryType = 'arraybuffer';
             var chunks = [];
-            var resolved = false;
+            var resolved = false, opened = false, myVer = _edgeVersion();
             var watchdog = $timeout(function () {
                 if (!resolved) { resolved = true; try { ws.close(); } catch (e) {}
                     if (session !== _speakSessionId) return;
                     logEvent('warn', 'edge TTS no audio in 6s - fallback');
-                    _edgeFallback(text, done);
+                    _edgeFallback(text, done, myVer, !opened);
                 }
             }, 6000);
 
             ws.onopen = function () {
+                opened = true;
+                _edgeVersionOpened();
                 if (session !== _speakSessionId) { resolved = true; $timeout.cancel(watchdog); try { ws.close(); } catch (e) {} return; }
                 logEvent('tts', 'edge: ' + c.edgeVoice + ' (' + text.length + ' chars)');
                 var now = new Date().toISOString();
@@ -5197,7 +5433,8 @@ api.controller = function ($scope, $timeout, $window) {
                             $timeout.cancel(watchdog);
                             _edgeFails = 0;
                             _ssSet('netra_edgeFails', 0);   // R4.2 - clear persisted breaker on recovery
-                            logEvent('tts', 'edge playing @1.15x');
+                            _edgeVersionWorked();
+                            logEvent('tts', 'edge playing: ' + c.edgeVoice + ' (buffered, ' + text.length + ' chars)');
                         };
                         audio.onended = function () {
                             if (resolved) return;
@@ -5242,8 +5479,8 @@ api.controller = function ($scope, $timeout, $window) {
                 resolved = true;
                 $timeout.cancel(watchdog);
                 if (session !== _speakSessionId) return;
-                logEvent('warn', 'edge ws error - fallback to StreamElements');
-                _edgeFallback(text, done);
+                logEvent('warn', 'edge ws error' + (opened ? '' : ' (handshake refused)') + ' - fallback');
+                _edgeFallback(text, done, myVer, !opened);
             };
 
             ws.onclose = function () {
@@ -5251,8 +5488,8 @@ api.controller = function ($scope, $timeout, $window) {
                     resolved = true;
                     $timeout.cancel(watchdog);
                     if (session !== _speakSessionId) return;
-                    logEvent('warn', 'edge ws closed early - fallback');
-                    _edgeFallback(text, done);
+                    logEvent('warn', 'edge ws closed early' + (opened ? '' : ' (handshake refused)') + ' - fallback');
+                    _edgeFallback(text, done, myVer, !opened);
                 }
             };
         } catch (e) {
@@ -5322,6 +5559,8 @@ api.controller = function ($scope, $timeout, $window) {
         'One sec, working my magic.'
     ];
     var fillerCache = [];   // [{url, text}]
+    var VR_FILLER_RE = /vulnerability|risk data|exposure numbers|security backlog/i;
+    var _lastSentText = '';
     var lastFillerPlayedAt = 0;
     var currentFillerAudio = null;
     // R3.7 - filler chain state. While _fillerChainActive is true, fillers
@@ -5333,7 +5572,13 @@ api.controller = function ($scope, $timeout, $window) {
     var _currentFillerStart = 0;
     var _currentFillerEst   = 0;
 
-    function _edgeBlob(text, voice, cb) {
+    function _edgeBlob(text, voice, cb0, retried) {
+        var myVer = _edgeVersion(), opened = false;
+        var cb = function (blob) {
+            if (blob) { _edgeVersionWorked(); return cb0(blob); }
+            if (!retried && !opened && _edgeVersionRotate(myVer)) return _edgeBlob(text, voice, cb0, true);
+            cb0(null);
+        };
         _edgeWssUrl(function (wssUrl, requestId) {
         try {
             var ws = new WebSocket(wssUrl);
@@ -5344,6 +5589,8 @@ api.controller = function ($scope, $timeout, $window) {
                 if (!done) { done = true; try { ws.close(); } catch (e) {} cb(null); }
             }, 5000);
             ws.onopen = function () {
+                opened = true;
+                _edgeVersionOpened();
                 var cfg = '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"' + EDGE_AUDIO_FORMAT + '"}}}}';
                 ws.send('X-Timestamp:' + new Date().toISOString() + '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' + cfg);
                 var safe = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -5386,8 +5633,12 @@ api.controller = function ($scope, $timeout, $window) {
             return;
         }
         logEvent('tts', 'pre-loading thinking-cue fillers...');
-        var pending = FILLER_PHRASES.length;
-        FILLER_PHRASES.forEach(function (phrase) {
+        // three sockets at a time: a burst of 37 gets some of them refused
+        // by the service, and a refusal used to read as a bad client version
+        var pending = FILLER_PHRASES.length, next = 0;
+        function one() {
+            if (next >= FILLER_PHRASES.length) return;
+            var phrase = FILLER_PHRASES[next++];
             _edgeBlob(phrase, c.edgeVoice, function (blob) {
                 if (blob) {
                     var url = URL.createObjectURL(blob);
@@ -5396,8 +5647,10 @@ api.controller = function ($scope, $timeout, $window) {
                 if (--pending === 0) {
                     logEvent('tts', 'filler cache ready (' + fillerCache.length + '/' + FILLER_PHRASES.length + ')');
                 }
+                one();
             });
-        });
+        }
+        one(); one(); one();
     }
 
     function playThinkingFiller() {
@@ -5472,7 +5725,12 @@ api.controller = function ($scope, $timeout, $window) {
         }
         // R4.1 - Path A: Edge cache populated -> play pre-rendered blob (best quality)
         if (fillerCache.length) {
-            var f = fillerCache[Math.floor(Math.random() * fillerCache.length)];
+            // "checking the vulnerability queue" is a lie while a printer
+            // ticket is being looked up: those lines only for those questions
+            var vr = /vulnerab|\bcve\b|exposure|risk|security|patch|scan/i.test(_lastSentText);
+            var pool = fillerCache.filter(function (x) { return vr || !VR_FILLER_RE.test(x.text); });
+            if (!pool.length) pool = fillerCache;
+            var f = pool[Math.floor(Math.random() * pool.length)];
             var a = new Audio(f.url);
             a.volume = 0.85;
             a.playbackRate = 1.0;
@@ -6043,6 +6301,15 @@ api.controller = function ($scope, $timeout, $window) {
         }, WAKE_TIMEOUT_MS);
     };
 
+    // what the user really hears, for the Lab
+    c.voiceSummary = function () {
+        var e = c.ttsEngine || (c.useRemoteTTS ? 'edge' : 'browser');
+        if (e === 'edge' && !_edgeVoiceAvailable()) return 'browser voice ' + (c.voiceName || '') + ' (neural voice needs Microsoft Edge)';
+        if (e === 'edge') return 'Microsoft neural ' + c.edgeVoice;
+        if (e === 'gemini') return 'Gemini ' + c.geminiVoice;
+        if (e === 'stream') return 'StreamElements ' + c.remoteVoice;
+        return 'browser voice ' + (c.voiceName || '');
+    };
     c.devTestTTS = function () {
         unlockAudio();
         logEvent('dev', 'TEST TTS using ' + c.voiceName);
