@@ -198,6 +198,7 @@ NetraTaskRunner.prototype = {
         var spoken = '';
         if (action === 'notify_only') {
             spoken = num + ' met your watch condition.';
+            this._log(task, spoken);   // the away debrief reads the log, not the notification
 
         } else if (action === 'add_comment') {
             var msg = String(params.comment || 'Checking in on this one.');
@@ -211,6 +212,7 @@ NetraTaskRunner.prototype = {
             var assignee = String(t.assigned_to);
             if (!assignee) {
                 spoken = num + ' has no assignee to nudge - the condition fired but there is nobody to poke. You may want to reassign it.';
+                this._log(task, spoken);
             } else if (!this._cadenceOk(task, assignee)) {
                 this._rearm(task, 60 * 6);
                 task.update();
@@ -228,6 +230,7 @@ NetraTaskRunner.prototype = {
             var before = String(t.priority);
             if (before === target) {
                 spoken = num + ' is already at priority ' + target + ', nothing to escalate.';
+                this._log(task, spoken);
             } else {
                 var res = this.setPriority(t, target);
                 if (!res.ok) {

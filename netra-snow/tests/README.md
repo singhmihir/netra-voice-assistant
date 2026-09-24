@@ -39,6 +39,7 @@ node:
 | `client.test.js` | the page's local replies never swallow an awaited answer; "repeat" replays the real reply |
 | `static.test.js` | everything parses, no secrets ship, the hoisting trap stays closed, every declared tool has a handler, installer/packager know every script include |
 | `away.test.js` | standing orders armed on a yes, fired by the real background runner, debriefed and undone by number; human edits and the kill switch stop them |
+| `audit-server-G-semantic-orders-plans.test.js` | standing orders arm only the resolved ticket, state and priority that were read back, on a fresh yes; the debrief speaks every report and the true count; a plan is never silently replaced and its undo never overwrites a later change; "nothing similar" only after every ticket was compared |
 | `missions.test.js` | a queue mission launched on a yes, reviewed with embeddings only, applied with re-reads, human-routed tickets left alone, undone |
 | `engines.test.js` | quota governor, missions and semantic-search harnesses |
 
