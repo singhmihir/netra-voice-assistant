@@ -66,6 +66,14 @@ GlideDateTime.prototype.getDisplayValue = function () {
 };
 GlideDateTime.prototype.addSeconds = function (s) { this._ms += s * 1000; };
 GlideDateTime.prototype.add = function (ms) { this._ms += Number(ms); };
+GlideDateTime.prototype.subtract = function (ms) { this._ms -= Number(ms); };
+// like the platform: the time part already shifted to the session timezone,
+// so reading it with getHourOfDayLocalTime() shifts it a second time
+GlideDateTime.prototype.getLocalTime = function () { return new GlideTime(this._ms + P.tzOffsetMs); };
+function GlideTime(ms) { this._ms = ms; }
+GlideTime.prototype.getHourOfDayUTC = function () { return new Date(this._ms).getUTCHours(); };
+GlideTime.prototype.getMinutesUTC = function () { return new Date(this._ms).getUTCMinutes(); };
+GlideTime.prototype.getHourOfDayLocalTime = function () { return new Date(this._ms + P.tzOffsetMs).getUTCHours(); };
 GlideDateTime.prototype.before = function (o) { return this._ms < o._ms; };
 GlideDateTime.prototype.after = function (o) { return this._ms > o._ms; };
 GlideDateTime.prototype.compareTo = function (o) { return this._ms < o._ms ? -1 : (this._ms > o._ms ? 1 : 0); };
@@ -335,6 +343,7 @@ function GlideRecord(table) {
         update: function () {
             if (!self.rec || !self.rec.sys_id) return this.insert();
             var rt = self.recTable || table;
+            if (GlideRecord.refuseUpdate[rt]) return null;   // e.g. a before rule that aborts the action
             var t = P.STORE[rt] = P.STORE[rt] || {};
             var stored = t[self.rec.sys_id] || {};
             // like the platform: only fields changed on THIS object are written,
@@ -385,6 +394,7 @@ GlideRecord.onUpdate = {};     // table -> fn(next, old): simulate business rule
 GlideRecord.onInsert = {};
 GlideRecord.refuseDelete = {}; // table -> true: simulate cross-scope delete refusal
 GlideRecord.refuseInsert = {}; // table -> true: simulate an insert the platform refuses
+GlideRecord.refuseUpdate = {}; // table -> true: simulate an update the platform refuses
 // journal fields: the platform stores each entry as a sys_journal_field row
 function journal(table, sysId, rec) {
     ['work_notes', 'comments'].forEach(function (f) {
@@ -507,7 +517,7 @@ function reset() {
     P.HTTP = null; P.now = Date.UTC(2026, 8, 23, 20, 0, 0); P.guid = 0; P.tzOffsetMs = 0;
     P.user = { sys_id: 'u_admin', name: 'System Administrator', user_name: 'admin' };
     P.ROLES = null; P.ACL = null;
-    GlideRecord.onUpdate = {}; GlideRecord.onInsert = {}; GlideRecord.refuseDelete = {}; GlideRecord.refuseInsert = {};
+    GlideRecord.onUpdate = {}; GlideRecord.onInsert = {}; GlideRecord.refuseDelete = {}; GlideRecord.refuseInsert = {}; GlideRecord.refuseUpdate = {};
 }
 
 // put a record in the store (returns its sys_id)

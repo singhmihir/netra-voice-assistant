@@ -458,17 +458,21 @@
         var p = new GlideRecord('sys_properties');
         p.addQuery('name', scope + '.' + suffix);
         p.setLimit(1); p.query();
-        if (!p.next()) {
-            p.initialize();
-            p.setValue('name', scope + '.' + suffix);
-            p.setValue('sys_scope', scopeSysId);
-            p.setValue('type', 'string');
+        // a re-run is the update path: never clobber a value an admin set
+        // (the api key, a switched-off ticket_writes, tuned quotas)
+        if (p.next()) {
+            p.setValue('description', desc);
+            p.update();
+            say('  = prop ' + scope + '.' + suffix + ' (value kept)');
+            return;
         }
-        // never clobber an existing non-empty api key
-        if (suffix === 'gemini_api_key' && String(p.value || '')) { say('  = prop ' + suffix + ' (kept)'); return; }
+        p.initialize();
+        p.setValue('name', scope + '.' + suffix);
+        p.setValue('sys_scope', scopeSysId);
+        p.setValue('type', 'string');
         p.setValue('value', value);
         p.setValue('description', desc);
-        if (p.sys_id && p.isValidRecord()) p.update(); else p.insert();
+        p.insert();
         say('  > prop ' + scope + '.' + suffix);
     }
     upsertProp('gemini_api_key', '', 'Google AI Studio API key for Gemini. REQUIRED for the conversational brain and TTS. Get a free key at https://aistudio.google.com/apikey');
@@ -482,6 +486,7 @@
     upsertProp('investigate_model', 'gemini-3-flash-preview', 'Preferred model for the investigation synthesis call (falls back through model_chain).');
     upsertProp('sentiment_llm', 'false', 'When true, refine keyword-detected frustration with an extra Gemini classification call on the reply path (adds ~1-2s on frustrated turns).');
     upsertProp('notify_author', 'false', 'When true, the comment business rule also notifies the comment author.');
+    upsertProp('ticket_writes', 'true', 'Emergency kill switch: set to false to stop Netra changing tickets. Re-running this installer keeps whatever is set here.');
 
     /* ---- Cross-scope privileges ---- */
     say('');
@@ -514,6 +519,7 @@
         'sn_vul_entry': ['read'],
         'sn_vul_vulnerability_group': ['read'],
         'sys_user_grmember': ['read'],
+        'sys_user_has_role': ['read'], 'sys_user_role': ['read'],   // work notes and the outage radar go to fulfillers only
         'cmdb_ci': ['read'],
         // R17/R18 - standing orders, investigations, missions
         'task': ['read'], 'task_ci': ['read'], 'task_sla': ['read'],

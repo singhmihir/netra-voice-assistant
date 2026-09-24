@@ -4414,7 +4414,7 @@
             escalate_ticket: 1, assign_ticket_to_group: 1,
             assign_ticket_to_user: 1, add_work_note: 1, update_field: 1,
             click_button: 1,   // form buttons resolve, approve and delete too
-            batch_update_tickets: 1, undo_last_action: 1,   // R14
+            batch_update_tickets: 1, undo_last_action: 1, undo_task_action: 1,   // R14
             decide_approval: 1, assign_vulnerable_item: 1, set_vulnerable_item_state: 1,
             defer_vulnerable_item: 1, add_vulnerability_note: 1
         };
