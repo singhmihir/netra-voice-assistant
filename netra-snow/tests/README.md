@@ -41,6 +41,7 @@ node:
 | `away.test.js` | standing orders armed on a yes, fired by the real background runner, debriefed and undone by number; human edits and the kill switch stop them |
 | `missions.test.js` | a queue mission launched on a yes, reviewed with embeddings only, applied with re-reads, human-routed tickets left alone, undone |
 | `engines.test.js` | quota governor, missions and semantic-search harnesses |
+| `audit-server-A-core.test.js` | a yes said before a reply was heard confirms nothing; model replies end on the draft's own read-back; writes asked for after reading other people's text wait for a heard yes; notifications are delivered only once spoken; history cuts keep tool calls with their responses; partial answers name every write; the digest keeps the oldest prompts; the voice tag does not pick the model |
 
 CI runs the suite on every push and pull request that touches `netra-snow/`
 (`.github/workflows/netra-tests.yml`).
