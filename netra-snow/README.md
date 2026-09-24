@@ -74,22 +74,39 @@ read-back, and undo restored all 11.
 
 ### Trust, by construction
 
-- **She acts with your permissions, never the app's.** Ticket, knowledge and
-  vulnerability reads and writes go through `GlideRecordSecure`, so the same
-  ACLs as the ServiceNow forms apply: a caller can not resolve someone else's
-  ticket through Netra, a restricted HR article is never read out, and the
-  Vulnerability Response tools are only offered to people with a VR role.
+- **She acts with your permissions, never the app's.** Every ticket, journal,
+  attachment, approval, knowledge and vulnerability read or write she makes
+  for you goes through `GlideRecordSecure`, with field-level checks, so the
+  same ACLs as the ServiceNow forms apply. Checked live with a self-service
+  caller: their own ticket is read with its comments but never its internal
+  work notes, someone else's ticket is "not found, or you can not see it",
+  "my tickets" lists only theirs, investigations and "similar past tickets"
+  never draw on records they could not open, and a work note they may not
+  write is refused before anything is read back. Platform code, Vulnerability
+  Response and work-note alerts are limited to the roles in the `code_roles`,
+  `vr_roles` and `fulfiller_roles` properties. Background jobs act only on
+  what their owner authorised, and the `ticket_writes` kill switch stops every
+  write path, undo included.
 - **A "yes" only runs what you just heard.** Every write that needs consent is
   read back and parked with the turn it was proposed in; only your next turn
-  can confirm it. Two drafts in one turn, a reply you never heard (you barged
-  in), a partial answer that did not read it back, a stale plan, a yes from
-  twelve minutes ago - all dropped or read back again. Approvals can not be
-  decided in the turn they are proposed, even if text in an approval tells the
-  model to.
+  can confirm it. Comments the caller sees, work notes, messages, batch
+  changes and undo are always read back from their real arguments - the exact
+  words, the resolved person - before they run. Once text written by other
+  people (ticket descriptions, comments, attachments, articles) is in the
+  conversation, every write the model asks for waits for your spoken yes, so
+  an instruction hidden in a ticket can not act for you. A reply you never
+  heard (you barged in, or it arrived late), two drafts in one turn, a stale
+  plan, a yes from twelve minutes ago - all dropped or read back again.
 - **Everything she changes is checked and undoable.** Writes are read back
-  before she says "done"; undo restores what really changed (priority through
-  impact and urgency, resolve with its close notes, whole plans step by step)
-  and says plainly what can not be taken back.
+  before she says "done" - a secure update can report success while the
+  platform quietly dropped a field, so journal entries are checked in the
+  journal itself. Undo restores what really changed (priority through impact
+  and urgency, resolve with its close notes, batches ticket by ticket, whole
+  plans step by step), never overwrites a change someone made since, says how
+  long ago the change was, and says plainly what can not be taken back.
+- **Nothing is lost while you are away.** Notifications are marked delivered
+  only once she has spoken them - asleep or busy, they wait; the away debrief
+  includes every report and the true count.
 - **She checks herself.** *"Run a self check"* tests her key (against Google's
   free model list), her tables, her cross-scope reads, the background scanner's
   heartbeat, overdue standing orders, quota, memory coverage and recent errors

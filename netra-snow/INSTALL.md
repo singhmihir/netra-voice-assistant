@@ -115,6 +115,21 @@ Upgrading from v6.0: commit the v7.0 batch on top. It removes the old
 `gemini_model` pin (v7 routes across a governed chain of four models), so
 if you had pinned a model, set `x_196061_netra_v1.model_chain` instead.
 
+**Who may do what** - Netra acts with each user's own permissions, so
+nothing to configure for tickets. Four properties tune the rest (re-running
+the installer keeps whatever you set):
+
+| Property (`x_196061_netra_v1.`…) | Default | Meaning |
+|---|---|---|
+| `ticket_writes` | `true` | Kill switch: `false` stops every write Netra makes, undo and background orders included |
+| `vr_roles` | `sn_vul.admin, sn_vul.vulnerability_analyst, sn_vul.remediation_owner, sn_vul.read_all` | Roles that get the Vulnerability Response tools |
+| `code_roles` | `admin` | Roles that may have Netra read, list or narrate platform scripts |
+| `fulfiller_roles` | `itil, admin, sn_incident_read, sn_incident_write` | Roles told about new work notes on watched tickets (everyone else hears comments only) |
+
+The installer also grants the app read access to `sys_user_has_role` and
+`sys_user_role` (to tell fulfillers apart); on an instance upgraded by update
+set, allow those two cross-scope reads if the platform asks.
+
 Free Gemini keys allow **20 generate calls per model per day**. v7 is built
 around that: most everyday questions cost no call at all, and when every
 model is resting Netra keeps working in basic mode and tells you when her
