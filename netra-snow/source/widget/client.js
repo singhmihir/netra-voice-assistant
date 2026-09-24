@@ -328,6 +328,18 @@ api.controller = function ($scope, $timeout, $window) {
         if (c._awaitingConfirm && now - (c._awaitingConfirmAt || 0) < 10 * 60000) return true;
         return /\?\s*["']?\s*$/.test(String(c.lastAnswer || '')) && now - (c.lastAnswerAt || 0) < 60000;
     }
+    // may Netra speak up unasked (a notification, a reminder)? never over the
+    // user, the mic check, a turn in flight, her own audio, or a question the
+    // user still owes an answer to - a "yes" said after it would confirm the
+    // read-back, not the interjection
+    function _floorFree() {
+        if (_speakingNow || _chatInFlight || _queuedUtterance) return false;
+        if (_fillerChainActive || currentFillerAudio || currentFillerUtter) return false;
+        if (c.state === 'speaking' || c.state === 'thinking' || c.state === 'awaiting') return false;
+        if (String(c.interim || '').trim() || Date.now() - (_lastInterimAt || 0) < 1500) return false;
+        if (c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt')) return false;
+        return !_stillAwaiting();
+    }
     function _maybeAutoBrief(tries) {
         if (!c.liveMode || !c.prefBrief) return;
         var last = '';
@@ -612,13 +624,17 @@ api.controller = function ($scope, $timeout, $window) {
         var d = Math.max(1000, delayMs);
         var key = String(id || ('r' + Date.now()));
         logEvent('lab', 'local reminder armed in ' + Math.round(d / 60000) + ' min: ' + text);
-        _localReminderTimers[key] = ($timeout(function () {
+        var fire = function () {
+            // never cut into a read-back, a reply or the user: try again shortly
+            if (!_floorFree()) { _localReminderTimers[key] = $timeout(fire, 4000); return; }
             delete _localReminderTimers[key];
-            _recentReminderTexts[String(text)] = Date.now();
+            if (_reminderAlreadySpoken(text)) return;   // the polled copy got there first
             cue('wake');
-            speak(text || 'Reminder.');
+            // counts as said only once it was heard, so the scanner copy still comes if not
+            speak(text || 'Reminder.', function () { _recentReminderTexts[String(text)] = Date.now(); });
             _convoPush('sys', '· reminder fired ·');
-        }, d));
+        };
+        _localReminderTimers[key] = $timeout(fire, d);
     }
     // called from the notification announce path: skip a scanner-promoted
     // reminder we already spoke locally in the last 10 minutes
@@ -1231,6 +1247,7 @@ api.controller = function ($scope, $timeout, $window) {
     // rescheduling after $onDestroy. Without this, navigating between SP
     // pages leaves N parallel chains running in stale controllers.
     var _ctrlDestroyed = false;
+    var _hotkeyHandler = null, _visibilityHandler = null;   // removed on destroy
     var _statsTickTimer = null;
     function _statsTick() {
         if (_ctrlDestroyed) return;
@@ -1907,6 +1924,7 @@ api.controller = function ($scope, $timeout, $window) {
      *  LIFECYCLE
      * ============================================================ */
     c.$onInit = function () {
+        _claimPage();
         setState('boot');
         logEvent('init', 'controller v8 booting, SR=' + c.hasSR + ' TTS=' + c.hasTTS + ' GrammarList=' + !!SGL);
         _installFavicon();
@@ -1933,21 +1951,53 @@ api.controller = function ($scope, $timeout, $window) {
         _startBlobTicker();                   // R7 - liquid aura animation
     };
 
-    c.$onDestroy = function () {
+    c.$onDestroy = _destroyController;
+
+    // one Netra per page: a controller left behind without $onDestroy would
+    // keep a second recognizer, poller and hotkey handler alive
+    function _claimPage() {
+        try { if ($window.__netraDestroy && $window.__netraDestroy !== _destroyController) $window.__netraDestroy(); } catch (e) {}
+        $window.__netraDestroy = _destroyController;
+    }
+
+    function _destroyController() {
+        if (_ctrlDestroyed) return;
         // R4.5 - mark destroyed so recursive watchdogs stop rescheduling.
         // The _ctrlDestroyed flag is checked at the top of _statsTick,
-        // _srActivityWatchdog, __micHealthTick, and the listening tick.
+        // _srActivityWatchdog, __micHealthTick, the listening tick, the
+        // poll, startContinuous and speak.
         _ctrlDestroyed = true;
+        if ($window.__netraDestroy === _destroyController) $window.__netraDestroy = null;
         c.recRunning = false;
-        try { if (contRec) contRec.stop(); } catch (e) {}
+        if (contRec) {
+            // onend would schedule a fresh recognizer
+            try { contRec.onend = contRec.onresult = contRec.onerror = contRec.onstart = null; } catch (e) {}
+            try { contRec.abort(); } catch (e) {}
+            contRec = null;
+        }
         if (pollTimer) $timeout.cancel(pollTimer);
         if (commandTimer) $timeout.cancel(commandTimer);
         if (_statsTickTimer) $timeout.cancel(_statsTickTimer);
+        for (var rk in _localReminderTimers) {
+            if (_localReminderTimers.hasOwnProperty(rk)) $timeout.cancel(_localReminderTimers[rk]);
+        }
+        _localReminderTimers = {};
+        try { _cancelReprompt(); } catch (e) {}
+        try { if (_hotkeyHandler) $window.removeEventListener('keydown', _hotkeyHandler); } catch (e) {}
+        try { if (_visibilityHandler) $window.document.removeEventListener('visibilitychange', _visibilityHandler); } catch (e) {}
+        _hotkeyHandler = _visibilityHandler = null;
+        // silence every engine without the barge-in blip
+        _speakSessionId++;
+        if (_edgeLiveWs) {
+            try { _edgeLiveWs.onopen = _edgeLiveWs.onmessage = _edgeLiveWs.onerror = _edgeLiveWs.onclose = null; _edgeLiveWs.close(); } catch (e) {}
+            _edgeLiveWs = null;
+        }
+        _silenceCurrentAudio();
         try { stopFillerChain(); } catch (e) {}
         try { stopMicLevelMeter(); } catch (e) {}
         if (TTS) TTS.cancel();
         if (audioCtx) try { audioCtx.close(); } catch (e) {}
-    };
+    }
 
     function checkMicPermission() {
         try {
@@ -1991,7 +2041,7 @@ api.controller = function ($scope, $timeout, $window) {
     var _micRafId = null;
 
     function startMicLevelMeter() {
-        if (_micStream) return;   // already running
+        if (_micStream || _ctrlDestroyed) return;   // already running
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             logEvent('warn', 'mic-meter: getUserMedia not supported');
             return;
@@ -2008,6 +2058,7 @@ api.controller = function ($scope, $timeout, $window) {
             echoCancellation: true, noiseSuppression: true, autoGainControl: true,
             channelCount: 1, sampleRate: 48000
         } }).then(function (stream) {
+            if (_ctrlDestroyed) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
             _micStream = stream;
             c.micStreamActive = true;
             $scope.$applyAsync();
@@ -2514,7 +2565,7 @@ api.controller = function ($scope, $timeout, $window) {
      *  BOOT
      * ============================================================ */
     function tryBoot(fromTap) {
-        if (booted) return;
+        if (booted || _ctrlDestroyed) return;
         if (!c.hasSR) {
             setState('error');
             logEvent('err', 'no SpeechRecognition in this browser');
@@ -2605,7 +2656,7 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     function startContinuous() {
-        if (!c.hasSR) return;
+        if (!c.hasSR || _ctrlDestroyed) return;
         try { if (contRec) contRec.stop(); } catch (e) {}
 
         contRec = new SR();
@@ -2739,6 +2790,7 @@ api.controller = function ($scope, $timeout, $window) {
         };
 
         contRec.onend = function () {
+            if (_ctrlDestroyed) return;
             // R1.3.1 - Don't flip recRunning false IMMEDIATELY if a restart
             // is coming. The "off" period of the live indicator is just the
             // 250 ms restart gap, which looks like rapid flicker to the user.
@@ -2880,19 +2932,28 @@ api.controller = function ($scope, $timeout, $window) {
      * ============================================================ */
     var watchdogStrikes = 0;
     var watchdogLastSpeakingStart = 0;
+    var watchdogLastPlayedTo = -1;   // currentAudio.currentTime at the last tick
     var _permProbeCounter = 0;
     function startListeningWatchdog() {
         var tick = function () {
+            if (_ctrlDestroyed) return;
             var now = Date.now();
             // Stuck-in-speaking detection: if state has been "speaking"
             // for more than 30s without progress, force a FULL floor
             // release (R8.1: setState alone left _speakingNow true, so
             // every later utterance was echo-scored and short commands
             // were eaten forever - "hears but does not register").
+            // A long reply whose audio is still advancing is not stuck;
+            // browser TTS has no clock, so it gets the time its text needs.
             if (c.state === 'speaking') {
-                if (!watchdogLastSpeakingStart) {
+                var playedTo = -1;
+                try { if (currentAudio && !currentAudio.paused && !currentAudio.ended) playedTo = currentAudio.currentTime; } catch (ePT) {}
+                var advancing = playedTo >= 0 && playedTo !== watchdogLastPlayedTo;
+                watchdogLastPlayedTo = playedTo;
+                var ttsAllowance = (TTS && (TTS.speaking || TTS.pending)) ? String(_speakingText || '').length * 110 : 0;
+                if (!watchdogLastSpeakingStart || advancing) {
                     watchdogLastSpeakingStart = now;
-                } else if (now - watchdogLastSpeakingStart > 30000) {
+                } else if (now - watchdogLastSpeakingStart > 30000 + ttsAllowance) {
                     logEvent('warn', 'watchdog: stuck in speaking >30s - full floor release');
                     watchdogLastSpeakingStart = 0;
                     stopSpeaking('watchdog stuck-speaking');
@@ -3022,7 +3083,7 @@ api.controller = function ($scope, $timeout, $window) {
      *  background tabs for power-saving.
      * ============================================================ */
     function startVisibilityRecovery() {
-        $window.document.addEventListener('visibilitychange', function () {
+        _visibilityHandler = function () {
             if (!document.hidden && c.permission === 'granted' && c.alert) {
                 if (!c.recRunning) {
                     logEvent('rec', 'visibility: tab visible - restarting rec');
@@ -3046,7 +3107,8 @@ api.controller = function ($scope, $timeout, $window) {
                 }
                 $scope.$applyAsync();
             }
-        });
+        };
+        $window.document.addEventListener('visibilitychange', _visibilityHandler);
     }
 
     function sanitizeForGrammar(s) {
@@ -3823,6 +3885,20 @@ api.controller = function ($scope, $timeout, $window) {
         _restoreDuck();
     }
 
+    // Silence the playing element, handlers detached first: pause() and
+    // src='' fire async error / play()-rejection events, which are the
+    // engines' fallback-respeak paths.
+    function _silenceCurrentAudio() {
+        if (!currentAudio) return;
+        try {
+            currentAudio.onended = currentAudio.onerror = currentAudio.onplaying = null;
+            currentAudio.pause();
+            currentAudio.src = '';
+        } catch (e) {}
+        try { detachOutputAnalyser(currentAudio); } catch (e) {}
+        currentAudio = null;
+    }
+
     // Universal silencer - every engine, every filler, the pipeline queue.
     function stopSpeaking(reason) {
         _speakSessionId++;                      // aborts pipelined sentence queue
@@ -4034,6 +4110,7 @@ api.controller = function ($scope, $timeout, $window) {
      *  SpeechSynthesis (Heera / Neerja / OS voices).
      * ============================================================ */
     function speak(text, done) {
+        if (_ctrlDestroyed) return;   // a reply landing after navigation stays silent
         if (!text) {
             // Even with no text, fire callback + reset state to keep the
             // state machine consistent.
@@ -4070,6 +4147,8 @@ api.controller = function ($scope, $timeout, $window) {
         // clear any pending question-nudge (she is taking the floor).
         _markSpeaking(c.spoken);
         _cancelReprompt();
+        // an earlier line still synthesizing must never play over this one
+        _speakSessionId++;
 
         // R1: wrap the done callback so state ALWAYS resets to idle/dormant
         // after TTS finishes - prevents "stuck in speaking" bug.
@@ -4155,6 +4234,7 @@ api.controller = function ($scope, $timeout, $window) {
                 var audio = new Audio(url);
                 audio.playbackRate = 1.0;   // R7 - pace lives in SSML prosody
                 audio.volume = _duckedForBarge ? 0.25 : 1.0;
+                _silenceCurrentAudio();
                 currentAudio = audio;
                 attachOutputAnalyser(audio);
                 // NOTE: _speakingText deliberately stays the FULL reply
@@ -4480,14 +4560,27 @@ api.controller = function ($scope, $timeout, $window) {
         return bands;
     })();
 
+    // Once routed through a graph an element is heard ONLY through it, so
+    // TTS must never ride the mic's context (stopMicLevelMeter closes that on
+    // every device change / recycle, silencing the rest of the sentence). The
+    // cue context lives as long as the page; while it is not running the
+    // element plays directly and only the visualiser sits this one out.
+    function _outputCtx() {
+        unlockAudio();
+        if (!audioCtx || audioCtx.state === 'closed') return null;
+        if (audioCtx.state !== 'running') { try { audioCtx.resume(); } catch (e) {} return null; }
+        return audioCtx;
+    }
+
     function attachOutputAnalyser(audioEl) {
         if (!audioEl || !window.AudioContext) return;
         try {
-            var ctx = _micCtx || new (window.AudioContext || window.webkitAudioContext)();
             var analyser;
             if (audioEl.__netraSrc) {
                 analyser = audioEl.__netraSrc.netraAnalyser;
             } else {
+                var ctx = _outputCtx();
+                if (!ctx) return;
                 var src = ctx.createMediaElementSource(audioEl);
                 analyser = ctx.createAnalyser();
                 analyser.fftSize = 1024;                   // 512 frequency bins
@@ -4721,9 +4814,11 @@ api.controller = function ($scope, $timeout, $window) {
         c.data.text   = text;
         c.data.voice  = c.geminiVoice;
         _markSpeaking(text);   // R6 - hot mic: echo-scored, not deafened
+        var session = _speakSessionId;   // a stop or a newer line makes this one stale
         var resolved = false;
         var watchdog = $timeout(function () {
             if (!resolved) { resolved = true;
+                if (session !== _speakSessionId) return;
                 logEvent('warn', 'gemini-tts no response in 12s - fallback edge');
                 speakEdgeTTS(text, done);
             }
@@ -4731,6 +4826,7 @@ api.controller = function ($scope, $timeout, $window) {
         c.server.update().then(function () {
             if (resolved) return;
             $timeout.cancel(watchdog);
+            if (session !== _speakSessionId) { resolved = true; return; }
             var r = c.data.gemini_tts;
             if (!r || !r.ok || !r.b64) {
                 resolved = true;
@@ -4748,6 +4844,7 @@ api.controller = function ($scope, $timeout, $window) {
                 var audio = new Audio(url);
                 audio.playbackRate = 1.0;   // R7 - pace lives in SSML prosody (playbackRate sounded phasey)
                 audio.volume = 1.0;
+                _silenceCurrentAudio();
                 currentAudio = audio;
                 logEvent('tts', 'gemini: ' + r.voice + ' (' + Math.round(r.b64.length / 1024) + ' KB)');
                 setState('speaking');
@@ -4772,12 +4869,14 @@ api.controller = function ($scope, $timeout, $window) {
                     resolved = true;
                     detachOutputAnalyser(audio);
                     URL.revokeObjectURL(url);
+                    if (session !== _speakSessionId) return;
                     logEvent('warn', 'gemini audio playback error - fallback edge');
                     speakEdgeTTS(text, done);
                 };
                 audio.play().catch(function (e) {
                     if (resolved) return;
                     resolved = true;
+                    if (session !== _speakSessionId) return;   // paused by a stop: stay silent
                     logEvent('warn', 'gemini play() rejected: ' + (e && e.message || e));
                     speakEdgeTTS(text, done);
                 });
@@ -4790,6 +4889,7 @@ api.controller = function ($scope, $timeout, $window) {
             if (resolved) return;
             resolved = true;
             $timeout.cancel(watchdog);
+            if (session !== _speakSessionId) return;
             logEvent('warn', 'gemini-tts transport error - fallback edge');
             speakEdgeTTS(text, done);
         });
@@ -4887,7 +4987,11 @@ api.controller = function ($scope, $timeout, $window) {
         if (typeof WebSocket === 'undefined') {
             return speakStreamElements(text, done);
         }
+        // a stop or a newer line makes this one stale: it must neither play
+        // when its audio arrives nor respeak through a fallback
+        var session = _speakSessionId;
         _edgeWssUrl(function (wssUrl, requestId) {
+        if (session !== _speakSessionId) return;
         try {
             var ws = new WebSocket(wssUrl);
             ws.binaryType = 'arraybuffer';
@@ -4895,12 +4999,14 @@ api.controller = function ($scope, $timeout, $window) {
             var resolved = false;
             var watchdog = $timeout(function () {
                 if (!resolved) { resolved = true; try { ws.close(); } catch (e) {}
+                    if (session !== _speakSessionId) return;
                     logEvent('warn', 'edge TTS no audio in 6s - fallback');
                     _edgeFallback(text, done);
                 }
             }, 6000);
 
             ws.onopen = function () {
+                if (session !== _speakSessionId) { resolved = true; $timeout.cancel(watchdog); try { ws.close(); } catch (e) {} return; }
                 logEvent('tts', 'edge: ' + c.edgeVoice + ' (' + text.length + ' chars)');
                 var now = new Date().toISOString();
                 // 1. Speech config
@@ -4918,7 +5024,11 @@ api.controller = function ($scope, $timeout, $window) {
             ws.onmessage = function (ev) {
                 if (typeof ev.data === 'string') {
                     if (ev.data.indexOf('Path:turn.end') >= 0) {
+                        // the socket's job is done: its close event is no failure
+                        ws.onclose = ws.onerror = null;
                         try { ws.close(); } catch (e) {}
+                        if (resolved) return;
+                        if (session !== _speakSessionId) { resolved = true; $timeout.cancel(watchdog); return; }
                         // Assemble MP3 chunks and play
                         if (chunks.length === 0) {
                             logEvent('warn', 'edge returned no audio - fallback');
@@ -4930,6 +5040,7 @@ api.controller = function ($scope, $timeout, $window) {
                         var audio = new Audio(url);
                         audio.playbackRate = 1.0;   // R7 - pace lives in SSML prosody (playbackRate sounded phasey)
                         audio.volume = 1.0;
+                        _silenceCurrentAudio();
                         currentAudio = audio;
                         // R2.9.1 - attach BEFORE play() so MediaElementSource binds in time
                         attachOutputAnalyser(audio);
@@ -4954,12 +5065,14 @@ api.controller = function ($scope, $timeout, $window) {
                             resolved = true;
                             detachOutputAnalyser(audio);
                             URL.revokeObjectURL(url);
+                            if (session !== _speakSessionId) return;
                             logEvent('warn', 'edge audio playback error - fallback');
                             _edgeFallback(text, done);
                         };
                         audio.play().catch(function (e) {
                             if (resolved) return;
                             resolved = true;
+                            if (session !== _speakSessionId) return;   // paused by a stop: stay silent
                             logEvent('warn', 'edge play() rejected: ' + e.message);
                             _edgeFallback(text, done);
                         });
@@ -4980,6 +5093,7 @@ api.controller = function ($scope, $timeout, $window) {
                 if (resolved) return;
                 resolved = true;
                 $timeout.cancel(watchdog);
+                if (session !== _speakSessionId) return;
                 logEvent('warn', 'edge ws error - fallback to StreamElements');
                 _edgeFallback(text, done);
             };
@@ -4988,6 +5102,7 @@ api.controller = function ($scope, $timeout, $window) {
                 if (!resolved) {
                     resolved = true;
                     $timeout.cancel(watchdog);
+                    if (session !== _speakSessionId) return;
                     logEvent('warn', 'edge ws closed early - fallback');
                     _edgeFallback(text, done);
                 }
@@ -5336,14 +5451,12 @@ api.controller = function ($scope, $timeout, $window) {
             return speakBrowser(text, done);
         }
         // Stop any currently playing remote audio
-        if (currentAudio) {
-            try { currentAudio.pause(); currentAudio.src = ''; } catch (e) {}
-            currentAudio = null;
-        }
+        _silenceCurrentAudio();
         // Also stop browser TTS so we never overlap
         if (TTS && (TTS.speaking || TTS.pending)) {
             try { TTS.cancel(); } catch (e) {}
         }
+        var session = _speakSessionId;   // a stop or a newer line makes this one stale
         var voice = c.remoteVoice || REMOTE_TTS_VOICE;
         var url = 'https://api.streamelements.com/kappa/v2/speech?voice=' +
                   encodeURIComponent(voice) + '&text=' + encodeURIComponent(text);
@@ -5368,6 +5481,8 @@ api.controller = function ($scope, $timeout, $window) {
             try { audio.pause(); audio.src = ''; } catch (e) {}
             detachOutputAnalyser(audio);
             if (currentAudio === audio) currentAudio = null;
+            // stopSpeaking's pause() rejects the pending play(): not a failure
+            if (session !== _speakSessionId) return;
             _streamFallback(text, done, reason);   // R3.5.2 - bumps circuit + logs
         };
         var finish = function () {
@@ -5407,10 +5522,7 @@ api.controller = function ($scope, $timeout, $window) {
 
     function speakBrowser(text, done) {
         // Stop any remote audio first - critical to avoid overlap when called as fallback
-        if (currentAudio) {
-            try { currentAudio.pause(); currentAudio.src = ''; } catch (e) {}
-            currentAudio = null;
-        }
+        _silenceCurrentAudio();
         if (!c.hasTTS) {
             logEvent('err', 'no browser TTS available');
             if (done) done();
@@ -5477,9 +5589,10 @@ api.controller = function ($scope, $timeout, $window) {
             if (done) done();
         };
 
+        var session = _speakSessionId;
         try {
-            // Small delay helps Chrome after cancel()
-            $timeout(function () { TTS.speak(u); }, 60);
+            // Small delay helps Chrome after cancel(); a stop inside it wins
+            $timeout(function () { if (session === _speakSessionId) TTS.speak(u); }, 60);
         } catch (e) {
             logEvent('err', 'TTS.speak threw: ' + e);
             if (done) done();
@@ -5612,7 +5725,7 @@ api.controller = function ($scope, $timeout, $window) {
      *  HOTKEYS
      * ============================================================ */
     function bindHotkeys() {
-        $window.addEventListener('keydown', function (e) {
+        _hotkeyHandler = function (e) {
             if (e.altKey && (e.key === 'n' || e.key === 'N')) {
                 e.preventDefault();
                 c.tap();
@@ -5657,7 +5770,8 @@ api.controller = function ($scope, $timeout, $window) {
                 stopSpeaking('Escape key');
                 $scope.$applyAsync();
             }
-        });
+        };
+        $window.addEventListener('keydown', _hotkeyHandler);
     }
 
     /* ============================================================
@@ -5676,8 +5790,7 @@ api.controller = function ($scope, $timeout, $window) {
             _ackIds.push(n.id);
             return;
         }
-        if (c.state === 'listening' || c.state === 'speaking' || c.state === 'awaiting' || c.state === 'thinking') return;
-        if (!c.alert || _chatInFlight || _speakingNow) return;  // don't disturb when dormant
+        if (!c.alert || !_floorFree()) return;   // unacked: the next poll brings it back
         if (c._hushed && n.kind !== 'reminder') return;         // "quiet": only the user's own reminders
         seenIds[n.id] = true;
         // R4.5 - cap seenIds to last 500 keys so long-lived
@@ -5699,13 +5812,17 @@ api.controller = function ($scope, $timeout, $window) {
         }
         c.spoken = msg;
         $scope.$applyAsync();
-        speak(msg, function () { _ackIds.push(n.id); });
+        speak(msg, function () {
+            _ackIds.push(n.id);
+            if (n.kind === 'reminder') _recentReminderTexts[String(n.message)] = Date.now();   // the page timer's copy stays quiet
+        });
     }
 
     function startNotificationPolling() {
         var POLL_MS_ACTIVE  = 9000;
         var POLL_MS_DORMANT = 30000;   // R4.7 - back off when paused/dormant
         var tick = function () {
+            if (_ctrlDestroyed) return;
             // R4.7 - PERF: keep the poll payload minimal. handleHeard leaves the
             // full conversation history, the last response, and any screenshot
             // on c.data; without clearing them, every 9s poll re-POSTed all of
@@ -5727,6 +5844,7 @@ api.controller = function ($scope, $timeout, $window) {
                 },
                 function () { _ackIds = acking.concat(_ackIds); }
             ).finally(function () {
+                if (_ctrlDestroyed) return;   // a poll in flight at destroy must not re-arm
                 // R4.7 - poll slower while paused or dormant: the server has
                 // nothing to deliver then, so a 9s cadence was wasted chatter.
                 var dormant = (c.data && c.data.paused) || !c.alert;
