@@ -487,6 +487,9 @@
     upsertProp('sentiment_llm', 'false', 'When true, refine keyword-detected frustration with an extra Gemini classification call on the reply path (adds ~1-2s on frustrated turns).');
     upsertProp('notify_author', 'false', 'When true, the comment business rule also notifies the comment author.');
     upsertProp('ticket_writes', 'true', 'Emergency kill switch: set to false to stop Netra changing tickets. Re-running this installer keeps whatever is set here.');
+    upsertProp('vr_roles', 'sn_vul.admin,sn_vul.vulnerability_analyst,sn_vul.remediation_owner,sn_vul.read_all', 'Roles that may use the Vulnerability Response tools (any one is enough). Without one, the VR tools are not offered.');
+    upsertProp('code_roles', 'admin', 'Roles that may have Netra read, list or narrate platform scripts (any one is enough).');
+    upsertProp('fulfiller_roles', 'itil,admin,sn_incident_read,sn_incident_write', 'Roles whose holders are told about new work notes on watched tickets; everyone else hears comments only.');
 
     /* ---- Cross-scope privileges ---- */
     say('');
