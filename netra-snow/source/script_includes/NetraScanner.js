@@ -157,9 +157,12 @@ NetraScanner.prototype = {
         // ticket, say so in the same breath (correlation wording only)
         if (byCi[top.what] && ciId[top.what]) {
             try {
-                var sc = new NetraInvestigator().suspectChanges(ciId[top.what], ciFirstMs[top.what] || new GlideDateTime().getNumericValue(), {});
+                var sc = new NetraInvestigator({ background: true }).suspectChanges(ciId[top.what], ciFirstMs[top.what] || new GlideDateTime().getNumericValue(), {});
                 if (sc && sc.ok && sc.suspects && sc.suspects.length && sc.suspects[0].score >= 0.5) {
-                    msg += ' Likely trigger: ' + sc.suspects[0].sentence;
+                    // relative, no clock time: one message goes to every watcher,
+                    // in their own timezone, heard whenever they come back
+                    var s0 = sc.suspects[0];
+                    msg += ' Likely trigger: ' + s0.number + (s0.short_description ? " '" + s0.short_description + "'" : '') + ', ' + s0.brief + '.';
                 }
             } catch (eSc) { gs.warn('[NetraScanner] suspect lookup failed: ' + (eSc.message || eSc)); }
         }

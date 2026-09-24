@@ -32,6 +32,7 @@ node:
 | `confirm-gate.test.js` | a "yes" only runs what was just read back, in the next turn; stale, auto-turn, multi-draft, partial-answer and plan cases; plan undo |
 | `routing.test.js` | which utterances the zero-call fast lane answers and which go to the model; basic mode without a key |
 | `investigation.test.js` | evidence first, one model call, invented facts dropped, thin-evidence honesty, CI-vs-ticket guards |
+| `audit-si-investigator.test.js` | a change being worked when the trouble began is a suspect, a later fix is not; no "first ticket" when there is none; grading reads the blamed change and negations; the watch reports only new resolutions and real rollbacks; true neighbour counts; no clock in broadcasts; the user's ACLs on tickets, notes and audit |
 | `permissions.test.js` | Netra acts with exactly the user's permissions (ACLs via GlideRecordSecure, VR tools only for VR roles); approvals need a heard read-back even when a subject tries to instruct the model; resolve never re-resolves and undo restores notes |
 | `records.test.js` | who a message really reached, true attachment/SLA/CI/approval counts, current KB versions, reminder cancels, real field names, change journals |
 | `selfcheck.test.js` | the self-check finds and explains a stopped scanner, a rejected key, overdue orders, thin memory, switched-off writes |

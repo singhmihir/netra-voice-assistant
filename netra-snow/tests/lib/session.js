@@ -17,6 +17,9 @@ function world(opts) {
     g.put('sys_user', { sys_id: 'u_admin', name: 'System Administrator', user_name: 'admin', active: 'true', email: 'admin@example.com' });
     g.put('sys_user', { sys_id: 'u_beth', name: 'Beth Anglin', user_name: 'beth.anglin', active: 'true', email: 'beth@example.com' });
     g.put('sys_user', { sys_id: 'u_bert', name: 'Bert Anglin', user_name: 'bert.anglin', active: 'true', email: 'bert@example.com' });
+    // like every instance, the admin account holds the admin role
+    g.put('sys_user_role', { sys_id: 'role_admin', name: 'admin' });
+    g.put('sys_user_has_role', { user: 'u_admin', role: 'role_admin' });
     [['g_net', 'Network'], ['g_cab', 'Network CAB Managers'], ['g_db', 'Database'], ['g_dbsd', 'Database San Diego'], ['g_sw', 'Software']].forEach(function (x) {
         g.put('sys_user_group', { sys_id: x[0], name: x[1], active: 'true' });
         P.DISPLAY[x[0]] = x[1];
