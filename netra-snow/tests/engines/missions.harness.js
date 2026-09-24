@@ -191,9 +191,10 @@ var t7 = seedTicket({ assignment_group: 'g1', sys_mod_count: 6 }); var i7 = seed
 STORE[M.ITEM][i7].undo_json = JSON.stringify({ t: 'incident', id: t7, restore: { assignment_group: '' }, set: { assignment_group: 'g1' }, pending: true });
 ok(M._applyItem(i7, 'NT0014', 'Mihir').status === 'applied', 'pending recovery accepts exactly one write');
 
-// 7. priority stomped by a lookup AND matrix fails -> moved impact/urgency stay undoable
+// 7. priority stomped by a lookup AND matrix fails AND a rule will not let
+//    urgency go back -> the moved urgency stays undoable
 var t8 = seedTicket(); var i8 = seedItem(t8);
-HOOKS.incident = function (rec) { if (rec.sys_id === t8) rec.priority = '4'; };   // derived priority never moves
+HOOKS.incident = function (rec, changed) { if (rec.sys_id === t8) { rec.priority = '4'; if (changed.urgency) rec.urgency = '2'; } };   // derived priority never moves
 var r8 = M._applyItem(i8, 'NT0014', 'Mihir'); HOOKS.incident = null;
 var u8 = JSON.parse(item(i8).undo_json);
 console.log(JSON.stringify(u8), JSON.parse(item(i8).findings_json).applied.notes); ok(r8.status === 'applied' && u8.restore.urgency === '3' && !u8.restore.hasOwnProperty('impact') && u8.set.urgency === '2', 'matrix leftovers undoable');
