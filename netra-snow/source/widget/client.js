@@ -1299,7 +1299,8 @@ api.controller = function ($scope, $timeout, $window) {
 
     var contRec     = null;
     var pollTimer   = null;
-    var seenIds     = {};
+    var seenIds     = {};   // notifications already spoken on this page
+    var _ackIds     = [];   // spoken, not yet reported to the server
     var geminiHistory = [];
     /* ============================================================
      *  R11 - DEEP MEMORY (client side)
@@ -1324,6 +1325,25 @@ api.controller = function ($scope, $timeout, $window) {
         }
         return n;
     }
+    // history is only ever cut in front of a user prompt (not a tool
+    // response, not the memory digest): a tool call cut off from its
+    // response makes every later model turn fail
+    function _isPromptEntry(e) {
+        if (!e || e.role !== 'user' || !e.parts || !e.parts.length) return false;
+        if (e.parts[0] && e.parts[0].text && String(e.parts[0].text).indexOf('[memory digest') === 0) return false;
+        for (var p = 0; p < e.parts.length; p++) {
+            if (e.parts[p] && e.parts[p].text && !e.parts[p].functionResponse) return true;
+        }
+        return false;
+    }
+    function _promptIndexFrom(arr, from) {
+        for (var i = Math.max(0, from); i < arr.length; i++) if (_isPromptEntry(arr[i])) return i;
+        return arr.length;
+    }
+    function _lastPromptIndex(arr) {
+        for (var i = arr.length - 1; i >= 0; i--) if (_isPromptEntry(arr[i])) return i;
+        return -1;
+    }
     function _memRefreshStats() {
         c.mem.entries = geminiHistory.length;
         c.mem.prompts = _memCountPrompts(geminiHistory);
@@ -1340,7 +1360,7 @@ api.controller = function ($scope, $timeout, $window) {
             }).filter(function (e) { return e && e.parts && e.parts.length; });
             var raw = JSON.stringify(lean);
             if (raw.length > 400000) {   // keep the tab snappy: persist newest ~400KB
-                lean = lean.slice(Math.floor(lean.length / 2));
+                lean = lean.slice(_promptIndexFrom(lean, Math.floor(lean.length / 2)));
                 raw = JSON.stringify(lean);
             }
             sessionStorage.setItem(MEM_STORE_KEY, raw);
@@ -1630,8 +1650,9 @@ api.controller = function ($scope, $timeout, $window) {
         // old local version said "Undone" while the ticket still existed)
         // and which can drop a read-back that is waiting for a yes.
         if (!expecting && /^(scratch that|forget that|rewind|go back)$/i.test(bare)) {
+            // it sets the talk aside - it does not reverse what was done
             return { intent: 'rewind', _action: 'rewind_mem',
-                     reply: 'Okay, I have forgotten that last exchange. What would you like to do?' };
+                     reply: 'Okay, I have set that last exchange aside. If I changed anything in it, that still stands - say "undo that" to reverse it. What would you like to do?' };
         }
         return null;
     }
@@ -3316,13 +3337,15 @@ api.controller = function ($scope, $timeout, $window) {
         if (local) {
             logEvent('local', 'intent=' + local.intent);
             // R2.10 - intent may carry a server-side _action (e.g. rewind_mem)
-            // Pop the last 2 turns from local geminiHistory (user + model)
-            // and ping the server to drop the last mem entry.
+            // Drop the last exchange from local geminiHistory (back to before
+            // its prompt, tool calls and all) and ping the server to drop the
+            // last mem entry.
             if (local._action === 'rewind_mem') {
-                if (geminiHistory.length >= 2) {
-                    geminiHistory.splice(geminiHistory.length - 2, 2);
+                var cutAt = _lastPromptIndex(geminiHistory);
+                if (cutAt >= 0) {
+                    geminiHistory = geminiHistory.slice(0, cutAt);
                     _memPersist();
-                    logEvent('local', 'popped 2 history turns');
+                    logEvent('local', 'rewound to before your last prompt');
                 }
                 try {
                     c.data.action = 'rewind_mem';
@@ -3368,12 +3391,19 @@ api.controller = function ($scope, $timeout, $window) {
         // already stale via the turn epoch, so it won't be spoken).
         if (_chatInFlight) {
             _queuedUtterance = transcript;
+            // said before the in-flight reply was heard: it can not answer it
+            c._lastReplyUnheard = true;
             logEvent('srv', 'queued (chat in flight): "' + transcript + '"');
             tone([620], 0.05);   // soft tick: "got it, one moment"
             return;
         }
         _chatInFlight = true;
         var myEpoch = ++_turnEpoch;
+        // a reply released by the hung timer is still on its way: this turn
+        // makes it stale, so it will never be heard
+        if (_repliesPending > 0) c._lastReplyUnheard = true;
+        var mySeq = ++_chatSeq;
+        _repliesPending++;
         _cancelReprompt();
 
         setState('thinking');
@@ -3439,6 +3469,7 @@ api.controller = function ($scope, $timeout, $window) {
             function () {
                 $timeout.cancel(hung);
                 _chatInFlight = false;
+                _repliesPending = Math.max(0, _repliesPending - 1);
                 // R6 - a barge-in after this call went out makes the reply
                 // stale: keep its history + stats, but never speak it over
                 // the user's newer request.
@@ -3468,7 +3499,7 @@ api.controller = function ($scope, $timeout, $window) {
                     // HALF-trim (newest half survives) instead of a full
                     // wipe. force_history_reset kept for belt-and-braces.
                     if (r.trim_history_half) {
-                        geminiHistory = geminiHistory.slice(Math.floor(geminiHistory.length / 2));
+                        geminiHistory = geminiHistory.slice(_promptIndexFrom(geminiHistory, Math.floor(geminiHistory.length / 2)));
                         _memPersist();
                         logEvent('mem', 'memory squeezed: kept the newest ' + geminiHistory.length + ' turns (server said payload too large)');
                     } else if (r.force_history_reset) {
@@ -3572,10 +3603,11 @@ api.controller = function ($scope, $timeout, $window) {
                 if (stale) {
                     logEvent('barge', 'reply arrived after barge-in - kept in history, not spoken');
                     lastReply = r.message || lastReply;
-                    // a read-back the user never heard must not be confirmable:
-                    // tell the server on the next turn so it drops that draft
+                    // a reply the user never heard must not be answerable:
+                    // tell the server on the next turn so it drops its draft
+                    // (a newer turn already sent was told when it went out)
                     c._awaitingConfirm = false;
-                    if (r.awaiting_confirm) c._lastReplyUnheard = true;
+                    if (mySeq === _chatSeq) c._lastReplyUnheard = true;
                     _drainQueuedUtterance();
                     return;
                 }
@@ -3614,6 +3646,7 @@ api.controller = function ($scope, $timeout, $window) {
             function (err) {
                 $timeout.cancel(hung);
                 _chatInFlight = false;
+                _repliesPending = Math.max(0, _repliesPending - 1);
                 _labNlpCapture('(transport error)', [], null);
                 c.stats.errors++;
                 setState('error');
@@ -3674,6 +3707,8 @@ api.controller = function ($scope, $timeout, $window) {
     var _fillerEchoText = '';      // last filler/backchannel line (also echo-scored)
     var _turnEpoch      = 0;       // bumped per user turn AND per barge-in
     var _chatInFlight   = false;
+    var _repliesPending = 0;       // chats sent whose reply has not landed (the hung timer releases the turn early)
+    var _chatSeq        = 0;       // bumped per chat sent
     var _queuedUtterance = null;   // barge-in that arrived while a chat was in flight
     var _speakSessionId = 0;       // aborts the pipelined-TTS queue on stop
     var _duckedForBarge = false;
@@ -5558,6 +5593,44 @@ api.controller = function ($scope, $timeout, $window) {
     /* ============================================================
      *  NOTIFICATION POLLING
      * ============================================================ */
+    // one polled notification: spoken when she is free and acked once said;
+    // while she is busy or asleep it stays unacked and the next poll brings
+    // it back, so nothing is dropped
+    function _onPolledNotification(n) {
+        if (seenIds[n.id]) { _ackIds.push(n.id); return; }   // spoken already; that ack was lost
+        // R8.2 - skip a scanner-promoted reminder that the local
+        // timer already announced to the minute.
+        if (n.kind === 'reminder' && _reminderAlreadySpoken(n.message)) {
+            logEvent('poll', 'reminder already spoken locally - skipped');
+            seenIds[n.id] = true;
+            _ackIds.push(n.id);
+            return;
+        }
+        if (c.state === 'listening' || c.state === 'speaking' || c.state === 'awaiting' || c.state === 'thinking') return;
+        if (!c.alert || _chatInFlight || _speakingNow) return;  // don't disturb when dormant
+        seenIds[n.id] = true;
+        // R4.5 - cap seenIds to last 500 keys so long-lived
+        // PWA sessions don't accumulate thousands of sys_ids.
+        var _seenKeys = Object.keys(seenIds);
+        if (_seenKeys.length > 500) {
+            for (var _si = 0; _si < _seenKeys.length - 500; _si++) {
+                delete seenIds[_seenKeys[_si]];
+            }
+        }
+        // R6 - interjection etiquette: if we are mid-conversation
+        // (user spoke within the last 45s), Netra excuses herself
+        // before delivering, like a colleague leaning in.
+        var msg = n.message;
+        var recentlyTalking = c.conversationOpen && (Date.now() - (recLastActivityAt || 0) < 45000);
+        if (recentlyTalking) {
+            var lead = ['Sorry to cut in - ', 'Oh - one quick thing - ', 'Pardon the interruption - '];
+            msg = lead[Math.floor(Math.random() * lead.length)] + msg;
+        }
+        c.spoken = msg;
+        $scope.$applyAsync();
+        speak(msg, function () { _ackIds.push(n.id); });
+    }
+
     function startNotificationPolling() {
         var POLL_MS_ACTIVE  = 9000;
         var POLL_MS_DORMANT = 30000;   // R4.7 - back off when paused/dormant
@@ -5572,44 +5645,16 @@ api.controller = function ($scope, $timeout, $window) {
             c.data.history   = null;
             c.data.image_b64 = null;
             c.data.response  = null;
+            // the server marks a notification delivered only once it is acked
+            var acking = _ackIds.splice(0);
+            c.data.ack_ids = acking;
             c.server.update().then(
                 function () {
                     var list = c.data.notifications || [];
                     if (list.length) logEvent('poll', list.length + ' new');
-                    list.forEach(function (n) {
-                        if (seenIds[n.id]) return;
-                        seenIds[n.id] = true;
-                        // R4.5 - cap seenIds to last 500 keys so long-lived
-                        // PWA sessions don't accumulate thousands of sys_ids.
-                        var _seenKeys = Object.keys(seenIds);
-                        if (_seenKeys.length > 500) {
-                            for (var _si = 0; _si < _seenKeys.length - 500; _si++) {
-                                delete seenIds[_seenKeys[_si]];
-                            }
-                        }
-                        if (c.state === 'listening' || c.state === 'speaking' || c.state === 'awaiting' || c.state === 'thinking') return;
-                        if (!c.alert) return;  // don't disturb when dormant
-                        // R8.2 - skip a scanner-promoted reminder that the local
-                        // timer already announced to the minute.
-                        if (n.kind === 'reminder' && _reminderAlreadySpoken(n.message)) {
-                            logEvent('poll', 'reminder already spoken locally - skipped');
-                            return;
-                        }
-                        // R6 - interjection etiquette: if we are mid-conversation
-                        // (user spoke within the last 45s), Netra excuses herself
-                        // before delivering, like a colleague leaning in.
-                        var msg = n.message;
-                        var recentlyTalking = c.conversationOpen && (Date.now() - (recLastActivityAt || 0) < 45000);
-                        if (recentlyTalking) {
-                            var lead = ['Sorry to cut in - ', 'Oh - one quick thing - ', 'Pardon the interruption - '];
-                            msg = lead[Math.floor(Math.random() * lead.length)] + msg;
-                        }
-                        c.spoken = msg;
-                        $scope.$applyAsync();
-                        speak(msg);
-                    });
+                    list.forEach(_onPolledNotification);
                 },
-                function () { /* silent */ }
+                function () { _ackIds = acking.concat(_ackIds); }
             ).finally(function () {
                 // R4.7 - poll slower while paused or dormant: the server has
                 // nothing to deliver then, so a 9s cadence was wasted chatter.
