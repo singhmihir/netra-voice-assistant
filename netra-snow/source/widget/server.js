@@ -8307,6 +8307,15 @@
                     : 'I can not find ' + num + ' to watch.' };
             }
             out.table = table; out.sys_id = String(t.getUniqueValue()); out.number = num;
+            // the runner acts later as the system: arm only a change the user
+            // could make themselves right now
+            if (kind !== 'chase_approvals' && action && action !== 'notify_only') {
+                var need = action === 'escalate_priority' ? (t.isValidField('impact') ? ['priority', 'impact', 'urgency'] : ['priority'])
+                         : action === 'add_comment' ? ['comments'] : action === 'nudge_assignee' ? ['work_notes'] : [];
+                var cant = !t.canWrite();
+                for (var ni = 0; ni < need.length && !cant; ni++) if (!_fieldCan(t, need[ni], 'write')) cant = true;
+                if (cant) return { ok: false, error: 'You do not have permission to ' + (action === 'escalate_priority' ? 'change the priority of ' : action === 'add_comment' ? 'comment on ' : 'add work notes to ') + num + ', so I can not do it for you later either. I can still just tell you when it happens.' };
+            }
         }
         if (kind === 'chase_approvals') {
             if (num) out.cond.source_sys_id = out.sys_id;
@@ -8542,11 +8551,13 @@
         n.addQuery('kind', 'task_report');
         n.addQuery('delivered', false);
         n.orderBy('sys_created_on');
-        n.setLimit(10);
+        n.setLimit(200);   // every one: a report left undelivered would be spoken again by the poll
         n.query();
         while (n.next()) {
             var msg = String(n.getValue('message') || ''), made = String(n.getValue('sys_created_on') || '');
-            var own = (msg.match(/^(NT\d+)\b/) || ['', ''])[1];
+            // missions put their NT number in ticket_number, orders at the front of the text
+            var tnum = String(n.getValue('ticket_number') || '');
+            var own = (msg.match(/^(NT\d+)\b/) || ['', ''])[1] || (/^NT\d+$/.test(tnum) ? tnum : '');
             if (!_awayLogged(items, own, made)) items.push({ nt: own, what: msg.replace(/^NT\d+:?\s*/, ''), at: made, undoable: false });
             n.delivered = true;
             n.delivered_at = new GlideDateTime().toString();
