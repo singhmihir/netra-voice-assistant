@@ -392,7 +392,7 @@ NetraSemantic.prototype = {
      *          maxLive:int, queryVec:[..], withGroupIds:bool }
      * -> { ok, matches:[{sys_id, number, short_description, state, priority,
      *      category, subcategory, assignment_group, assigned_to, close_notes,
-     *      resolved_at, opened, score}], count, stats }
+     *      resolved_at, opened, score, group_id (withGroupIds only)}], count, stats }
      *  | { ok:false, error, embed_failed?, code?, retry_ms?, blocked?, stats? }
      */
     semanticIncidents: function (query, opts) {
@@ -434,7 +434,7 @@ NetraSemantic.prototype = {
         var cacheMap = this.loadVectors(table, ids, stats).map;
 
         var maxLive = (typeof opts.maxLive === 'number') ? Math.max(0, opts.maxLive) : this.INC_EMBED_MAX_LIVE;
-        var scored = [], groupIds = {}, rested = false;
+        var scored = [], rested = false;
         for (var r = 0; r < rows.length; r++) {
             var row = rows[r];
             stats.scanned++;
@@ -460,7 +460,6 @@ NetraSemantic.prototype = {
                 vec = er.vec;
                 stats.embedded_now++;
             }
-            if (row._gid && row.assignment_group) groupIds[row.assignment_group] = row._gid;
             scored.push({
                 sys_id:   row.sys_id,
                 number:   row.number,
@@ -476,6 +475,8 @@ NetraSemantic.prototype = {
                 opened: row.opened,
                 score: this.cosineSim(qVec, vec)
             });
+            // each match carries its own group sys_id: names are not unique
+            if (opts.withGroupIds) scored[scored.length - 1].group_id = row._gid;
         }
         scored.sort(function (a, b) { return b.score - a.score; });
         var thr = (typeof opts.threshold === 'number') ? opts.threshold : this.INC_SIM_THRESHOLD;
@@ -484,9 +485,7 @@ NetraSemantic.prototype = {
             if (scored[s].score >= thr) top.push(scored[s]);
         }
         stats.best_score = scored.length ? Number(scored[0].score.toFixed(3)) : 0;
-        var out = { ok: true, matches: top, count: top.length, stats: stats };
-        if (opts.withGroupIds) out.group_ids = groupIds;
-        return out;
+        return { ok: true, matches: top, count: top.length, stats: stats };
     },
 
     // ---- 1. RESOLUTION MEMORY -------------------------------------------
@@ -533,23 +532,31 @@ NetraSemantic.prototype = {
             return { ok: true, confident: false, sample_size: 0, stats: r.stats,
                      message: 'No lookalikes in the history, so I have nothing solid to base a routing guess on. Say that honestly rather than guessing.' };
         }
-        var groups = this._tally(r.matches, 'assignment_group');
+        // vote on the group's sys_id, speak its name: two groups can share a
+        // name, and pooling their votes would route to the one with fewer
+        var names = {}, voting = [];
+        for (var gv = 0; gv < r.matches.length; gv++) {
+            var gname = String(r.matches[gv].assignment_group || '').trim();
+            if (!gname || !r.matches[gv].group_id) continue;
+            names[r.matches[gv].group_id] = gname;
+            voting.push(r.matches[gv]);
+        }
+        var groups = this._tally(voting, 'group_id');
+        for (var gt = 0; gt < groups.length; gt++) { groups[gt].group_id = groups[gt].value; groups[gt].value = names[groups[gt].value]; }
         var cats   = this._tally(r.matches, 'category');
         var prios  = this._tally(r.matches, 'priority');
         var top = groups[0];
-        var pickEvidence = [];
+        var pickEvidence = [], sameName = false;
         if (top) {
             for (var i = 0; i < r.matches.length && pickEvidence.length < 3; i++) {
-                if (String(r.matches[i].assignment_group || '').trim() === top.value) pickEvidence.push(r.matches[i].number);
+                if (r.matches[i].group_id === top.group_id) pickEvidence.push(r.matches[i].number);
             }
+            for (var gk in names) if (names.hasOwnProperty(gk) && gk !== top.group_id && names[gk] === top.value) sameName = true;
         }
         // how many lookalikes actually carry a group. sample_size counts
         // unassigned lookalikes too (they cast no vote), so "confident" can
         // rest on a single voter; callers that WRITE should check this
-        var voters = 0;
-        for (var vi = 0; vi < r.matches.length; vi++) {
-            if (String(r.matches[vi].assignment_group || '').trim()) voters++;
-        }
+        var voters = voting.length;
         var evidence = [];
         for (var e = 0; e < r.matches.length && e < 3; e++) {
             var m = r.matches[e];
@@ -568,7 +575,8 @@ NetraSemantic.prototype = {
             personal_pick: null,
             evidence: evidence,
             pick_evidence: pickEvidence,
-            group_ids: r.group_ids || {},
+            // another lookalike group has the pick's exact name
+            same_name: sameName,
             stats: r.stats,
             message: 'Say it like a colleague would: "tickets like this usually go to X" with the share as a rough word (most / about half / some), name one example ticket, then ASK before actually assigning anything.'
         };
