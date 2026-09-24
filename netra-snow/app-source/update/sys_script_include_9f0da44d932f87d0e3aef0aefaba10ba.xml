@@ -174,6 +174,21 @@ NetraBrain.prototype = {
         return out;
     },
 
+    /** R21 - a model in the chain that answered within withinMs and is not
+     *  resting now: the readiness probe needs no call at all then */
+    freshOk: function (chain, nowMs, withinMs) {
+        for (var i = 0; i < chain.length; i++) {
+            var info = this.restingInfo(chain[i], nowMs);
+            if (info.resting) continue;
+            var r = this._row(chain[i], nowMs);
+            // a failure after the last success (state stays 'resting' until
+            // the next success) means that success is stale: probe again
+            if (r.state !== 'ok') continue;
+            if (r.last_ok_ms && nowMs - r.last_ok_ms <= withinMs) return chain[i];
+        }
+        return '';
+    },
+
     recordOk: function (key, ms, nowMs) {
         var r = this._row(key, nowMs);
         r.used_today++;
@@ -201,8 +216,11 @@ NetraBrain.prototype = {
                 reason = 'per_minute';
                 rest = Math.max(20000, q.retry_ms || 0);
             } else {
+                // R21 - a 429 without quota detail: a short rest. Escalating on
+                // fails_today let two unrelated 503 blips turn the first of
+                // these into a 30-minute bench
                 reason = 'unknown';
-                rest = r.fails_today <= 1 ? 60000 : (r.fails_today === 2 ? 300000 : 1800000);
+                rest = 60000;
             }
         } else if (code === 404) {
             reason = 'retired'; rest = 24 * 3600000;
@@ -274,4 +292,4 @@ NetraBrain.prototype = {
 
     type: 'NetraBrain'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 18:42:49</sys_created_on><sys_id>9f0da44d932f87d0e3aef0aefaba10ba</sys_id><sys_mod_count>2</sys_mod_count><sys_name>NetraBrain</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_9f0da44d932f87d0e3aef0aefaba10ba</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 21:26:13</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 18:42:49</sys_created_on><sys_id>9f0da44d932f87d0e3aef0aefaba10ba</sys_id><sys_mod_count>4</sys_mod_count><sys_name>NetraBrain</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_9f0da44d932f87d0e3aef0aefaba10ba</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 16:50:16</sys_updated_on></sys_script_include></record_update>

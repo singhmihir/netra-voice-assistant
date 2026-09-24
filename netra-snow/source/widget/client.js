@@ -1056,7 +1056,7 @@ api.controller = function ($scope, $timeout, $window) {
             // has data, lift it up to the server.
             var migrated = false;
             try {
-                if (Object.keys(srvVocab).length === 0 && Object.keys(srvAliases).length === 0) {
+                if (!(c.data && c.data.is_guest) && Object.keys(srvVocab).length === 0 && Object.keys(srvAliases).length === 0) {
                     var localVocab   = JSON.parse(localStorage.getItem('netra.vocab')   || '{}') || {};
                     var localAliases = JSON.parse(localStorage.getItem('netra.aliases') || '{}') || {};
                     if (Object.keys(localVocab).length || Object.keys(localAliases).length) {
@@ -1092,6 +1092,9 @@ api.controller = function ($scope, $timeout, $window) {
     var _saveDebounceTimer = null;
     var _saveInflight = false;
     function saveTrainingData() {
+        // R21 - every public visitor is the one Guest user: what a Guest
+        // teaches stays in this tab, never on the shared server row
+        if (c.data && c.data.is_guest) { _refreshTrainingViews(); return; }
         if (_saveDebounceTimer) $timeout.cancel(_saveDebounceTimer);
         _saveDebounceTimer = $timeout(function () {
             _refreshTrainingViews();
@@ -1244,6 +1247,7 @@ api.controller = function ($scope, $timeout, $window) {
         c.personalVocab = {};
         c.aliases = {};
         _refreshTrainingViews();
+        if (c.data && c.data.is_guest) { logEvent('train', 'cleared this tab\'s training'); return; }
         // Server-side wipe via dedicated action (faster than save with empty)
         c.data.action = 'clear_training';
         c.server.update().then(function () {
@@ -2618,10 +2622,12 @@ api.controller = function ($scope, $timeout, $window) {
     function tryBoot(fromTap) {
         if (booted || _ctrlDestroyed) return;
         if (!c.hasSR) {
-            setState('error');
-            logEvent('err', 'no SpeechRecognition in this browser');
-            speak('Your browser does not support voice. Kindly use Chrome or Edge.');
-            return;
+            // R21 - no recognizer: the on-device ear from the start, or typing
+            // only; the boot goes on so answers are probed and the loading
+            // screen can finish
+            var earPossible = c.ear.mode !== 'off' && typeof Worker !== 'undefined' && typeof Blob !== 'undefined';
+            logEvent('warn', 'no SpeechRecognition in this browser - ' + (earPossible ? 'the on-device ear hears instead' : 'typing only'));
+            if (!earPossible) speak('This browser can not listen, so I can not hear you here. Use Chrome or Edge to talk to me, or type to me in the Lab once my answers are ready.');
         }
         // no key is basic mode, not a dead end: the server still reads and
         // lists tickets, raises one and gives the debrief, so the mic starts
@@ -2730,6 +2736,8 @@ api.controller = function ($scope, $timeout, $window) {
     if (c.ear.mode !== 'on' && c.ear.mode !== 'off') c.ear.mode = 'auto';
     if (c.ear.size !== 'tiny' && c.ear.size !== 'base') c.ear.size = 'auto';   // auto = base on a GPU, tiny elsewhere
     var _earWorker = null, _earBusy = false, _earQueue = [], _earNativeSeen = 0, _earSaid = false, _earEngageOnLoad = false;
+    var _earAnnounce = '';                         // R21 - said once the ear really listens, not while it downloads
+    var _earLastSaid = null, _earHandbackAt = 0;   // R21 - the ear's last words, and when it handed back
     /* ============================================================
      *  R21 - THE LOADING SCREEN
      *
@@ -2744,9 +2752,41 @@ api.controller = function ($scope, $timeout, $window) {
      * ============================================================ */
     c.gate = { open: false, everOpen: false, hearing: false, voice: false, brain: false,
                hearingText: 'checking…', voiceText: 'checking…', brainText: 'checking…' };
-    var _gateHeld = null, _gateReasked = null, _brainProbeTimer = null, _brainProbeBusy = false, _gateNudgedAt = 0, _voiceCheckStart = Date.now();
+    var _gateHeld = null, _gateReasked = null, _brainProbeTimer = null, _brainProbeBusy = false, _gateNudgedAt = 0, _gateNudged = false, _voiceCheckStart = Date.now();
+    // R21 - Chrome and Edge refuse to play any voice until the page has had
+    // a key press or a tap ("not-allowed"): without one she would open the
+    // gate and then say nothing at all. That press is the Voice check.
+    var _activated = false, _voiceBlocked = false;
+    function _needsActivation() {
+        if (_voiceBlocked) return true;
+        if (_activated) return false;
+        try { var ua = $window.navigator && $window.navigator.userActivation; return !!(ua && !ua.hasBeenActive); } catch (eA) { return false; }
+    }
+    function _onPageActivated(ev) {
+        if (_ctrlDestroyed || (_activated && !_voiceBlocked)) return;
+        if (ev && ev.type === 'keydown' && /^(Shift|Control|Alt|Meta|CapsLock|Escape|Tab)$/.test(String(ev.key || ''))) return;
+        _activated = true; _voiceBlocked = false;
+        unlockAudio();
+        try { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); } catch (eR) {}
+        logEvent('gate', 'page activated (' + (ev && ev.type || 'button') + ') - my voice may play now');
+        _gateUpdate();
+    }
+    c.gateActivate = function () { _onPageActivated({ type: 'button' }); };
+    try {
+        $window.document.addEventListener('keydown', _onPageActivated, true);
+        $window.document.addEventListener('pointerdown', _onPageActivated, true);
+        $scope.$on('$destroy', function () {
+            try { $window.document.removeEventListener('keydown', _onPageActivated, true); $window.document.removeEventListener('pointerdown', _onPageActivated, true); } catch (eD) {}
+        });
+    } catch (eL) {}
     function _voiceReady() {
         var eng = c.ttsEngine || 'browser';
+        c.gate.needsTap = false;
+        if (_needsActivation()) {
+            c.gate.needsTap = true;
+            c.gate.voiceText = 'press Enter or tap Start - the browser plays no voice until you do';
+            return false;
+        }
         if (eng === 'edge' && _edgeVoiceAvailable() && !_edgeCircuitOpen()) { c.gate.voiceText = 'neural voice'; return true; }
         // no speech synthesis at all: there will never be voices to wait for
         if (!c.hasTTS) { c.gate.voiceText = 'captions only (this browser can not speak)'; return true; }
@@ -2765,6 +2805,9 @@ api.controller = function ($scope, $timeout, $window) {
         g.hearing = !!c.ready;
         g.hearingText = c.ready ? (c.ear.on ? 'on-device ear' : 'browser recognizer')
                                 : String(c.readyText || 'checking…').replace(/^Getting ready( — )?/, '').replace(/…$/, '') || 'checking';
+        if (!c.ready && !c.hasSR && (c.ear.status === 'error' || c.ear.mode === 'off' || typeof Worker === 'undefined')) {
+            g.hearingText = 'this browser can not listen' + (c.ear.error ? ' (' + c.ear.error + ')' : '') + ' - you can type to me in the Lab once answers are ready';
+        }
         g.voice = _voiceReady();
         var was = g.open;
         g.open = g.hearing && g.voice && g.brain;
@@ -2780,29 +2823,44 @@ api.controller = function ($scope, $timeout, $window) {
         cue('wake');
         var held = _gateHeld;
         _gateHeld = null;
+        _gateNudged = false; _gateNudgedAt = 0;   // the next closed spell gets its own explanation
         if (first) {
             var guest = !!(c.data && c.data.is_guest);
             var nm = String((c.data && c.data.user_name) || '').split(' ')[0];
             if (guest || /^(system|guest)$/i.test(nm)) nm = '';
             var h = new Date().getHours();
             var tod = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
-            speak(tod + (nm ? ', ' + nm : '') + '. I am Netra, and I am ready - just speak.', function () { if (c.alert) setState('idle'); });
+            var webOnly = g.brainMode === 'web' ? ' My reasoning is resting right now, so I will answer from the web until it is back.' : '';
+            speak(tod + (nm ? ', ' + nm : '') + '. I am Netra, and I am ready - just speak.' + webOnly, function () { if (c.alert) setState('idle'); });
             return;
         }
-        if (held && Date.now() - held.at < 3 * 60000) {
+        // a free model is often out for longer than three minutes: the
+        // question is held for ten, and never dropped without a word
+        if (held && Date.now() - held.at < 10 * 60000) {
             logEvent('gate', 'brain is back - asking the held question again: "' + held.text + '"');
             // asked again ONCE: a second "busy" gives up instead of looping
             _gateReasked = { text: held.text, at: Date.now() };
-            speak('I am back. Here is your answer.', function () { handleHeard(held.text); });
+            speak('Back now. You asked: ' + String(held.text).replace(/[.?!\s]+$/, '') + '.', function () { handleHeard(held.text); });
             return;
         }
-        speak('I am ready again - just speak.', function () { if (c.alert) setState('idle'); });
+        speak(held ? 'I am ready again. I could not answer "' + String(held.text).replace(/[.?!\s]+$/, '') + '" in time - please ask me again.'
+                   : 'I am ready again - just speak.', function () { if (c.alert) setState('idle'); });
+    }
+    // R21 - typing needs answers, not ears: a browser that can not listen
+    // at all can still be typed to (and typing is the key press a voice needs)
+    function _typedRefused(t) {
+        if (c.gate && !c.gate.open && !c.gate.brain) { logEvent('gate', 'not ready - typed text kept in the box'); _gateRefuse(t, 1); return true; }
+        _onPageActivated({ type: 'typed' });
+        return false;
     }
     // said while the gate is shut: never silently lost
     function _gateRefuse(text, conf) {
         _heardLog(text, conf, 'ignored: still getting ready');
         logEvent('gate', 'not ready - ignored "' + String(text).substring(0, 60) + '"');
-        if (!_gateNudgedAt || Date.now() - _gateNudgedAt > 12000) {
+        // a cough or a word of background chatter is not someone asking
+        if ((conf > 0 && conf < MIN_CONFIDENCE) || _normTokens(text).length < 2) return;
+        if (!_gateNudged || Date.now() - _gateNudgedAt > 30000) {
+            _gateNudged = true;
             _gateNudgedAt = Date.now();
             var g = c.gate;
             var why = !g.brain ? 'my answers are not ready yet' + (g.brainText && g.brainText !== 'checking…' ? ' - ' + g.brainText : '')
@@ -2821,10 +2879,15 @@ api.controller = function ($scope, $timeout, $window) {
             d = d || { ready: false, say: 'no answer from the server', wait_ms: 8000 };
             if (!c.gate) { _brainProbeBusy = false; return; }
             c.gate.brain = !!d.ready;
-            c.gate.brainText = d.ready ? ('ready' + (d.model ? ' (' + d.model + ')' : '')) : String(d.say || 'not answering yet');
+            c.gate.brainMode = d.ready ? (d.mode || 'full') : '';
+            c.gate.brainText = d.ready ? (d.mode === 'web' ? String(d.say || 'answers from the web only').replace(/[.\s]+$/, '') : 'ready' + (d.model ? ' (' + d.model + ')' : ''))
+                                       : String(d.say || 'not answering yet').replace(/[.\s]+$/, '');
             logEvent('gate', 'brain ' + (d.ready ? 'ready' : 'not ready (' + (d.reason || '?') + ')') + ' in ' + (Date.now() - t0) + ' ms' + (why ? ' - ' + why : ''));
             if (!d.ready && !_ctrlDestroyed) {
                 _brainProbeTimer = $timeout(function () { _brainProbe('retry'); }, Math.max(5000, Math.min(d.wait_ms || 10000, 30000)));
+            } else if (d.mode === 'web' && !_ctrlDestroyed) {
+                // answering from the web: look again now and then, for the status line
+                _brainProbeTimer = $timeout(function () { _brainProbe('web mode'); }, Math.max(60000, Math.min(d.wait_ms || 120000, 300000)));
             }
             // busy until the retry is scheduled: a timer that fires at once
             // can not recurse into a second probe
@@ -2834,7 +2897,9 @@ api.controller = function ($scope, $timeout, $window) {
         if (!c.server || typeof c.server.get !== 'function') { done({ ready: true, model: '' }); return; }
         if (c.gate) c.gate.brainText = 'checking…';
         try {
-            c.server.get({ action: 'ready_check' }).then(function (resp) { done(resp && resp.data && resp.data.ready); },
+            var rq = { action: 'ready_check' };
+            try { rq.tz_offset_min = -new Date().getTimezoneOffset(); rq.tz_name = (Intl.DateTimeFormat().resolvedOptions() || {}).timeZone || ''; } catch (eTz) {}
+            c.server.get(rq).then(function (resp) { done(resp && resp.data && resp.data.ready); },
                 function () { done({ ready: false, say: 'I can not reach the server', wait_ms: 8000 }); });
         } catch (eP) { done({ ready: false, say: 'I can not reach the server', wait_ms: 8000 }); }
     }
@@ -2870,6 +2935,19 @@ api.controller = function ($scope, $timeout, $window) {
     }
     var _earProc = null, _earSink = null, _earRing = [], _earRingMs = 0, _earSeg = [], _earSegMs = 0, _earVoiceMs = 0, _earInSpeech = false, _earSilenceMs = 0, _earRate = 48000;
     var _earLastPartialAt = 0, _earPartialMs = 0, _earPartialOk = true;
+    // R21 - the ear takes the mic after the echo canceller, but what is left
+    // of her voice still reaches it, and a segment is transcribed a second
+    // or two AFTER it was heard - by then she may have stopped, so "is she
+    // speaking now" says nothing. Each segment remembers whether it
+    // overlapped her voice (or its last half second) and what she was saying.
+    var EAR_ECHO_TAIL_MS = 500;
+    var _herVoiceLastOnAt = 0, _earSegHerMs = 0, _earSegSpoken = [], _earJobSeq = 0, _earJobMeta = {};
+    function _herVoiceOn() { return !!(_speakingNow || currentFillerAudio || currentFillerUtter); }
+    function _earNoteSpoken() {
+        [_speakingText, _fillerEchoText].forEach(function (s) {
+            if (s && _earSegSpoken.indexOf(s) < 0) { _earSegSpoken.push(s); if (_earSegSpoken.length > 4) _earSegSpoken.shift(); }
+        });
+    }
     var _deafStrikes = 0, _deafWinStart = 0, _deafLoudMs = 0, _deafLastFrameAt = 0, _srNoGrammar = false, _langFellBack = false;
     // the worker: transformers.js from the CDN, the model from the hub,
     // both cached by the browser after the first load
@@ -2940,10 +3018,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (typeof Worker === 'undefined' || typeof Blob === 'undefined') { c.ear.status = 'error'; c.ear.error = 'no workers in this browser'; return false; }
         c.ear.why = why; c.ear.error = ''; _earNativeSeen = 0;
         logEvent('rec', 'on-device ear engaging: ' + why);
-        if (!quiet && !_earSaid) {
-            _earSaid = true;
-            speak('The browser is returning no words for what you say, so I am listening on this device myself.');
-        }
+        if (!quiet && !_earSaid) _earAnnounce = why;
         if (c.ear.status === 'standby' && _earWorker) { _earReady(); return true; }
         if (c.ear.status === 'loading' && _earWorker) { _earEngageOnLoad = true; _readyUpdate(); return true; }
         _earEngageOnLoad = true;
@@ -2984,6 +3059,12 @@ api.controller = function ($scope, $timeout, $window) {
     function _earReady() {
         var was = c.ready;
         c.ear.on = true; c.ear.status = 'on'; c.ear.progress = 100; _earEngageOnLoad = false;
+        // mid-visit only (a first boot is greeted next anyway), and never over her
+        if (_earAnnounce && !_earSaid && c.gate && c.gate.everOpen && !_speakingNow && !_chatInFlight) {
+            _earSaid = true;
+            speak((/reach/.test(_earAnnounce) ? 'The browser can not reach its speech service' : 'The browser is returning no words for what you say') + ', so I am listening on this device now - please say that again.');
+        }
+        _earAnnounce = '';
         _earTapAttach();
         logEvent('rec', 'on-device ear listening (' + c.ear.model + ' on ' + c.ear.device + ')');
         _readyUpdate();   // R21 - the loading screen says "ready" once everything is
@@ -2991,11 +3072,16 @@ api.controller = function ($scope, $timeout, $window) {
         $scope.$applyAsync();
     }
     function _earFail(msg) {
+        var engaged = c.ear.on || _earEngageOnLoad || !c.hasSR;   // was it needed? read before the reset
+        _earEngageOnLoad = false; _earAnnounce = '';
         c.ear.on = false; c.ear.status = 'error'; c.ear.error = msg;
         logEvent('err', 'on-device ear failed: ' + msg);
         try { if (_earWorker) _earWorker.terminate(); } catch (e) {}
         _earWorker = null; _earBusy = false; _earQueue = [];
-        if (!/Lab/.test(c.ear.why || '')) speak('I could not load my on-device listening - ' + (/fetch|network|load/i.test(msg) ? 'the model would not download on this network' : 'this browser could not run it') + '. You can still type to me in the Lab.');
+        // R21 - said only when the ear was needed and the browser has not
+        // proven it can hear - and never over an answer
+        if (engaged && !_nativeHeardWords && !/Lab/.test(c.ear.why || '') && !_speakingNow && !_chatInFlight) speak('I could not load my on-device listening - ' + (/fetch|network|load/i.test(msg) ? 'the model would not download on this network' : 'this browser could not run it') + '. You can still type to me in the Lab.');
+        _readyUpdate();   // R21 - the browser recognizer's clean start counts again now
         $scope.$applyAsync();
     }
     function _earStop(why) {
@@ -3042,6 +3128,8 @@ api.controller = function ($scope, $timeout, $window) {
         }
         if (d.text !== undefined) {
             _earBusy = false; c.ear.lastMs = d.ms;
+            var jobMeta = d.id !== undefined ? _earJobMeta[d.id] : null;
+            if (d.id !== undefined) delete _earJobMeta[d.id];
             var text = String(d.text).replace(/\s+/g, ' ').trim();
             if (EAR_HALLUCINATION_RE.test(text)) {
                 logEvent('rec.f', 'on-device: nothing said (' + JSON.stringify(text) + ', ' + d.ms + ' ms)');
@@ -3052,24 +3140,50 @@ api.controller = function ($scope, $timeout, $window) {
                 logEvent('rec.f', 'on-device: "' + text + '" dropped - the browser recognizer has the floor now');
             } else {
                 c.ear.heard++;
-                logEvent('rec.f', 'on-device: "' + text + '" (' + d.ms + ' ms)');
-                _earDeliver(text);
+                logEvent('rec.f', 'on-device: "' + text + '" (' + d.ms + ' ms)' + (jobMeta && jobMeta.overlap ? ' - heard over my voice (' + Math.round(jobMeta.herShare * 100) + '%)' : ''));
+                _earDeliver(text, jobMeta);
             }
             _earNext();
         }
     }
+    // R21 - within 4 s of the hand-back, a browser final whose words are
+    // mostly the ear's last delivery is that same utterance, heard twice
+    function _handbackRepeat(t) {
+        if (!_earHandbackAt || Date.now() - _earHandbackAt > 4000 || !_earLastSaid || Date.now() - _earLastSaid.at > 4000) return false;
+        var bTok = _normTokens(t), eTok = _normTokens(_earLastSaid.text);
+        var hit = bTok.filter(function (w) { return eTok.indexOf(w) >= 0; }).length;
+        return !!bTok.length && hit / bTok.length >= 0.7;
+    }
     // the same road a browser final travels: barge-in scoring, aliases, the buffer
-    function _earDeliver(text) {
+    function _earDeliver(text, meta) {
         var t = text, conf = 0.85;
         recLastActivityAt = Date.now();
         _lastFinalAt = Date.now(); c.micHealth.lastFinalAt = _lastFinalAt;
         if (Date.now() < ignoreFinalsUntil) { _heardLog(t, conf, 'dropped: right after my own voice'); return; }
+        // R21 - heard while she was speaking: scored against what she was
+        // saying THEN, even if she has finished (or started something else)
+        if (meta && meta.overlap) {
+            if (_looksLikeEcho(t, meta.spoken)) {
+                logEvent('rec.echo', 'on-device: "' + t + '" (my own voice, heard over it)');
+                _heardLog(t, conf, 'dropped: my own voice');
+                return;
+            }
+            var st = _stripEchoEdges(t, meta.spoken);
+            if (st !== t) { logEvent('rec.echo', 'on-device: my own words stripped: "' + t + '" -> "' + st + '"'); t = st; }
+            // mostly her voice, and too little of it to be a command: noise
+            if (meta.herShare >= 0.8 && _normTokens(t).length < 3 && !HARD_INTERRUPT_RE.test(t) && !matchLocal(t.toLowerCase()) && !_isNoAnswer(t)) {
+                logEvent('rec.echo', 'on-device: "' + t + '" (too little, over my voice)');
+                _heardLog(t, conf, 'dropped: too weak over my voice');
+                return;
+            }
+        }
         if (_speakingNow || _fillerChainActive || currentFillerAudio || currentFillerUtter) {
             if (_handleFinalWhileSpeaking(t, conf)) return;
             if (_lastBargeText) { t = _lastBargeText; _lastBargeText = ''; }
         }
         var aliased = applyAliases(t);
         if (aliased !== t) { logEvent('train', 'alias-rewrite: "' + t + '" -> "' + aliased + '"'); t = aliased; }
+        _earLastSaid = { text: t, at: Date.now() };
         _enqueueFinalTranscript(t, conf);
     }
     // the mic's own audio, tapped after the gain stage; a silent sink keeps
@@ -3099,17 +3213,23 @@ api.controller = function ($scope, $timeout, $window) {
         for (var i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
         var level = Math.min(100, Math.round(Math.sqrt(sum / frame.length) * 360));
         var ms = frame.length / rate * 1000;
+        var nowF = Date.now();
+        if (_herVoiceOn()) _herVoiceLastOnAt = nowF;
+        var herish = !!_herVoiceLastOnAt && nowF - _herVoiceLastOnAt < EAR_ECHO_TAIL_MS;
         if (!_earInSpeech) {
             _earRing.push(frame); _earRingMs += ms;
             while (_earRingMs > EAR_PREROLL_MS && _earRing.length > 1) { _earRingMs -= _earRing[0].length / rate * 1000; _earRing.shift(); }
             if (level >= EAR_START_LEVEL) {
                 _earInSpeech = true; _earSeg = _earRing.slice(); _earSegMs = _earRingMs; _earVoiceMs = 0; _earSilenceMs = 0; _earLastPartialAt = 0;
                 _earRing = []; _earRingMs = 0;
+                _earSegHerMs = 0; _earSegSpoken = [];
+                if (herish) { _earSegHerMs = ms; _earNoteSpoken(); }
                 if (!_speakingNow) { c.interim = '(on-device) hearing…'; $scope.$applyAsync(); }
             }
             return;
         }
         _earSeg.push(frame); _earSegMs += ms; _earVoiceMs += ms;
+        if (herish) { _earSegHerMs += ms; _earNoteSpoken(); }
         if (level < EAR_STOP_LEVEL) _earSilenceMs += ms; else _earSilenceMs = 0;
         // live words while the user still speaks, when the worker is free
         if (_earPartialOk && !_earBusy && !_earQueue.length && _earWorker && _earSilenceMs < EAR_STOP_LEVEL && _earVoiceMs - _earLastPartialAt >= EAR_PARTIAL_MS && _earVoiceMs >= EAR_PARTIAL_MS) {
@@ -3121,9 +3241,10 @@ api.controller = function ($scope, $timeout, $window) {
         if (_earSilenceMs >= EAR_SILENCE_MS || _earSegMs >= EAR_MAX_MS) {
             // the voiced part is what was said after the meter rose, less the trailing silence: the pre-roll is not speech
             var seg = _earSeg, voicedMs = _earVoiceMs - _earSilenceMs;
-            _earSeg = []; _earSegMs = 0; _earVoiceMs = 0; _earInSpeech = false; _earSilenceMs = 0;
+            var meta = { overlap: _earSegHerMs > 0, herShare: _earVoiceMs ? Math.min(1, _earSegHerMs / _earVoiceMs) : 0, spoken: _earSegSpoken.slice() };
+            _earSeg = []; _earSegMs = 0; _earVoiceMs = 0; _earInSpeech = false; _earSilenceMs = 0; _earSegHerMs = 0; _earSegSpoken = [];
             if (voicedMs < EAR_MIN_SPEECH_MS) { if (c.interim && /on-device/.test(c.interim)) { c.interim = ''; $scope.$applyAsync(); } return; }
-            _earSubmit(_earTo16k(seg, rate));
+            _earSubmit(_earTo16k(seg, rate), meta);
         }
     }
     function _earTo16k(frames, rate) {
@@ -3140,18 +3261,21 @@ api.controller = function ($scope, $timeout, $window) {
         }
         return out;
     }
-    function _earSubmit(audio) {
+    function _earSubmit(audio, meta) {
         if (!_earWorker || !c.ear.on) return;
         if (_earQueue.length >= 2) _earQueue.shift();   // never fall behind: the oldest goes
-        _earQueue.push(audio);
+        _earQueue.push({ audio: audio, meta: meta || null });
         if (!_speakingNow) { c.interim = '(on-device) working out what you said…'; $scope.$applyAsync(); }
         _earNext();
     }
     function _earNext() {
         if (_earBusy || !_earQueue.length || !_earWorker) return;
         _earBusy = true;
-        var audio = _earQueue.shift();
-        _earWorker.postMessage({ cmd: 'run', id: Date.now(), audio: audio }, [audio.buffer]);
+        var job = _earQueue.shift();
+        if (job && job.audio === undefined) job = { audio: job, meta: null };
+        var id = ++_earJobSeq;
+        _earJobMeta[id] = job.meta;
+        _earWorker.postMessage({ cmd: 'run', id: id, audio: job.audio }, [job.audio.buffer]);
     }
     // the meter shows speech, the recognizer returns nothing: judged every
     // ten seconds, healed in steps, the ear as the last step
@@ -3255,7 +3379,7 @@ api.controller = function ($scope, $timeout, $window) {
             if (_deafStrikes && !c.ear.on) _deafStrikes = 0;
             if (!_nativeHeardWords) {
                 for (var hw = ev.resultIndex; hw < ev.results.length; hw++) {
-                    if (ev.results[hw] && ev.results[hw][0] && String(ev.results[hw][0].transcript || '').trim()) { _nativeHeardWords = true; logEvent('rec', 'the browser recognizer returned words - it can hear'); break; }
+                    if (ev.results[hw] && ev.results[hw][0] && String(ev.results[hw][0].transcript || '').trim()) { _nativeHeardWords = true; logEvent('rec', 'the browser recognizer returned words - it can hear'); _readyUpdate(); break; }
                 }
             }
             if (_nativeVerdict !== 'ok') _nativeSaw('ok');
@@ -3270,11 +3394,16 @@ api.controller = function ($scope, $timeout, $window) {
                     _earNativeSeen++;
                     if (c.ear.mode === 'auto' && _earNativeSeen >= 3) {
                         _earStop('the browser recognizer is hearing again');
+                        _earHandbackAt = Date.now();
                     } else {
                         _heardLog(t, conf, 'ignored: the on-device ear is listening');
                         continue;
                     }
                 }
+                // R21 - right after the hand-back, the browser's final for words
+                // the ear already delivered (the ear was quicker) is the same
+                // utterance: never asked twice
+                if (res.isFinal && _handbackRepeat(t)) { _heardLog(t, conf, 'dropped: the on-device ear already heard this'); continue; }
                 if (!res.isFinal) {
                     // R8.1 - zombie-session heartbeat: remember the interim so
                     // the watchdog can promote it if a final never arrives.
@@ -3953,7 +4082,13 @@ api.controller = function ($scope, $timeout, $window) {
         // R8.1 - calibration read-back has priority over command routing
         if (_calibConsume(clean)) { _heardLog(clean, conf, 'mic check read-back'); return; }
         // R21 - nothing is accepted before Netra can hear, speak AND answer
-        if (c.gate && !c.gate.open) { _gateRefuse(clean, conf); return; }
+        // ("stop", "wait" and "stop listening" always work; asleep, only a
+        // wake phrase is for her at all)
+        if (c.gate && !c.gate.open && !HARD_INTERRUPT_RE.test(clean) && !matchSleep(clean.toLowerCase())) {
+            if (!c.alert && !matchExplicitWakeUp(clean)) { _heardLog(clean, conf, 'ignored: asleep - say "Netra" to wake her'); return; }
+            _gateRefuse(clean, conf);
+            return;
+        }
         var lower = clean.toLowerCase();
         c._hushed = false;   // "quiet" lasts until the user speaks again
         c.prevHeard  = c.lastHeard;   // what "I said X" / "no, I meant X" corrects
@@ -4740,12 +4875,13 @@ api.controller = function ($scope, $timeout, $window) {
 
     // Score a heard final against what Netra is currently saying (plus the
     // last filler line). High overlap means the mic picked up her own voice.
-    function _looksLikeEcho(heard) {
+    function _looksLikeEcho(heard, extra) {
         var heardToks = _normTokens(heard);
         if (!heardToks.length) return true;   // nothing substantive
         var own = {};
         _normTokens(_speakingText).forEach(function (w) { own[w] = 1; });
         _normTokens(_fillerEchoText).forEach(function (w) { own[w] = 1; });
+        (extra || []).forEach(function (s) { _normTokens(s).forEach(function (w) { own[w] = 1; }); });
         var hits = 0;
         for (var i = 0; i < heardToks.length; i++) if (own[heardToks[i]]) hits++;
         var ratio = hits / heardToks.length;
@@ -4760,8 +4896,9 @@ api.controller = function ($scope, $timeout, $window) {
     // words the user could be commanding with: a leading run is never hers
     // when it starts with one of these ("read the newest three tickets to me")
     var USER_LEAD_RE = /^(read|open|show|list|tell|give|find|search|create|raise|close|resolve|assign|add|set|update|change|what|who|how|when|where|which|why|is|are|can|could|do|does|did|yes|no|netra|please|stop|wait|pause)$/;
-    function _stripEchoEdges(heard) {
+    function _stripEchoEdges(heard, extra) {
         var hers = _normTokens(_speakingText).concat(_normTokens(_fillerEchoText));
+        (extra || []).forEach(function (s) { hers = hers.concat(_normTokens(s)); });
         if (!hers.length) return heard;
         var hersStr = ' ' + hers.join(' ') + ' ';
         var words = String(heard || '').trim().split(/\s+/).filter(Boolean);
@@ -5980,7 +6117,7 @@ api.controller = function ($scope, $timeout, $window) {
     // a genuinely-broken build (e.g. the pre-GEC Edge 403 storm) stayed
     // open in localStorage across every future session, permanently
     // pinning Netra to the robotic fallback even after the fix shipped.
-    var NETRA_BUILD = 'v7.4-ready';   // bumped: reopens Edge TTS for everyone whose breaker tripped on an old build
+    var NETRA_BUILD = 'v7.5-ready';   // bumped: reopens Edge TTS for everyone whose breaker tripped on an old build
     try {
         if (_store && _store.getItem('netra_build') !== NETRA_BUILD) {
             _store.removeItem('netra_edgeFails');
@@ -6674,6 +6811,12 @@ api.controller = function ($scope, $timeout, $window) {
             $timeout.cancel(startWatchdog);
             _clearSpeaking();   // R6
             logEvent('err', 'TTS error: ' + (ev && ev.error));
+            if (ev && ev.error === 'not-allowed' && c.gate) {
+                // R21 - the page has not been pressed or tapped yet: say so on
+                // the loading screen instead of talking into nothing
+                _voiceBlocked = true;
+                _gateUpdate();
+            }
             if (done) done();
         };
 
@@ -6967,7 +7110,7 @@ api.controller = function ($scope, $timeout, $window) {
     c.devSendText = function () {
         var t = (c.devText || '').trim();
         if (!t) return;
-        if (c.gate && !c.gate.open) { logEvent('gate', 'not ready - typed text kept in the box'); _gateRefuse(t, 1); return; }
+        if (_typedRefused(t)) return;
         c.devText = '';
         logEvent('dev', 'manual send: "' + t + '"');
         unlockAudio();

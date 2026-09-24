@@ -185,7 +185,7 @@ T.test('no Gemini key: the page boots, says nothing it can not stand behind, and
     T.ok(p.get('booted'), 'the mic starts');
     T.notMatch(p.rec.spoken.join(' '), /has not been configured|basic mode/, 'no basic-mode speech');
     T.eq(p.c.gate.open, false, 'nothing is accepted without a brain');
-    T.eq(p.c.gate.brainText, 'My Gemini key is not set up yet.', 'the loading screen says why');
+    T.eq(p.c.gate.brainText, 'My Gemini key is not set up yet', 'the loading screen says why (no doubled full stop when spoken)');
 
     var k = page();
     k.c.hasSR = true;

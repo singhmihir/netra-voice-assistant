@@ -17,6 +17,8 @@ function page() {
     cl.set('_deafStrikes', 0); cl.set('_deafWinStart', 0); cl.set('_deafLoudMs', 0); cl.set('_deafLastFrameAt', 0); cl.set('_srNoGrammar', false);
     cl.set('_earWorker', null); cl.set('_earBusy', false); cl.set('_earQueue', []); cl.set('_earRing', []); cl.set('_earRingMs', 0); cl.set('_earSeg', []); cl.set('_earSegMs', 0);
     cl.set('_earInSpeech', false); cl.set('_earSilenceMs', 0); cl.set('_earVoiceMs', 0); cl.set('_earSaid', false); cl.set('_earNativeSeen', 0);
+    cl.set('_herVoiceLastOnAt', 0); cl.set('_earSegHerMs', 0); cl.set('_earSegSpoken', []); cl.set('_earJobSeq', 0); cl.set('_earJobMeta', {});
+    cl.set('_speakingText', ''); cl.set('_fillerEchoText', ''); cl.set('currentFillerAudio', null); cl.set('currentFillerUtter', null);
     return cl;
 }
 // a frame of the given loudness on the meter's scale (rms * 360)
@@ -298,7 +300,7 @@ T.test('the brain busy mid-visit: the question is held, asked again once when it
     T.eq(sent, []); T.ok(probes.length >= 1);
     f._brainProbe('retry');         // back
     T.eq(c.gate.open, true);
-    T.match(said[said.length - 1], /I am back/);
+    T.match(said[said.length - 1], /^Back now\. You asked: who founded servicenow\.$/, 'the held question is said back, so the answer has its context');
     T.eq(sent, ['who founded servicenow'], 'asked again, once');
     T.eq(cl.get('_gateReasked').text, 'who founded servicenow');
 });

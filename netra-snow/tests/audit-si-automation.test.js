@@ -148,6 +148,16 @@ T.test('comments reach Netra users who want them, and nobody else', function () 
     T.eq(heard(CALLER).length, 2);
 });
 
+T.test('the shared Guest user of the public page never gets an inbox, even with an old preference row', function () {
+    brWorld();
+    var GUEST = id32('guest');
+    g.put('sys_user', { sys_id: GUEST, user_name: 'guest', name: 'Guest', active: 'true' });
+    pref(GUEST);                                            // written by a page load before the fix
+    g.find('incident', 'number', 'INC0010013').caller_id = GUEST;
+    journal('comments', 'Your laptop is ready for pickup');
+    T.eq(heard(GUEST).length, 0, 'every public visitor would read it');
+});
+
 function ciCluster(name) {
     var ci = g.put('cmdb_ci', { name: name });
     g.P.DISPLAY[ci] = name;

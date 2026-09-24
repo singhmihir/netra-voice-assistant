@@ -138,10 +138,25 @@ The installer also grants the app read access to `sys_user_has_role` and
 `sys_user_role` (to tell fulfillers apart); on an instance upgraded by update
 set, allow those two cross-scope reads if the platform asks.
 
-Free Gemini keys allow **20 generate calls per model per day**. v7 is built
-around that: most everyday questions cost no call at all, and when every
-model is resting Netra keeps working in basic mode and tells you when her
-reasoning is back. Ask *"how's your brain?"* to hear the live ledger.
+Free Gemini keys allow **20 generate calls per model per day** (Gemma 4:
+16k input tokens per model per minute), shared by everyone using the key.
+v7 is built around that: most everyday questions cost no call at all, the
+page shows a loading screen through a short overload, and when every model
+is out for longer Netra answers the simple way (the web, and tickets by
+number) and tells you when her reasoning is back. Ask *"how's your brain?"*
+to hear the live ledger. For a page many people will use at once, set a
+paid key.
+
+**The loading screen.** `netra_live` accepts nothing until Netra can hear,
+speak and answer; each check is shown with its reason. Chrome and Edge play
+no voice until the page has had a key press or tap, so a fresh visitor is
+asked to press Enter (the **Start Netra** button is focused for screen
+readers).
+
+**Guests keep nothing.** Every public visitor is the one Guest user, so a
+Guest's memory, drafts and voice training last for the visit only, a Guest
+has no notification inbox, and record questions get "sign in to
+ServiceNow".
 
 ## Path C — Studio app import
 

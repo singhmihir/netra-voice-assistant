@@ -648,13 +648,15 @@
         </svg>
       </button>
       <!-- R21 - the loading screen: nothing is accepted until Netra can hear, speak and answer -->
-      <div class="netra-gate" ng-if="c.gate && !c.gate.open" role="alertdialog" aria-live="assertive" aria-label="Netra is getting ready">
-        <div class="netra-gate-card">
-          <div class="netra-gate-title">{{c.gate.everOpen ? 'One moment - Netra is catching up' : 'Netra is getting ready'}}</div>
-          <div class="netra-gate-sub">Please wait - she can not take questions until all three are ready.</div>
-          <div class="netra-gate-row" ng-class="{'ok': c.gate.hearing}"><span class="dot"></span><b>Hearing</b><em>{{c.gate.hearingText}}</em></div>
-          <div class="netra-gate-row" ng-class="{'ok': c.gate.voice}"><span class="dot"></span><b>Voice</b><em>{{c.gate.voiceText}}</em></div>
-          <div class="netra-gate-row" ng-class="{'ok': c.gate.brain}"><span class="dot"></span><b>Answers</b><em>{{c.gate.brainText}}</em></div>
+      <div class="netra-ready" ng-if="c.gate && !c.gate.open" role="alertdialog" aria-live="assertive" aria-label="Netra is getting ready">
+        <div class="netra-ready-card">
+          <div class="netra-ready-title">{{c.gate.everOpen ? 'One moment - Netra is catching up' : 'Netra is getting ready'}}</div>
+          <div class="netra-ready-sub">Please wait - she can not take questions until all three are ready.</div>
+          <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.hearing}"><span class="dot"></span><b>Hearing</b><em>{{c.gate.hearingText}}</em></div>
+          <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.voice}"><span class="dot"></span><b>Voice</b><em>{{c.gate.voiceText}}</em></div>
+          <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.brain}"><span class="dot"></span><b>Answers</b><em>{{c.gate.brainText}}</em></div>
+          <button type="button" class="netra-ready-start" ng-if="c.gate.needsTap" ng-click="c.gateActivate()" autofocus
+                  aria-label="Start Netra. Press Enter so the browser lets her speak.">Start Netra</button>
         </div>
       </div>
       <div class="netra-stage-status" role="status" aria-live="polite">{{c.liveStatus}}</div>

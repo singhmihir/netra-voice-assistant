@@ -195,6 +195,47 @@ allowance. Now:
 - **Guests are told the truth**: ticket questions get "sign in to ServiceNow";
   no automatic briefing, no notification polling, a Guest's own help text.
 
+**Hardened for the public page (v7.5).** A bug hunt over the whole Guest
+journey (hunters per area, then an adversarial verifier per finding; 13 of
+23 findings confirmed) and a fix with a test for each:
+
+- **Nothing a Guest does is kept for the next visitor.** Every public
+  visitor is the *one* Guest user, so a shared memory row handed one
+  visitor's words, drafts and voice-training aliases to the next (one
+  visitor's "no means yes" alias rewrote everyone's "no"). A Guest's state
+  now lives for the request only; no notification inbox, no preference row
+  (the comment rule skips Guest); no TTS proxy on the instance's key, no
+  training writes; the `debug` action is admin-only and never shows any part
+  of the key; a Guest's fast lane is the web search only, and reindexing
+  needs the itil role.
+- **The sign-in line only for real record asks** ("my tickets",
+  INC0010013, "create a ticket", "brief me"); "what problems does
+  Kubernetes solve" or "what is an SLA" goes to the model.
+- **A turn always ends in time.** The model chain stops at 14 s and gives
+  each call only the time left (it was 12 s each under a 20 s deadline, up
+  to ~44 s); past 16 s a many-step turn speaks what it found. A reply with
+  nothing in it (no candidates, a blocked prompt, thought parts only) asks
+  the next model instead of ending the turn; an unreadable 200 is a short
+  rest, a refused key is an auth failure, a detail-less 429 is one minute.
+- **The loading screen is honest and never sticks.** A key press or tap is
+  asked for when the browser would refuse to play any voice ("Start Netra"
+  button, focused for screen readers); readiness is recomputed when the ear
+  fails or the browser first hears words; a browser with no recognizer
+  still boots (the on-device ear, or typing only); "stop" and "stop
+  listening" work while it is up, noise does not trigger the explanation,
+  and it is said once per spell; a question held through an outage is
+  asked again for up to ten minutes ("Back now. You asked: ...") and never
+  dropped without a word; the readiness probe pings one model, not three,
+  while any model rests. When every model is out for more than five
+  minutes (a spent daily quota) and the web search works, the page opens
+  in **web answers** mode and says so, instead of waiting all day.
+- **Her own voice is never taken for the user's.** The on-device ear
+  transcribes a segment a second or two after hearing it, when she has
+  often stopped; each segment now remembers whether it overlapped her voice
+  and what she was saying, and her words are dropped or stripped. After the
+  ear hands back to the browser recognizer, the same words are never asked
+  twice.
+
 **Quick by default (v7.3).** For a page anyone opens, the quickest of
 everything is the default: the browser's own installed voice (instant,
 offline; the neural voice is a Lab choice), the tiny on-device model,
@@ -221,9 +262,13 @@ swallowed. The whole loop was tested with real speech: Indian-English
 audio played into the page's own recognition handlers, replies from the
 real instance, echo from the speakers simulated.
 
-**Known limits.** Free keys allow 20 generate calls per model per day, so a
-heavy day will still put Netra into basic mode for a while — she says so and
-says when she is back. Instances without a `caused_by` field on incident get
+**Known limits.** Free keys allow 20 generate calls per model per day, and
+Gemma 4's free tier 16k input tokens per model per minute - shared by
+*every* visitor on the key, so a busy public page runs out: short overloads
+show the loading screen, a spent day puts Netra into web answers / basic
+mode until the Pacific-midnight reset - she says so and says when she is
+back. For wide testing, use a paid key. Chrome and Edge play no voice until
+the page has had a key press or tap: the loading screen asks for one. Instances without a `caused_by` field on incident get
 the change link as a cross-referenced work note on both records instead.
 Some instances fence the system log off from scoped apps; the self-check then
 says it could not look there rather than reporting "no errors".

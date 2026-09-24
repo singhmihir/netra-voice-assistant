@@ -491,7 +491,7 @@ var sn_ws = {
         return {
             setEndpoint: function (u) { req.endpoint = u; }, setHttpMethod: function (m) { req.method = m; },
             setRequestHeader: function (k, v) { req.headers[k] = v; }, setRequestBody: function (b) { req.body = b; },
-            setHttpTimeout: function () {}, setEccParameter: function () {},
+            setHttpTimeout: function (ms) { req.timeout = ms; }, setEccParameter: function () {},
             execute: function () {
                 var r = P.HTTP ? P.HTTP(req) : { status: 0, body: '' };
                 return { getStatusCode: function () { return r.status; }, getBody: function () { return r.body; },

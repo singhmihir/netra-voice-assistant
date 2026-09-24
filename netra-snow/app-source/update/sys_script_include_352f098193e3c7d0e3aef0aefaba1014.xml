@@ -114,13 +114,13 @@ NetraSelfCheck.prototype = {
 
     _brain: function () {
         var brain = new NetraBrain();
-        var chain = String(gs.getProperty(this.SCOPE + '.model_chain', 'gemini-2.5-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3-flash-preview')).split(',');
+        var chain = String(gs.getProperty(this.SCOPE + '.model_chain', 'gemma-4-26b-a4b-it,gemini-2.5-flash-lite,gemini-3.1-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-3.5-flash,gemini-3-flash-preview')).split(',');
         for (var c = 0; c < chain.length; c++) chain[c] = chain[c].replace(/^\s+|\s+$/g, '');
         var pick = brain.pickChain(chain, this.now);
         if (!pick.tryList.length) {
             var mins = pick.all_resting_until_ms ? Math.max(1, Math.round((pick.all_resting_until_ms - this.now) / 60000)) : 0;
-            return [{ key: 'quota', level: 'warning', say: 'all ' + chain.length + ' of my reasoning models are out of quota right now' + (mins ? ', the first is back in about ' + (mins >= 90 ? Math.round(mins / 60) + ' hours' : mins + ' minutes') : ''),
-                      fix: 'I keep working in basic mode until then' }];
+            return [{ key: 'quota', level: 'warning', say: 'all ' + chain.length + ' of my reasoning models are resting right now (out of quota or overloaded)' + (mins ? ', the first is back in about ' + (mins >= 90 ? Math.round(mins / 60) + ' hours' : (mins <= 1 ? 'a minute' : mins + ' minutes')) : ''),
+                      fix: 'until one is back I answer the simple way (the web, tickets by number) and say so' }];
         }
         return [{ key: 'quota', level: 'ok', say: pick.tryList.length + ' of ' + chain.length + ' reasoning models are available' }];
     },
@@ -276,4 +276,4 @@ NetraSelfCheck.prototype = {
 
     type: 'NetraSelfCheck'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 21:11:48</sys_created_on><sys_id>352f098193e3c7d0e3aef0aefaba1014</sys_id><sys_mod_count>2</sys_mod_count><sys_name>NetraSelfCheck</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_352f098193e3c7d0e3aef0aefaba1014</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-23 21:19:59</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-23 21:11:48</sys_created_on><sys_id>352f098193e3c7d0e3aef0aefaba1014</sys_id><sys_mod_count>5</sys_mod_count><sys_name>NetraSelfCheck</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_352f098193e3c7d0e3aef0aefaba1014</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 17:07:17</sys_updated_on></sys_script_include></record_update>

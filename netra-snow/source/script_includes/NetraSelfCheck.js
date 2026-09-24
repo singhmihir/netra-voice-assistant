@@ -119,8 +119,8 @@ NetraSelfCheck.prototype = {
         var pick = brain.pickChain(chain, this.now);
         if (!pick.tryList.length) {
             var mins = pick.all_resting_until_ms ? Math.max(1, Math.round((pick.all_resting_until_ms - this.now) / 60000)) : 0;
-            return [{ key: 'quota', level: 'warning', say: 'all ' + chain.length + ' of my reasoning models are out of quota right now' + (mins ? ', the first is back in about ' + (mins >= 90 ? Math.round(mins / 60) + ' hours' : mins + ' minutes') : ''),
-                      fix: 'I keep working in basic mode until then' }];
+            return [{ key: 'quota', level: 'warning', say: 'all ' + chain.length + ' of my reasoning models are resting right now (out of quota or overloaded)' + (mins ? ', the first is back in about ' + (mins >= 90 ? Math.round(mins / 60) + ' hours' : (mins <= 1 ? 'a minute' : mins + ' minutes')) : ''),
+                      fix: 'until one is back I answer the simple way (the web, tickets by number) and say so' }];
         }
         return [{ key: 'quota', level: 'ok', say: pick.tryList.length + ' of ' + chain.length + ' reasoning models are available' }];
     },

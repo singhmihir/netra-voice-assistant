@@ -181,6 +181,9 @@ NetraBrain.prototype = {
             var info = this.restingInfo(chain[i], nowMs);
             if (info.resting) continue;
             var r = this._row(chain[i], nowMs);
+            // a failure after the last success (state stays 'resting' until
+            // the next success) means that success is stale: probe again
+            if (r.state !== 'ok') continue;
             if (r.last_ok_ms && nowMs - r.last_ok_ms <= withinMs) return chain[i];
         }
         return '';
@@ -213,8 +216,11 @@ NetraBrain.prototype = {
                 reason = 'per_minute';
                 rest = Math.max(20000, q.retry_ms || 0);
             } else {
+                // R21 - a 429 without quota detail: a short rest. Escalating on
+                // fails_today let two unrelated 503 blips turn the first of
+                // these into a 30-minute bench
                 reason = 'unknown';
-                rest = r.fails_today <= 1 ? 60000 : (r.fails_today === 2 ? 300000 : 1800000);
+                rest = 60000;
             }
         } else if (code === 404) {
             reason = 'retired'; rest = 24 * 3600000;

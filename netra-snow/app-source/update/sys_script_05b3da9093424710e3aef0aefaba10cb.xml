@@ -174,6 +174,8 @@
             continue;
         }
         var userName = String(user.user_name);
+        // R21 - the shared Guest user (the public page's visitors) has no inbox
+        if (userName === 'guest') { gs.info('[NetraNotify]   skipped guest (shared public user)'); continue; }
 
         if (userName == authorUser && !notifyAuthor) {
             skippedAsAuthor++;
@@ -242,4 +244,4 @@
     }
 
 })(current, previous);
-]]></script><sys_class_name>sys_script</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:41</sys_created_on><sys_domain>global</sys_domain><sys_domain_path>/</sys_domain_path><sys_id>05b3da9093424710e3aef0aefaba10cb</sys_id><sys_mod_count>1</sys_mod_count><sys_name>Netra Notify On Comment</sys_name><sys_overrides/><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_05b3da9093424710e3aef0aefaba10cb</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 05:34:39</sys_updated_on><template/><when>async</when></sys_script><sys_translated_text action="delete_multiple" query="documentkey=05b3da9093424710e3aef0aefaba10cb"/></record_update>
+]]></script><sys_class_name>sys_script</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:41</sys_created_on><sys_domain>global</sys_domain><sys_domain_path>/</sys_domain_path><sys_id>05b3da9093424710e3aef0aefaba10cb</sys_id><sys_mod_count>2</sys_mod_count><sys_name>Netra Notify On Comment</sys_name><sys_overrides/><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_05b3da9093424710e3aef0aefaba10cb</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 16:50:21</sys_updated_on><template/><when>async</when></sys_script><sys_translated_text action="delete_multiple" query="documentkey=05b3da9093424710e3aef0aefaba10cb"/></record_update>

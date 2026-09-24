@@ -220,6 +220,17 @@
         // R21 - the page's loading screen: can Netra answer right now?
         try { data.ready = _readyCheck(); }
         catch (eRc) { data.ready = { ready: false, reason: 'error', detail: String(eRc.message || eRc).substring(0, 200), wait_ms: 10000 }; }
+    } else if (action === 'poll' && _isGuest()) {
+        data.notifications = [];   // R21 - the shared Guest user has no inbox to read or ack
+    } else if ((action === 'gemini_tts' || action === 'rewind_mem' || action === 'save_training' || action === 'clear_training') && _isGuest()) {
+        // R21 - not for the shared Guest user: an open TTS proxy on the key,
+        // and state every public visitor would share
+        data.guest_refused = action;
+        data.gemini_tts = { ok: false, error: 'sign in' };
+        data.training_result = { ok: false, error: 'sign in' };
+        data.rewind_result = { ok: false, error: 'sign in' };
+    } else if (action === 'debug' && !gs.hasRole('admin')) {
+        data.debug = { error: 'admins only' };   // R21
     } else if (action === 'poll') {
         try {
             // delivered means SPOKEN: the page acks what it said, and whatever
@@ -374,7 +385,7 @@
                 user_name: gs.getUserDisplayName(),
                 user_sys_id: user,
                 model: mdl,
-                api_key_status: key ? ('set (length=' + key.length + ', prefix=' + key.substring(0, 6) + ')') : 'MISSING',
+                api_key_status: key ? 'set' : 'MISSING',   // R21 - never a prefix or length
                 tool_count: toolNames.length,
                 tools: toolNames,
                 paused: !!data.paused,
@@ -713,11 +724,15 @@
         // answering a reply they never heard): its writes wait for a heard yes
         var tainted = !!_brainTurn.prevUnheard || _contextTainted(contents);
         var callBudget = _turnBudget();
+        var turnStartedAt = Date.now();
         for (var iter = 0; iter < 8; iter++) {
             if (_brainTurn.calls >= callBudget) {
                 return toolLog.length ? _pr('budget')
                                       : _offlineAnswer(userMessage, contents, { why: 'budget' });
             }
+            // R21 - a voice can not wait: past 16 s, what the tools found is
+            // spoken now instead of another round of reasoning
+            if (iter > 0 && toolLog.length && Date.now() - turnStartedAt > 16000) return _pr('time');
             var resp = _callGemini(apiKey, model, contents, tools, systemInstruction, lean);
             if (resp._model_used) modelUsed = resp._model_used;
             if (resp.error) {
@@ -731,9 +746,15 @@
                 if (resp.all_resting || ecode === 429 || ecode === 0 || ecode === 404 || ecode >= 500 ||
                     err.indexOf('exhausted') >= 0 || err.indexOf('chain_deadline') >= 0) {
                     if (toolLog.length) return _pr('brain');
-                    // R21 - no basic-mode stand-in: the page holds the
-                    // question, shows its loading screen, and asks again
-                    // the moment the brain answers its readiness probe
+                    // R21 - a short overload: the page holds the question,
+                    // shows its loading screen, and asks again the moment the
+                    // brain answers its readiness probe. Out for longer than
+                    // five minutes: answered now the simple way (the web)
+                    var nowB = new GlideDateTime().getNumericValue();
+                    var restB = _brain().pickChain(_modelChain(null), nowB);
+                    if (!restB.tryList.length && restB.all_resting_until_ms && restB.all_resting_until_ms - nowB > 5 * 60000) {
+                        return _offlineAnswer(userMessage, contents, { why: 'brain', resting_until_ms: restB.all_resting_until_ms });
+                    }
                     return _brainDownReply(resp);
                 }
                 if (ecode === 401 || ecode === 403) friendly = 'My API key is not authorised. Kindly check the configuration.';
@@ -1095,12 +1116,18 @@
         var lastErr = null, lastCode = null;
         var omitThinkingRetry = false;   // R16 - only burn one no-thinking retry per call
         var chainStartedAt = Date.now();
-        var CHAIN_DEADLINE_MS = 20000;
+        // R21 - the whole walk stays under the page's 18 s release, and each
+        // attempt only gets the time that is left (it used to be 12 s each
+        // under a 20 s deadline: up to ~44 s with a no-thinking retry)
+        var CHAIN_DEADLINE_MS = 14000;
+        var emptyResult = null;
         for (var i = 0; i < pick.tryList.length; i++) {
             var m = pick.tryList[i];
-            if (Date.now() - chainStartedAt > CHAIN_DEADLINE_MS) {
+            var remainMs = CHAIN_DEADLINE_MS - (Date.now() - chainStartedAt);
+            if (remainMs < 2500) {
                 gs.warn('[NetraGemini] chain deadline hit after ' + i + ' attempts - giving up');
-                return { error: 'chain_deadline: ' + (lastErr || 'no model returned in 20s'), code: 0 };
+                if (emptyResult) return emptyResult;
+                return { error: 'chain_deadline: ' + (lastErr || 'no model returned in time'), code: 0 };
             }
             // R21 - the request this model gets: lean for a Guest, lean for a
             // model with a small per-minute token allowance (Gemma), full otherwise
@@ -1114,8 +1141,17 @@
                 continue;
             }
             var t0 = Date.now();
-            var result = _callGeminiOnce(apiKey, m, ct, tl, sI);
+            var result = _callGeminiOnce(apiKey, m, ct, tl, sI, false, Math.min(12000, remainMs));
             var tookMs = Date.now() - t0;
+            // R21 - a 200 with nothing usable (no candidates, a blocked prompt,
+            // MALFORMED_FUNCTION_CALL, thought parts only) is not an answer:
+            // the next model may give one, and it is no proof of health
+            if (!result.error && !_usableCandidate(result)) {
+                _brainTurn.attempts.push({ model: m, code: 'empty: ' + _finishReason(result), ms: tookMs });
+                if (!emptyResult) emptyResult = result;
+                lastErr = 'empty reply (' + _finishReason(result) + ')';
+                continue;
+            }
             if (!result.error) {
                 brain.recordOk(m, tookMs, new GlideDateTime().getNumericValue());
                 _brainTurn.calls++;
@@ -1133,7 +1169,7 @@
                 if (!omitThinkingRetry) {
                     omitThinkingRetry = true;
                     gs.warn('[NetraGemini] 400 on ' + m + ' - retrying once without thinkingConfig');
-                    var retry = _callGeminiOnce(apiKey, m, ct, tl, sI, true);
+                    var retry = _callGeminiOnce(apiKey, m, ct, tl, sI, true, Math.max(2000, Math.min(12000, CHAIN_DEADLINE_MS - (Date.now() - chainStartedAt))));
                     if (!retry.error) {
                         brain.recordOk(m, Date.now() - t0, new GlideDateTime().getNumericValue());
                         _brainTurn.calls++;
@@ -1153,7 +1189,22 @@
             if (lastCode === 401 || lastCode === 403) return result;   // the key is the problem, not the model
             gs.info('[NetraGemini] ' + m + ' unavailable (HTTP ' + lastCode + '), trying the next model');
         }
+        if (emptyResult) return emptyResult;   // the chat loop says it got no answer, honestly
         return { error: 'All fallback models exhausted. Last: ' + lastErr, code: lastCode };
+    }
+    function _usableCandidate(resp) {
+        var ps = resp && resp.candidates && resp.candidates[0] && resp.candidates[0].content && resp.candidates[0].content.parts;
+        if (!ps) return false;
+        for (var i = 0; i < ps.length; i++) {
+            if (!ps[i] || ps[i].thought) continue;
+            if (ps[i].functionCall || (typeof ps[i].text === 'string' && ps[i].text.replace(/\s+/g, '').length)) return true;
+        }
+        return false;
+    }
+    function _finishReason(resp) {
+        var c0 = resp && resp.candidates && resp.candidates[0];
+        if (!c0) return (resp && resp.promptFeedback && resp.promptFeedback.blockReason) ? 'blocked: ' + resp.promptFeedback.blockReason : 'no candidates';
+        return String(c0.finishReason || 'no content');
     }
 
     // R16 - a 400 tells us nothing on its own, so dump the SHAPE of what we
@@ -1225,8 +1276,15 @@
         } catch (e) { return false; }
     }
     function _guestNeedsSignIn(lc, norm) {
+        // R21 - only unambiguous record asks; a general question that shares
+        // a word ("what problems does Kubernetes solve", "what is an SLA",
+        // "remind me what photosynthesis is") goes to the model
         if (_findNums(norm || lc).length) return true;
-        return /\b(tickets?|incidents?|requests?|approvals?|approve|reject|changes? request|problems?|my (work|queue|plate|day|tasks?)|briefing|debrief|while i was away|watch ?list|watching|standing orders?|missions?|plans?|assign(ed)?|escalat\w*|resolve|close (it|the)|work ?notes?|comment on|raise|log (a|an)|file (a|an)|open (a|an)|create (a|an)|remind(er)?s?|knowledge (base|article)|kb|vulnerab\w*|sla|overdue|undo)\b/.test(lc);
+        if (/\b(my|our|mine)\s+(open\s+|new\s+|pending\s+|active\s+|assigned\s+)?(tickets?|incidents?|requests?|approvals?|changes?|problems?|tasks?|work|queue|plate|day|watch ?list|reminders?|standing orders?|missions?|cases?)\b/.test(lc)) return true;
+        if (/^(please\s+)?(create|raise|open|log|file|submit|resolve|close|assign|reassign|escalate|approve|reject|update|cancel)\s+(a\s+|an\s+|the\s+|that\s+|this\s+|it\b|my\s+)?(new\s+)?(tickets?|incidents?|requests?|changes?|problems?|approvals?|it\b)/.test(lc)) return true;
+        if (/^(give me |read me |read )?(my |the )?(daily |morning )?(briefing|debrief)$|^brief me$|^what'?s on (for )?today$|^what did (you do|i miss)|while i was away/.test(lc)) return true;
+        if (/^(set |cancel |list )?(a |my )?reminders?\b|^remind me (to|in|at|about my)\b|^(watch|stop watching|nudge|chase) (it|that|the|this|inc|ritm|req|chg)/.test(lc)) return true;
+        return false;
     }
     // under Gemma's 16k input tokens a minute, with room for a second call in the minute
     // (a function: a module-level var below the router is undefined at request time)
@@ -1361,10 +1419,25 @@
     // R21 - the page's loading screen asks this. Ready when a model answered
     // in the last minute (no call at all), otherwise the smallest possible
     // request to the first model that is not resting. Never a full request.
+    // R21 - reasoning out for longer than a short wait (no key, switched off,
+    // every free model out of quota for hours): the page still opens when
+    // the web search answers - general questions answered from the web,
+    // saying so - instead of a loading screen that stays up all day
+    function _webReady(untilMs, why) {
+        var ok = false;
+        try { var w = _searchWeb('Wikipedia'); ok = !!(w && w.ok); } catch (eW) {}
+        if (!ok) return { ready: false, reason: 'search_down', wait_ms: 60000, resting_until_ms: untilMs || 0, say: why + ', and the web search is not answering either' };
+        return { ready: true, mode: 'web', model: '', wait_ms: 120000, resting_until_ms: untilMs || 0,
+                 say: 'answers from the web only - ' + why.charAt(0).toLowerCase() + why.substring(1) };
+    }
+    function _longRestSay(untilMs, allQuota) {
+        return (allQuota ? 'My reasoning models are out of today\'s free quota' : 'My reasoning models are out of quota or overloaded') +
+               (untilMs ? ' until about ' + _clockAt(untilMs) : '');
+    }
     function _readyCheck() {
         var apiKey = gs.getProperty(SCOPE + '.gemini_api_key');
-        if (!apiKey) return { ready: false, reason: 'no_key', wait_ms: 60000, say: 'My Gemini key is not set up yet.' };
-        if (_brainOfflineForced()) return { ready: false, reason: 'forced_offline', wait_ms: 60000, say: 'My reasoning is switched off by an administrator.' };
+        if (!apiKey) return _webReady(0, 'My Gemini key is not set up yet');
+        if (_brainOfflineForced()) return _webReady(0, 'My reasoning is switched off by an administrator');
         var brain = _brain();
         var nowMs = new GlideDateTime().getNumericValue();
         var chain = _modelChain(null);
@@ -1373,16 +1446,24 @@
         var pick = brain.pickChain(chain, nowMs);
         if (!pick.tryList.length) {
             var wait = Math.max(10000, (pick.all_resting_until_ms || nowMs + 60000) - nowMs);
+            var quota = 0;
+            for (var sk = 0; sk < pick.skipped.length; sk++) if (pick.skipped[sk].reason === 'per_day' || pick.skipped[sk].reason === 'limit') quota++;
+            if (pick.all_resting_until_ms && pick.all_resting_until_ms - nowMs > 5 * 60000) return _webReady(pick.all_resting_until_ms, _longRestSay(pick.all_resting_until_ms, quota === pick.skipped.length));
+            var what = quota === pick.skipped.length ? 'All my reasoning models are out of today\'s free quota'
+                     : quota ? 'My reasoning models are out of quota or overloaded' : 'My reasoning models are overloaded';
             return { ready: false, reason: 'all_resting', wait_ms: Math.min(wait, 60000), resting_until_ms: pick.all_resting_until_ms,
-                     say: 'All my reasoning models are busy or out of quota' + (pick.all_resting_until_ms ? ', the first is back in about ' + Math.max(1, Math.round(wait / 60000)) + ' minute' + (Math.round(wait / 60000) === 1 ? '' : 's') : '') + '.' };
+                     say: what + (pick.all_resting_until_ms ? ' - the first is back ' + _until(pick.all_resting_until_ms) + ', around ' + _clockAt(pick.all_resting_until_ms) : '') + '.' };
         }
         var ping = [{ role: 'user', parts: [{ text: 'Reply with the single word OK.' }] }];
         var started = Date.now();
-        for (var i = 0; i < pick.tryList.length && i < 3; i++) {
+        // a model already resting means the free tier is struggling: one ping
+        // per probe, so many waiting pages do not spend the quota they wait for
+        var maxPings = pick.skipped.length ? 1 : 3;
+        for (var i = 0; i < pick.tryList.length && i < maxPings; i++) {
             if (Date.now() - started > 15000) break;
             var m = pick.tryList[i];
             var t0 = Date.now();
-            var r = _callGeminiOnce(apiKey, m, ping, undefined, { parts: [{ text: 'You are a health check. Answer in one word.' }] });
+            var r = _callGeminiOnce(apiKey, m, ping, undefined, { parts: [{ text: 'You are a health check. Answer in one word.' }] }, false, 8000);
             var ms = Date.now() - t0;
             if (!r.error) {
                 brain.recordOk(m, ms, new GlideDateTime().getNumericValue());
@@ -1394,7 +1475,12 @@
             if (code === 401 || code === 403) { try { brain.flush(); } catch (eF2) {} return { ready: false, reason: 'auth', wait_ms: 60000, say: 'My Gemini key was refused.' }; }
         }
         try { brain.flush(); } catch (eF3) {}
-        return { ready: false, reason: 'busy', wait_ms: 10000, say: 'The free AI models are overloaded right now. I will keep trying.' };
+        var nowQ = new GlideDateTime().getNumericValue();
+        var after = brain.pickChain(chain, nowQ);
+        if (!after.tryList.length && after.all_resting_until_ms && after.all_resting_until_ms - nowQ > 5 * 60000) {
+            return _webReady(after.all_resting_until_ms, _longRestSay(after.all_resting_until_ms, false));
+        }
+        return { ready: false, reason: 'busy', wait_ms: 10000, say: 'The free AI models are overloaded right now - I will keep trying.' };
     }
     // R21 - the brain is down for this turn: a signal the page acts on
     // (hold the question, show the loading screen, ask again when ready)
@@ -1801,7 +1887,7 @@
             }
         }
         var s = '';
-        if (!alive.length) s = 'All ' + models.length + ' of my reasoning models are resting, so I am in basic mode. ';
+        if (!alive.length) s = 'All ' + models.length + ' of my reasoning models are resting right now, so until one is back I answer the simple way - from the web, and your tickets by number. ';
         else s = alive.length + ' of my ' + models.length + ' reasoning models ' + (alive.length === 1 ? 'is' : 'are') + ' available: ' + alive.join(', ') + '. ';
         if (resting.length) s += resting.join('. ') + '. ';
         s += 'Simple lookups like ticket status, my tickets, approvals and the debrief cost me nothing either way.';
@@ -2099,6 +2185,7 @@
             // reindex - fills the semantic memory (embedding quota, never a generate call)
             function (lc, norm, contents) {
                 if (!/^(reindex|re-index|index)( my| the| all)?( tickets| incidents)?( please)?$/.test(lc)) return null;
+                if (!(gs.hasRole('itil') || gs.hasRole('admin'))) return _flReply('Reindexing is for the service desk - it needs the itil role.', contents, 'reindex_incidents');
                 var ri = _reindexIncidents(25);
                 return _flReply(ri.ok ? ri.message : ('I could not index right now: ' + (ri.error || 'no detail') + '.'), contents, 'reindex_incidents');
             },
@@ -2447,7 +2534,9 @@
                 return _flReply(yn === 'yes' ? 'Anything else I can do?' : 'Okay.', contents, 'ack');
             }
         }
-        var intents = _allFastIntents();
+        // R21 - a Guest gets only the explicit web search here; everything
+        // else (reindex, self-check, work board, briefing) is for signed-in users
+        var intents = _isGuest() ? _fastIntents().slice(0, 1) : _allFastIntents();
         for (var i = 0; i < intents.length; i++) {
             var r = null;
             try { r = intents[i](lc, norm, contents); } catch (eI) {
@@ -2480,6 +2569,18 @@
                    : 'Heads up: my reasoning models are unavailable right now, so I am in basic mode. ';
             b.offlineNoticeAt = new GlideDateTime().getNumericValue();
             _ctxWriteBlob(b);
+        }
+        // R21 - a Guest: the web, and nothing that reads or writes records
+        // (the page's loading screen and greeting already said why)
+        if (_isGuest()) {
+            if (_contentWords(clean).length) {
+                try {
+                    var gw = _searchWeb(clean.replace(/[?.!]+$/, ''));
+                    if (gw && gw.ok) return _flReply(_saySearch(gw, clean), contents, 'search_web', 'offline', { search: { source: gw.source, heading: gw.heading, url: gw.url } });
+                } catch (eGw) {}
+            }
+            return _flReply('I can not work that one out without my reasoning models, and the web had nothing on it. ' + _offlineWhen(why && why.resting_until_ms) +
+                            ' Meanwhile, ask me to look something up, or the time.', contents, 'offline_help', 'offline');
         }
         // raise a ticket: read back, park, wait for yes (the only offline write)
         var cm = lc.match(/^(?:please )?(?:create|raise|open|log|file|submit)(?: me)? (?:a |an )?(?:new )?(?:ticket|incident)(?: for| about| saying| that)?[:,\-]?\s+(.{4,})$/);
@@ -2578,6 +2679,11 @@
             return String(res.final_speech);
         }
         if (name === 'execute_plan') return _sayPlanHop(res);
+        // R21 - a tool that composed its own answer (a web search, a status)
+        // is read as it is, not as "I ran search web". After every draft
+        // branch: those mark the read-back heard, or the draft is dropped
+        if (res.final_speech && res.ok !== false && !res.needs_confirmation) return String(res.final_speech);
+        if (name === 'tell_joke' && res.joke) return String(res.joke);
         if (res.ok === false) return 'my ' + name.replace(/_/g, ' ') + ' step failed (' + String(res.error || 'no detail').substring(0, 80) + ')';
         if (name === 'list_tickets') return _sayTicketList(res);
         if (name === 'list_approvals') return _sayApprovals(res);
@@ -2638,12 +2744,13 @@
         if (more) bits.push('I also did ' + more + ' more lookup' + (more === 1 ? '' : 's'));
         var lead = why === 'budget' ? 'I hit my thinking budget for this turn before I could put it all together, so here is what I found. '
                  : why === 'loop_cap' ? 'That took more steps than I allow myself in one go, so here is where I got to. '
+                 : why === 'time' ? 'That was taking too long to put together, so here is what I found so far. '
                  : why === 'empty' ? 'Here is what I did. '
                  : 'My reasoning model stopped before I could put this together, so here is what I found. ';
         // asking again would repeat writes that already happened
         var text = lead + (bits.length ? bits.join('. ') + '.' : asks.length ? '' : 'Nothing useful came back yet.') +
                    (why === 'empty' ? '' : wrote ? ' Those changes are already made - tell me what is still left rather than repeating the whole request.'
-                                     : asks.length ? '' : ' Ask me again and I will pick up from here.') +
+                                     : asks.length ? '' : ' Ask me again if you want more.') +
                    (asks.length ? ' ' + asks.join(' ') : '');
         text = text.replace(/\s{2,}/g, ' ').replace(/\s+$/, '');
         return _flReply(text, contents, toolLog.length ? toolLog[toolLog.length - 1].name : 'partial', 'partial',
@@ -3389,7 +3496,7 @@
         return _isGen3(model) ? 1.0 : preferred;
     }
 
-    function _callGeminiOnce(apiKey, model, contents, tools, systemInstruction, omitThinking) {
+    function _callGeminiOnce(apiKey, model, contents, tools, systemInstruction, omitThinking, timeoutMs) {
         var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
                   encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
         var body = {
@@ -3455,17 +3562,23 @@
             // R2.12.5 - 30s -> 12s. Fail fast and fall back. The whole chain
             // worst-case is now 6 models x 12s = 72s, but typical hit on
             // flash-lite is 0.5-2s.
-            rm.setHttpTimeout(12000);
+            rm.setHttpTimeout(timeoutMs || 12000);
             var r = rm.execute();
             var code = r.getStatusCode();
             var rb = r.getBody();
             if (code !== 200) {
+                // R21 - a refused key or region comes back as a 400: that is
+                // the key's problem on every model, not this request's shape
+                if (code === 400 && /API_KEY_INVALID|API_KEY_EXPIRED|API key not valid|API key expired|FAILED_PRECONDITION|location is not supported|User location/i.test(String(rb || ''))) code = 403;
                 // R18 - the governor needs the FULL body: the quota detail
                 // that says per-day vs per-minute sits past character 600
                 return { error: 'HTTP ' + code + ': ' + String(rb || '').substring(0, 400),
                          code: code, raw: String(rb || '').substring(0, 6000) };
             }
-            return JSON.parse(rb);
+            // R21 - an unparseable 200 is a bad reply, not a timeout: a short
+            // rest, not the two-minute bench a timeout gets
+            try { return JSON.parse(rb); }
+            catch (eJ) { return { error: 'HTTP 502: unreadable reply from ' + model, code: 502, raw: String(rb || '').substring(0, 300) }; }
         } catch (e) {
             // a thrown execute() is how some timeouts surface - treat it like
             // HTTP 0 so the chain moves on instead of giving up
@@ -5286,7 +5399,8 @@
                 case 'search_web':
                     // R21 - the search result, said the way the fast lane says
                     // it: one model call for a web question, not two
-                    var swq = String(args.query || '');
+                    var swq = String(args.query || args.q || args.search_query || args.text || '') || _cleanMsg(_currentUserMsg || '');
+                    if (!swq) return { ok: false, error: 'No query to search for.' };
                     var swr = _searchWeb(swq);
                     if (swr) swr.final_speech = _saySearch(swr, swq);
                     return swr;
@@ -6571,6 +6685,10 @@
         return _ctxBlobCache;
     }
     function _ctxReadBlobFresh() {
+        // R21 - every public visitor is the ONE Guest user: a shared row would
+        // hand one visitor's memory, training, drafts and focus to the next.
+        // A Guest's state lives for the request only (the page carries history)
+        if (_isGuest()) return { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
         var ctx = _ctxLoadGr();
         var raw = String(ctx.last_utterance || '');
         var blob = { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
@@ -6602,6 +6720,7 @@
     function _ctxWriteBlob(blob) {
         _ctxBlobCache = blob;   // write-through: later reads in this request see it
         _brainTurn.blobWritten = true;
+        if (_isGuest()) return;   // R21 - never persisted for the shared Guest user
         var ctx = _ctxLoadGr();
         // serialise EVERY key the callers put on the blob (see note in
         // _ctxReadBlob), just guarantee the core ones exist
@@ -8572,7 +8691,7 @@
     function _reindexIncidents(max) {
         var budget = Math.min(40, Math.max(1, parseInt(max, 10) || 25));
         var cacheMap = _loadIncidentVectors('incident');
-        var gr = new GlideRecord('incident');
+        var gr = _ugr('incident');   // R21 - only tickets this user may read go into the index
         gr.orderByDesc('sys_updated_on');
         gr.setLimit(INC_SCAN_LIMIT);
         gr.query();
@@ -10307,6 +10426,7 @@
     function _ensurePrefAndPause() {
         data.paused = false;
         data.paused_until = '';
+        if (_isGuest()) return;   // R21 - no notification inbox for the shared Guest user
         var pref = new GlideRecord(SCOPE + '_user_pref');
         pref.addQuery('user', user);
         pref.setLimit(1);

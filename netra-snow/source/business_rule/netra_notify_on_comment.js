@@ -174,6 +174,8 @@
             continue;
         }
         var userName = String(user.user_name);
+        // R21 - the shared Guest user (the public page's visitors) has no inbox
+        if (userName === 'guest') { gs.info('[NetraNotify]   skipped guest (shared public user)'); continue; }
 
         if (userName == authorUser && !notifyAuthor) {
             skippedAsAuthor++;
