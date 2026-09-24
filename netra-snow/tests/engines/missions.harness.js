@@ -34,6 +34,7 @@ function GR(table) {
     isValid: function () { return true; },
     isValidField: function (f) { return f !== 'nope'; },
     canRead: function () { return true; },
+    canWrite: function () { return true; },
     get: function (a, b) {
       var sid = (b === undefined) ? a : null;
       var t = STORE[table] || {};
@@ -93,6 +94,7 @@ function GR(table) {
   });
 }
 global.GlideRecord = GR;
+global.GlideRecordSecure = GR;   // no ACLs in this harness: the user may do everything
 global.GlideAggregate = function (t) { var g = GR(t); var n = 0; return { addAggregate: function () {}, addEncodedQuery: function () {}, query: function () { n = Object.keys(STORE[t] || {}).length; }, next: function () { return true; }, getAggregate: function () { return String(n); } }; };
 
 eval(fs.readFileSync(DIR + 'NetraTaskRunner.js', 'utf8').replace(/^var NetraTaskRunner/m, 'global.NetraTaskRunner'));
@@ -114,8 +116,8 @@ ok(pr.retry_ms === 31000 && pr.quota_kind === 'per_minute', 'parseRetry');
 // triage voters: 9 unassigned lookalikes + 1 assigned one must not be write-confident
 S.semanticIncidents = function () {
   var m = []; for (var i = 0; i < 9; i++) m.push({ number: 'INC9' + i, assignment_group: '', category: 'network', priority: '3', score: 0.9 });
-  m.push({ number: 'INC77', assignment_group: 'Network', category: 'network', priority: '3', score: 0.8 });
-  return { ok: true, matches: m, count: m.length, stats: {}, group_ids: { Network: 'g1' } };
+  m.push({ number: 'INC77', assignment_group: 'Network', group_id: 'g1', category: 'network', priority: '3', score: 0.8 });
+  return { ok: true, matches: m, count: m.length, stats: {} };
 };
 var tri = S.triageVotes('vpn down', {});
 ok(tri.confident === true && tri.voters === 1, 'triage flag itself unchanged (widget parity), voters=1');
@@ -144,7 +146,7 @@ function seedItem(tid, conf) {
   it.mission = 'H1'; it.seq = 1; it.target_table = 'incident'; it.target_sys_id = tid; it.target_number = 'INCx';
   it.state = 'reviewed'; it.mod_count_at_review = 5; it.attempts = 0;
   it.findings_json = JSON.stringify({ sd: 'vpn', proposal: { group: 'Network', group_id: 'g1', group_share: 0.8, category: 'network', category_share: 0.7,
-        priority: '3', priority_share: 0.7, confident: conf !== false, evidence: ['INC1', 'INC2', 'INC3'], voters: 3 }, duplicate_of: null, known_fix: null });
+        priority: '3', priority_share: 0.7, cur_priority: '4', confident: conf !== false, evidence: ['INC1', 'INC2', 'INC3'], voters: 3 }, duplicate_of: null, known_fix: null });
   it.undo_json = '';
   return String(it.insert());
 }

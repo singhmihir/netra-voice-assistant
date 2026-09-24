@@ -1751,6 +1751,20 @@
         } catch (e) { return ''; }
     }
 
+    // "apply the confident ones" read-back, for the fast lane and the model's
+    // mission tool alike: parked only when there is something to apply, and it
+    // says whether any priority will move
+    function _missionApplyAsk(nt) {
+        var mr = new NetraMissionRunner(), bd = mr.board(user), cc = null;
+        for (var k = 0; k < bd.length; k++) if (_ntNum(bd[k].nt_number) === _ntNum(nt)) cc = bd[k];
+        if (!cc) return { parked: false, text: 'I have no mission ' + _ntNum(nt) + '.' };
+        if (cc.state !== 'awaiting_apply') return { parked: false, text: cc.sentence };
+        var n = cc.counts.confident_pending || cc.counts.confident || 0;
+        if (!n) return { parked: false, text: 'Mission ' + _ntNum(nt) + ' found nothing confident enough to apply.' };
+        _parkDraft('mission_apply', { nt: nt });
+        return { parked: true, text: mr.applyReadBack(n, cc.counts.priority_raise || 0) };
+    }
+
     function _missionIntents() {
         return [
             function (lc, norm, contents) {
@@ -1803,14 +1817,8 @@
                     if (apk.bad) return _flReply('I did not catch which mission - say its number.', contents, 'mission_apply');
                     var nta = apk.nt;
                     if (!nta) return _flReply('There is no mission to apply.', contents, 'mission_apply');
-                    var bdd = new NetraMissionRunner().board(user), cc = null;
-                    for (var k = 0; k < bdd.length; k++) if (_ntNum(bdd[k].nt_number) === _ntNum(nta)) cc = bdd[k];
-                    if (!cc) return _flReply('I have no mission ' + _ntNum(nta) + '.', contents, 'mission_apply');
-                    if (cc.state !== 'awaiting_apply') return _flReply(cc.sentence, contents, 'mission_apply');
-                    var n = cc.counts.confident_pending || cc.counts.confident || 0;
-                    if (!n) return _flReply('Mission ' + _ntNum(nta) + ' found nothing confident enough to apply.', contents, 'mission_apply');
-                    _parkDraft('mission_apply', { nt: nta });
-                    return _flReply('I will route ' + n + ' ticket' + (n === 1 ? '' : 's') + ' the way the history suggests - group, category and priority - re-reading each one, adding a work note, and skipping any that someone touched since my review. Duplicates I only report, never merge. Shall I?', contents, 'mission_apply_draft');
+                    var ask = _missionApplyAsk(nta);
+                    return _flReply(ask.text, contents, ask.parked ? 'mission_apply_draft' : 'mission_apply');
                 }
                 // undo a mission (read-back first)
                 var um = lc.match(/^undo (?:the )?mission(?: (\w+))?$/);
@@ -4299,7 +4307,7 @@
                         if (r2.ok && r2.page < r2.pages) { var bl2 = _ctxReadBlob(); bl2.missionReport = { nt: mnt, page: r2.page, turn: _curTurn(), at: new GlideDateTime().getNumericValue() }; _ctxWriteBlob(bl2); }
                         return { ok: r2.ok, final_speech: String(r2.message || r2.error) };
                     }
-                    if (mact === 'apply_request') { _parkDraft('mission_apply', { nt: mnt }); return { ok: true, final_speech: 'I will apply the confident routings from mission ' + _ntNum(mnt) + ', re-reading each one and skipping anything someone touched since. Shall I?' }; }
+                    if (mact === 'apply_request') { var mask = _missionApplyAsk(mnt); return { ok: mask.parked, final_speech: mask.text }; }
                     if (mact === 'undo_request') { _parkDraft('mission_undo', { nt: mnt }); return { ok: true, final_speech: 'I will put back every ticket mission ' + _ntNum(mnt) + ' changed, except ones someone changed since. Shall I?' }; }
                     return { ok: false, error: 'Unknown mission action.' };
                 }

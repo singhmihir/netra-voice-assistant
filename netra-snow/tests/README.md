@@ -40,6 +40,7 @@ node:
 | `static.test.js` | everything parses, no secrets ship, the hoisting trap stays closed, every declared tool has a handler, installer/packager know every script include |
 | `away.test.js` | standing orders armed on a yes, fired by the real background runner, debriefed and undone by number; human edits and the kill switch stop them |
 | `missions.test.js` | a queue mission launched on a yes, reviewed with embeddings only, applied with re-reads, human-routed tickets left alone, undone |
+| `audit-si-semantic-missions.test.js` | missions only for users who may work the queue; priority only raised and read back first; votes by group sys_id; failed, partial and mid-apply changes spoken; a cold ticket memory said to be cold |
 | `engines.test.js` | quota governor, missions and semantic-search harnesses |
 
 CI runs the suite on every push and pull request that touches `netra-snow/`
