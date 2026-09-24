@@ -236,7 +236,7 @@
         return String(gr.sys_id);
     }
 
-    function upsertScriptedRestOp(serviceSysId, name, method, path, scopeSysId, scope, source) {
+    function upsertScriptedRestOp(serviceSysId, name, method, path, scopeSysId, scope, source, isPublic) {
         var gr = new GlideRecord('sys_ws_operation');
         gr.addQuery('name', name);
         gr.addQuery('web_service_definition', serviceSysId);
@@ -250,10 +250,12 @@
         }
         gr.http_method = method;
         gr.relative_path = path;
-        gr.requires_authentication = true;
+        // R23 - the app files (manifest, service worker) are fetched by the
+        // browser before anyone signs in: public, and any content type
+        gr.requires_authentication = !isPublic;
         gr.requires_acl_authorization = false;
         gr.active = true;
-        gr.produces = 'application/json';
+        gr.produces = isPublic ? '*/*' : 'application/json';
         gr.consumes = 'application/json';
         gr.operation_script = fillScope(source, scope);
         if (gr.sys_id && gr.isValidRecord()) gr.update();
@@ -449,6 +451,7 @@
     upsertScriptedRestOp(svc, 'command',       'POST', '/command',       scopeSysId, scope, SRC.command);
     upsertScriptedRestOp(svc, 'notifications', 'GET',  '/notifications', scopeSysId, scope, SRC.notifications);
     upsertScriptedRestOp(svc, 'ping',          'GET',  '/ping',          scopeSysId, scope, SRC.ping);
+    upsertScriptedRestOp(svc, 'app',           'GET',  '/app/{file}',    scopeSysId, scope, SRC.app, true);
     say('  Base path: /api/' + scope + '/voice');
 
     /* ---- System properties ---- */

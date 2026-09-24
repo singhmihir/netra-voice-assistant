@@ -192,6 +192,71 @@ api.controller = function ($scope, $timeout, $window) {
         c.liveMode = /[?&]id=netra_live(&|$)/.test(String($window.location.search || $window.location.href || ''));
         if (c.liveMode) document.body.classList.add('netra-live-body');
     } catch (eLM) { c.liveMode = false; }
+    /* ============================================================
+     *  R23 - NETRA AS AN APP (a Progressive Web App)
+     *  The live page carries a web app manifest and a service worker,
+     *  so Android Chrome installs Netra as a real app (in the app
+     *  drawer, full screen, its own icon) and iOS Safari adds her to
+     *  the Home Screen. The install button shows only where it works;
+     *  on iOS it explains Share > Add to Home Screen instead.
+     * ============================================================ */
+    c.app = { canInstall: false, standalone: false, ios: false, showHelp: false, installed: false };
+    var _installEvt = null;
+    function _appShell() {
+        if (!c.liveMode) return;
+        var base = (c.data && c.data.app_base) || '';
+        try {
+            var nav = $window.navigator || {}, ua = String(nav.userAgent || '');
+            c.app.ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && nav.maxTouchPoints > 1);
+            c.app.standalone = !!(($window.matchMedia && $window.matchMedia('(display-mode: standalone)').matches) || nav.standalone);
+            var head = document.head;
+            var put = function (tag, key, val, attrs) {
+                var el = head.querySelector(tag + '[' + key + '="' + val + '"]');
+                if (!el) { el = document.createElement(tag); el.setAttribute(key, val); head.appendChild(el); }
+                for (var a in attrs) if (attrs.hasOwnProperty(a)) el.setAttribute(a, attrs[a]);
+            };
+            if (base) put('link', 'rel', 'manifest', { href: base + '/manifest' });
+            put('meta', 'name', 'theme-color', { content: '#0e0e10' });
+            put('meta', 'name', 'mobile-web-app-capable', { content: 'yes' });
+            put('meta', 'name', 'apple-mobile-web-app-capable', { content: 'yes' });
+            put('meta', 'name', 'apple-mobile-web-app-status-bar-style', { content: 'black-translucent' });
+            put('meta', 'name', 'apple-mobile-web-app-title', { content: 'Netra' });
+            put('link', 'rel', 'apple-touch-icon', { href: '/netra-app-180.png' });
+            // the notch and the home bar: let the stage reach the edges, the
+            // controls keep clear of them (env(safe-area-inset-*) in the CSS)
+            var vp = head.querySelector('meta[name="viewport"]');
+            if (vp && !/viewport-fit/.test(vp.getAttribute('content') || '')) vp.setAttribute('content', vp.getAttribute('content') + ', viewport-fit=cover');
+            if (base && nav.serviceWorker && $window.isSecureContext !== false) {
+                nav.serviceWorker.register(base + '/sw', { scope: '/sp' }).then(function () { logEvent('app', 'app service worker ready'); },
+                    function (eR) { logEvent('warn', 'app service worker not registered: ' + (eR && eR.message || eR)); });
+            }
+        } catch (eA) { logEvent('warn', 'app shell: ' + (eA && eA.message || eA)); }
+        var onPrompt = function (e) { e.preventDefault(); _installEvt = e; c.app.canInstall = true; logEvent('app', 'Netra can be installed as an app here'); $scope.$applyAsync(); };
+        var onInstalled = function () { _installEvt = null; c.app.canInstall = false; c.app.installed = true; c.app.showHelp = false; logEvent('app', 'installed as an app'); $scope.$applyAsync(); };
+        $window.addEventListener('beforeinstallprompt', onPrompt);
+        $window.addEventListener('appinstalled', onInstalled);
+        $scope.$on('$destroy', function () { $window.removeEventListener('beforeinstallprompt', onPrompt); $window.removeEventListener('appinstalled', onInstalled); });
+        if (c.app.standalone) logEvent('app', 'running as the installed app');
+    }
+    c.installApp = function () { _installApp(); };
+    function _installApp() {
+        if (_installEvt) {
+            var ev = _installEvt;
+            _installEvt = null; c.app.canInstall = false;
+            try {
+                ev.prompt();
+                ev.userChoice.then(function (ch) {
+                    logEvent('app', 'install ' + (ch && ch.outcome || 'answered'));
+                    if (ch && ch.outcome !== 'accepted') { _installEvt = null; }
+                    $scope.$applyAsync();
+                });
+            } catch (eP) { logEvent('warn', 'install prompt: ' + (eP && eP.message || eP)); }
+            return;
+        }
+        c.app.showHelp = !c.app.showHelp;   // iOS: Share > Add to Home Screen
+    }
+    _appShell();
+
     c.liveExit = function () {
         _stage3dOn = false;
         try { if (window.NetraStage3D) window.NetraStage3D.unmount(); } catch (e3d) {}
@@ -673,7 +738,9 @@ api.controller = function ($scope, $timeout, $window) {
                      : 'Heads up, I am not seeing a microphone stream. ');
         // R13 - out-of-box experience: the very first visit opens the
         // setup panel so a new user starts with their preferences
-        if (firstEver) { c.setupOn = true; $scope.$applyAsync(); }
+        // (not for a Guest on the public page, and not on a phone, where the
+        // panel would cover the stage - the Settings tab is right there)
+        if (firstEver && !(c.data && c.data.is_guest) && !($window.innerWidth < 700)) { c.setupOn = true; $scope.$applyAsync(); }
         // a mic that scored well recently is not checked again on every
         // load: the check read a sentence at the user each time and swallowed
         // their first command. "Mic check" or the Lab runs it any time.
@@ -2762,6 +2829,8 @@ api.controller = function ($scope, $timeout, $window) {
     function _needsActivation() {
         if (_voiceBlocked) return true;
         if (_activated) return false;
+        // iOS drops speech without a word unless a tap came first
+        if (c.app && c.app.ios) return true;
         try { var ua = $window.navigator && $window.navigator.userActivation; return !!(ua && !ua.hasBeenActive); } catch (eA) { return false; }
     }
     function _onPageActivated(ev) {
@@ -2770,6 +2839,15 @@ api.controller = function ($scope, $timeout, $window) {
         _activated = true; _voiceBlocked = false;
         unlockAudio();
         try { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); } catch (eR) {}
+        // iOS unlocks speech only for a call made inside the tap itself: a
+        // silent, empty line now lets every later line play
+        try {
+            if (c.hasTTS && TTS && typeof SpeechSynthesisUtterance !== 'undefined') {
+                var unlock = new SpeechSynthesisUtterance(' ');
+                unlock.volume = 0;
+                TTS.speak(unlock);
+            }
+        } catch (eU) {}
         logEvent('gate', 'page activated (' + (ev && ev.type || 'button') + ') - my voice may play now');
         _gateUpdate();
     }

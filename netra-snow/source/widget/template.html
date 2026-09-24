@@ -257,6 +257,21 @@
     .netra-setup { left: 8px; }
     .netra-setup-body { width: 210px; }
   }
+  /* R23 - phones: the tab sits under the header, the panel opens as a
+     bottom sheet over the stage and scrolls on its own */
+  @media (max-width: 600px) {
+    .netra-stage .netra-setup { top: calc(64px + env(safe-area-inset-top, 0px)); left: 8px; transform: none; max-height: none; }
+    .netra-stage .netra-setup-body {
+      position: fixed; left: 0; right: 0; bottom: 0; width: auto;
+      max-height: 76vh; max-height: 76dvh;
+      border-radius: 20px 20px 0 0;
+      padding: 16px 18px calc(18px + env(safe-area-inset-bottom, 0px));
+      background: rgba(18, 16, 26, 0.97);
+      box-shadow: 0 -14px 40px rgba(0, 0, 0, 0.55);
+      z-index: 90;
+    }
+    .netra-stage .netra-setup select, .netra-stage .netra-setup-btn { min-height: 44px; font-size: 15px; }
+  }
 
   /* R9 - interactive calibration card */
   .netra-calib-card {
@@ -601,6 +616,23 @@
     <div class="netra-stage-aurora netra-stage-aurora-2" aria-hidden="true"></div>
     <div class="netra-stage-floor" aria-hidden="true"></div>
 
+    <!-- R23 - install Netra as an app (Android/desktop prompt; iOS: how to add it) -->
+    <button type="button" class="netra-app-btn" ng-if="!c.app.standalone && (c.app.canInstall || c.app.ios)"
+            ng-click="c.installApp()" aria-label="Install Netra as an app on this device">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1zm-7 14a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1z"/></svg>
+      <span>Install app</span>
+    </button>
+    <div class="netra-app-help" ng-if="c.app.showHelp" role="dialog" aria-modal="false" aria-labelledby="netra-app-help-title">
+      <div class="netra-app-help-title" id="netra-app-help-title">Add Netra to your Home Screen</div>
+      <ol>
+        <li>Tap the <b>Share</b> button
+          <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M12 2.5a1 1 0 0 1 .7.3l3.5 3.5a1 1 0 0 1-1.4 1.4L13 5.9V15a1 1 0 1 1-2 0V5.9L9.2 7.7a1 1 0 0 1-1.4-1.4l3.5-3.5a1 1 0 0 1 .7-.3zM6 10a1 1 0 0 1 1 1v8h10v-8a1 1 0 1 1 2 0v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/></svg>
+          in Safari's toolbar.</li>
+        <li>Choose <b>Add to Home Screen</b>, then <b>Add</b>.</li>
+      </ol>
+      <p>Netra then opens full screen from her own icon, like any app.</p>
+      <button type="button" class="netra-app-help-ok" ng-click="c.app.showHelp = false">Got it</button>
+    </div>
     <header class="netra-stage-head">
       <span class="netra-stage-brand">Netra</span>
       <span class="netra-stage-pill">LIVE</span>
@@ -736,6 +768,7 @@
       <div class="netra-setup-body" ng-show="c.setupOn">
         <div class="netra-setup-title">MAKE NETRA YOURS</div>
         <div class="netra-setup-sub">saved on this browser, applied instantly</div>
+        <button type="button" class="netra-setup-btn" ng-if="!c.app.standalone && (c.app.canInstall || c.app.ios)" ng-click="c.installApp()">Install Netra as an app</button>
         <label class="netra-setup-label" for="netra-set-lang">I speak</label>
         <select id="netra-set-lang" ng-model="c.recLang" ng-change="c.labSetLang()"
                 ng-options="l as l for l in c.recLangs"></select>

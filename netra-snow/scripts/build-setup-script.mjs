@@ -44,6 +44,7 @@ const sources = [
   ['command',                 'scripted_rest/command.js'],
   ['notifications',           'scripted_rest/notifications.js'],
   ['ping',                    'scripted_rest/ping.js'],
+  ['app',                     'scripted_rest/app.js'],
   ['template',                'widget/template.html'],
   ['client',                  'widget/client.js'],
   ['server',                  'widget/server.js'],

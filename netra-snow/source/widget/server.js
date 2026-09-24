@@ -150,6 +150,7 @@
     // ---- Always-on state (cheap: needed by every action incl. the 9s poll) ----
     data.user_name   = gs.getUserDisplayName();
     data.is_guest    = _isGuest();   // R21 - the public page: a visitor who is not signed in
+    data.app_base    = '/api/' + SCOPE + '/voice/app';   // R23 - the installable app's manifest + service worker (public)
     data.user_sys_id = user;
     data.error       = null;
     data.has_api_key = !!gs.getProperty(SCOPE + '.gemini_api_key');
