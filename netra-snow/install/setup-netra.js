@@ -29899,7 +29899,7 @@
         gr.script = fillScope(serverScript, scope);
         gr.css = fillScope(css, scope);
         gr.option_schema = optionSchema || '[]';
-        gr.public = false;
+        gr.public = true;   // the netra_live page ships public: anyone with the link can talk to her as Guest
         gr.has_preview = false;
         if (gr.sys_id && gr.isValidRecord()) gr.update();
         else gr.insert();
