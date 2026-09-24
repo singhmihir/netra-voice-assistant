@@ -66,6 +66,11 @@
         sc_task:         ['short_description'],
         sc_req_item:     ['short_description']
     };
+    // what a voice-built draft may set; everything else follows the record's own process
+    var DRAFT_FIELDS = ['short_description', 'description', 'urgency', 'impact', 'category', 'subcategory', 'caller_id',
+                        'assignment_group', 'assigned_to', 'cmdb_ci', 'business_service', 'contact_type', 'type', 'risk',
+                        'justification', 'implementation_plan', 'backout_plan', 'test_plan', 'start_date', 'end_date',
+                        'requested_by', 'requested_for', 'location', 'due_date'];
     var FIELD_PROMPTS = {
         short_description: 'what is the issue, in one sentence',
         urgency:           'how urgent (1 critical, 2 high, 3 moderate, 4 low) - default 3',
@@ -2019,8 +2024,14 @@
     function _focusNumber() {
         try {
             var ctx = _ctxLoadGr();
-            return ctx.isValidRecord() ? String(ctx.focus_number || '') : '';
+            return ctx.isValidRecord() && _focusFresh(ctx) ? String(ctx.getValue('focus_number') || '') : '';
         } catch (e) { return ''; }
+    }
+    // a focus set more than 12 hours ago is not "this ticket" any more
+    function _focusFresh(ctx) {
+        if (!ctx.getValue('focus_number')) return false;
+        var at = ctx.getValue('focus_set_at');
+        return !!at && new GlideDateTime().getNumericValue() - new GlideDateTime(at).getNumericValue() <= 12 * 3600000;
     }
 
     function _invSchema() {
@@ -4757,8 +4768,9 @@
             assigned_to: dv('assigned_to'),
             assignment_group: dv('assignment_group'),
             caller_id: dv('caller_id'),
-            opened_at: String(gr.opened_at),
-            updated_at: String(gr.sys_updated_on),
+            // spoken, in the user's timezone - the raw values are UTC
+            opened: _ago(_msOfField(gr, 'opened_at')),
+            updated: _ago(_msOfField(gr, 'sys_updated_on')),
             journal_kinds: _journalEls(gr),
             journal: (function () {
                 // R18 - String(gr.comments) is empty on a loaded record, so the
@@ -4880,7 +4892,9 @@
         var watchCount = _countActiveBy(SCOPE + '_watchlist', 'user=' + meId);
 
         // Time-of-day greeting
-        var hour = new GlideDateTime().getDisplayValue().substring(11, 13);
+        // internal format in the user's timezone: the display value follows
+        // their format, and a 12-hour profile reads "08" at 8 PM
+        var hour = new GlideDateTime().getDisplayValueInternal().substring(11, 13);
         var hrNum = parseInt(hour, 10) || 12;
         var greet = hrNum < 12 ? 'Good morning' : (hrNum < 17 ? 'Good afternoon' : 'Good evening');
         var firstName = gs.getUserDisplayName().split(' ')[0];
@@ -5025,26 +5039,38 @@
     function _listOverdue() {
         try {
             var meId = gs.getUserID();
+            // encoded queries have no parentheses: each age rule (P1 > 4 hours,
+            // P2 > 1 day, P3+ > 3 days) is its own ^NQ block with the shared terms
+            var cut = function (hours) { var d = new GlideDateTime(); d.addSeconds(-hours * 3600); return d.getValue(); };
+            var base = 'active=true^assigned_to=' + meId;
+            var q = base + '^priority=1^opened_at<=' + cut(4) +
+                    '^NQ' + base + '^priority=2^opened_at<=' + cut(24) +
+                    '^NQ' + base + '^priority>=3^opened_at<=' + cut(72);
             var gr = _ugr('incident');
-            gr.addActiveQuery();
-            gr.addQuery('assigned_to', meId);
-            // SLA-ish: p1 >4h, p2 >1d, p3+ >3d since opened
-            gr.addEncodedQuery(
-              '(priority=1^opened_at<=javascript:gs.daysAgoStart(0))^OR(priority=2^opened_at<=javascript:gs.daysAgoStart(1))^OR(priority>=3^opened_at<=javascript:gs.daysAgoStart(3))'
-            );
-            gr.setLimit(8);
+            gr.addEncodedQuery(q);
             gr.orderBy('priority');
+            gr.orderBy('opened_at');
+            gr.setLimit(8);
             gr.query();
             var list = [];
             while (gr.next()) {
+                var oms = _msOfField(gr, 'opened_at');
                 list.push({
                     number: String(gr.number),
                     priority: String(gr.priority),
                     short_description: String(gr.short_description),
-                    opened_at: String(gr.opened_at)
+                    opened: _ago(oms)
                 });
             }
-            return { ok: true, overdue: list, count: list.length };
+            var total = list.length;
+            try {
+                var ga = new GlideAggregate('incident');
+                ga.addEncodedQuery(q);
+                ga.addAggregate('COUNT');
+                ga.query();
+                if (ga.next()) total = Math.max(list.length, parseInt(ga.getAggregate('COUNT'), 10) || 0);
+            } catch (eC) {}
+            return { ok: true, overdue: list, count: list.length, total: total };
         } catch (e) { return { ok: false, error: String(e.message || e) }; }
     }
 
@@ -5067,7 +5093,7 @@
             ctx.focus_table   = table;
             ctx.focus_number  = num;
             ctx.focus_sys_id  = gr.getUniqueValue();
-            ctx.focus_set_at  = new GlideDateTime();
+            ctx.focus_set_at.setDateNumericValue(new GlideDateTime().getNumericValue());
             // R18 - never touch last_utterance here: that column holds the
             // whole CTX blob (memory, plans, habits). Writing the bare number
             // used to wipe it, masked only by a later blob write in the turn.
@@ -5081,7 +5107,7 @@
             var ctx = new GlideRecord(SCOPE + '_context');
             ctx.addQuery('user', gs.getUserID());
             ctx.query();
-            if (!ctx.next() || !ctx.focus_number) {
+            if (!ctx.next() || !_focusFresh(ctx)) {
                 return { ok: true, focus: null, message: 'No ticket is in focus right now.' };
             }
             return { ok: true, focus: { table: String(ctx.focus_table), number: String(ctx.focus_number) },
@@ -5149,9 +5175,10 @@
         while (w.next()) {
             list.push({ number: String(w.record_number), table: String(w.record_table) });
         }
-        return { ok: true, watchlist: list, count: list.length,
-                 message: list.length ? 'Watching ' + list.length + ' ticket' + (list.length === 1 ? '' : 's') + '.'
-                                      : 'Your watchlist is empty.' };
+        var total = Math.max(list.length, _countWhere(SCOPE + '_watchlist', 'user', gs.getUserID()));
+        return { ok: true, watchlist: list, count: total,
+                 message: total ? 'Watching ' + total + ' ticket' + (total === 1 ? '' : 's') + (total > list.length ? '; the newest ' + list.length + ' are listed' : '') + '.'
+                                : 'Your watchlist is empty.' };
     }
 
     function _addWorkNote(num, note) {
@@ -5213,6 +5240,8 @@
         var b = _ctxReadBlob();
         var a = b.last_action;
         if (!a) return { ok: false, error: 'There is nothing on record to undo.' };
+        // the admin's switch covers every path to a write, the fast lane's too
+        if (!_ticketWritesEnabled()) return { ok: false, error: 'Ticket writes are switched off by the administrator, so I changed nothing.' };
         _learnFromUndo(a);   // R17 - an undo is a labelled "that was wrong" signal
         var table = a.table || _tableForNumber(a.number), gr;
         if (!table) return { ok: false, error: 'Cannot work out the table for ' + a.number };
@@ -5228,14 +5257,17 @@
             if (gr.canDelete()) gr.deleteRecord();
             var check = new GlideRecord(table);
             if (check.get('number', a.number)) {
+                // each table has its own "cancelled" state; problem has none a
+                // voice undo should force, so there it stays open and we say so
+                var CANCEL = { incident: '8', change_request: '4', sc_task: '4', sc_req_item: '4', sc_request: '4' };
+                if (!CANCEL[table]) return { ok: false, error: 'The platform does not let me delete ' + a.number + ', and a ' + table.replace(/_/g, ' ') + ' has no cancelled state I can set - it is still open. Close it through its normal process.' };
                 var cx = _ugr(table);
                 if (!cx.get('number', a.number) || !cx.canWrite()) return { ok: false, error: 'You do not have permission to delete or cancel ' + a.number + ' - it is still open. Ask its assignment group to cancel it.' };
-                cx.setValue('state', '8');   // Canceled on incident; harmless elsewhere
-                cx.setValue('active', 'false');
+                cx.setValue('state', CANCEL[table]);
                 cx.work_notes = '[Netra] Undo by voice: raised by mistake, cancelled.';
                 cx.update();
                 var cc = new GlideRecord(table);
-                if (!cc.get('number', a.number) || String(cc.getValue('active')) !== '0' && String(cc.getValue('active')) !== 'false') {
+                if (!cc.get('number', a.number) || String(cc.getValue('state')) !== CANCEL[table]) {
                     return { ok: false, error: 'I could not delete ' + a.number + ', and cancelling it did not stick when I read it back - it is still open.' };
                 }
                 b.last_action = null; _ctxWriteBlob(b);
@@ -5257,7 +5289,7 @@
         }
         if (a.kind === 'field') { want[a.field] = a.old; what = a.field + ' ' + (a.old_display || a.old || 'empty'); }
         else if (a.kind === 'fields' && a.fields) { for (var fk in a.fields) if (a.fields.hasOwnProperty(fk)) want[fk] = a.fields[fk]; }
-        else if (a.kind === 'resolved') { want.state = a.old_state || '2'; what = 'reopened and back in progress'; }
+        else if (a.kind === 'resolved') { want.state = a.old_state || '2'; }
         else return { ok: false, error: 'I do not know how to undo that (' + a.kind + ').' };
         for (var wk in want) if (want.hasOwnProperty(wk)) gr.setValue(wk, want[wk]);
         gr.work_notes = a.kind === 'resolved' ? '[Netra] Undo by voice: reopened after an accidental resolve.'
@@ -5267,6 +5299,7 @@
         for (var fk2 in want) { if (want.hasOwnProperty(fk2) && same && String(rb.getValue(fk2) || '') !== String(want[fk2] || '')) same = false; }
         if (!same) return { ok: false, error: 'I put the old values back on ' + a.number + ' but they did not stick when I read it back - a rule on the platform may have changed them again.' };
         b.last_action = null; _ctxWriteBlob(b);
+        if (a.kind === 'resolved') what = 'reopened - it is ' + String(rb.state.getDisplayValue() || rb.getValue('state')).toLowerCase() + ' again';
         return { ok: true, verified: true, message: 'Undone - ' + a.number + (a.kind === 'resolved' ? ' is ' + what : ' is back to ' + what) + '. I read it back.' };
     }
 
@@ -5329,10 +5362,24 @@
      * =================================================================== */
     function _slaRadar() {
         try {
+            var meId = gs.getUserID();
+            // the user's own work: assigned to them or to one of their groups
+            var groups = [];
+            var gm = new GlideRecord('sys_user_grmember');
+            gm.addQuery('user', meId);
+            gm.query();
+            while (gm.next()) groups.push(String(gm.getValue('group')));
+            var mine = 'task.assigned_to=' + meId + (groups.length ? '^ORtask.assignment_groupIN' + groups.join(',') : '');
             var out = [];
+            // at risk = still running and not yet breached; breached SLAs stay
+            // active above 100% and would crowd out the ones that can be saved
             var sla = _ugr('task_sla');
             sla.addQuery('active', true);
+            sla.addQuery('has_breached', false);
+            sla.addQuery('stage', 'in_progress');
             sla.addQuery('percentage', '>=', 60);
+            sla.addQuery('percentage', '<', 100);
+            sla.addEncodedQuery(mine);
             sla.orderByDesc('percentage');
             sla.setLimit(25);
             sla.query();
@@ -5351,12 +5398,28 @@
             }
             if (out.length) {
                 return { ok: true, mode: 'sla', at_risk: out,
-                         message: out.length + ' SLA' + (out.length === 1 ? ' is' : 's are') + ' burning down. Read the worst 2-3 aloud with percent consumed and time left.' };
+                         message: out.length + ' SLA' + (out.length === 1 ? ' is' : 's are') + ' burning down on your work and not breached yet. Read the worst 2-3 aloud with percent consumed and time left.' };
             }
-            // no SLA engine data - aging fallback
+            var running = 0;
+            try {
+                var ga = new GlideAggregate('task_sla');
+                ga.addQuery('active', true);
+                ga.addEncodedQuery(mine);
+                ga.addAggregate('COUNT');
+                ga.query();
+                if (ga.next()) running = parseInt(ga.getAggregate('COUNT'), 10) || 0;
+            } catch (eG) {}
+            if (running) {
+                return { ok: true, mode: 'sla', at_risk: [], running: running,
+                         message: running + ' SLA' + (running === 1 ? ' is' : 's are') + ' running on your work, and none is past 60 percent and still savable. Nothing of yours is close to breaching.' };
+            }
+            // no SLA running on their work - aging view of their open incidents
+            var cut = new GlideDateTime();
+            cut.addSeconds(-2 * 86400);
             var gr = _ugr('incident');
             gr.addActiveQuery();
-            gr.addQuery('assigned_to', gs.getUserID());
+            gr.addQuery('assigned_to', meId);
+            gr.addQuery('sys_created_on', '<=', cut.getValue());
             gr.orderBy('priority');
             gr.orderBy('sys_created_on');
             gr.setLimit(8);
@@ -5364,17 +5427,29 @@
             var aging = [];
             var now = new GlideDateTime().getNumericValue();
             while (gr.next()) {
-                var made = new GlideDateTime(String(gr.sys_created_on)).getNumericValue();
-                var days = Math.floor((now - made) / 86400000);
-                if (days >= 2) {
-                    aging.push({ number: String(gr.number), short_description: String(gr.short_description).substring(0, 120),
-                                 priority: String(gr.priority), age_days: days });
-                }
+                var made = _msOfField(gr, 'sys_created_on');
+                aging.push({ number: String(gr.number), short_description: String(gr.short_description).substring(0, 120),
+                             priority: String(gr.priority), age_days: Math.floor((now - made) / 86400000) });
             }
             return { ok: true, mode: 'aging', aging: aging,
-                     message: aging.length ? 'No SLA definitions are running here, so this is the aging view - oldest and highest priority first.'
-                                           : 'Nothing is close to breaching and nothing is aging badly. All clear.' };
+                     message: aging.length ? 'No SLAs are running on your work, so this is the aging view - your open incidents older than two days, highest priority first.'
+                                           : 'No SLAs are running on your work, and none of your open incidents is older than two days. All clear.' };
         } catch (e) { return { ok: false, error: String(e.message || e) }; }
+    }
+
+    // is value one of the field's choices on this table (or a parent)? When
+    // the instance defines no choices for it there is nothing to check against
+    function _isChoice(table, field, value) {
+        try {
+            var ch = new GlideRecord('sys_choice');
+            ch.addQuery('name', 'IN', _tableChainOf(table).join(','));
+            ch.addQuery('element', field);
+            ch.addQuery('inactive', false);
+            ch.query();
+            var any = false;
+            while (ch.next()) { any = true; if (String(ch.getValue('value')) === String(value)) return true; }
+            return !any;
+        } catch (e) { return true; }
     }
 
     /* ===================================================================
@@ -5394,6 +5469,8 @@
             var gr = table ? _ugr(table) : null;
             if (!gr || !gr.get('number', num)) { failed.push({ number: num, why: 'not found, or you can not see it' }); continue; }
             if (!gr.canWrite()) { failed.push({ number: num, why: 'you do not have permission to change it' }); continue; }
+            // state codes differ per table: incident 6 is not a change state
+            if (state && !_isChoice(gr.getTableName(), 'state', String(state))) { failed.push({ number: num, why: 'state ' + state + ' does not exist on a ' + gr.getTableName().replace(/_/g, ' ') }); continue; }
             try {
                 if (comment)  gr.comments = '[Netra batch] ' + comment;
                 if (state)    gr.setValue('state', String(state));
@@ -5555,6 +5632,10 @@
         var d = _draftRead();
         if (!d) return { ok: false, error: 'No draft in progress. Call start_record_draft first.' };
         if (!field) return { ok: false, error: 'Field name is required.' };
+        field = _normFieldName(field);
+        if (DRAFT_FIELDS.indexOf(field) < 0) {
+            return { ok: false, error: 'I can not set "' + field + '" on a new record by voice - state, approval and system fields follow the record\'s own process. Fields I can set: ' + DRAFT_FIELDS.join(', ') + '.' };
+        }
         d.fields[field] = value;
         _draftWrite(d);
         var missing = (REQUIRED_FIELDS[d.record_type] || []).filter(function (f) { return !d.fields[f]; });
@@ -5764,15 +5845,19 @@
                 if (d.fields.hasOwnProperty(k2)) gr.setValue(k2, d.fields[k2]);
             }
             gr.opened_by = gs.getUserID();
-            if (table === 'incident') gr.caller_id = gs.getUserID();
-            if (table === 'problem' || table === 'change_request') gr.assigned_to = gs.getUserID();
+            // the person the user named in the draft wins; the signed-in user
+            // is only the default when the draft left it empty
+            if (table === 'incident' && !d.fields.caller_id) gr.caller_id = gs.getUserID();
+            if ((table === 'problem' || table === 'change_request') && !d.fields.assigned_to) gr.assigned_to = gs.getUserID();
             var sid = gr.insert();
             if (!sid) return { ok: false, error: 'The platform refused the new record - nothing was created. The draft is kept.' };
             var ck = new GlideRecord(table);
             if (!ck.get(sid)) return { ok: false, error: 'I could not read the new record back, so I can not say it was created. The draft is kept.' };
             _draftWrite(null);
+            var whoF = table === 'incident' ? 'caller_id' : (ck.isValidField('assigned_to') ? 'assigned_to' : '');
+            var who = whoF && ck.getValue(whoF) ? String(ck[whoF].getDisplayValue() || '') : '';
             return { ok: true, verified: true, table: table, number: String(ck.number), sys_id: sid,
-                     message: 'Created ' + String(ck.number) + ' - I read it back.' };
+                     message: 'Created ' + String(ck.number) + (who ? (whoF === 'caller_id' ? ' for ' : ', assigned to ') + who : '') + ' - I read it back.' };
         } catch (e) {
             return { ok: false, error: 'Insert failed: ' + (e.message || e) };
         }

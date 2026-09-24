@@ -86,8 +86,10 @@ function cmp(recVal, op, want) {
         case 'ISEMPTY': return v === '';
         case 'ISNOTEMPTY': return v !== '';
         case '>': case '>=': case '<': case '<=': {
+            // plain numbers compare as numbers ("92" is not the year 1992)
+            var NUM = /^-?\d+(\.\d+)?$/;
             var a = parseUtc(v), b = parseUtc(w);
-            if (isNaN(a) || isNaN(b)) { a = parseFloat(v); b = parseFloat(w); }
+            if (NUM.test(v) || NUM.test(w) || isNaN(a) || isNaN(b)) { a = parseFloat(v); b = parseFloat(w); }
             if (op === '>') return a > b;
             if (op === '>=') return a >= b;
             if (op === '<') return a < b;
@@ -101,6 +103,11 @@ function cmp(recVal, op, want) {
 // "a=1^b!=2^ORc=3^ORDERBYx" -> groups of OR-terms; each group ANDed
 var ENC_OPS = ['NOT IN', 'NOT LIKE', 'ISNOTEMPTY', 'ISEMPTY', 'STARTSWITH', 'ENDSWITH', 'LIKE', 'IN', '!=', '>=', '<=', '=', '>', '<'];
 function parseEncoded(q) {
+    // "^NQ" starts a new query block: a row matches if ANY block matches
+    if (String(q || '').indexOf('^NQ') >= 0) {
+        var parts = String(q).split('^NQ').map(parseEncoded);
+        return { nq: parts, groups: [], order: [].concat.apply([], parts.map(function (x) { return x.order; })) };
+    }
     var out = { groups: [], order: [] };
     String(q || '').split('^').forEach(function (term, i, all) {
         if (!term) return;
@@ -119,6 +126,15 @@ function parseEncoded(q) {
         else out.groups.push([hit]);
     });
     return out;
+}
+
+function groupsMatch(r, groups) {
+    for (var g = 0; g < groups.length; g++) {
+        var anyG = false;
+        for (var h = 0; h < groups[g].length; h++) if (cmp(fieldVal(r, groups[g][h].f), groups[g][h].op, groups[g][h].v)) anyG = true;
+        if (!anyG) return false;
+    }
+    return true;
 }
 
 /* ---------------- table hierarchy ---------------- */
@@ -148,7 +164,37 @@ function label(table, field, str) {
     if (ch && ch.hasOwnProperty(str)) return ch[str];
     return P.DISPLAY.hasOwnProperty(str) ? P.DISPLAY[str] : str;
 }
+// dot-walking: a reference value is a sys_id; find the row it points to
+function findById(id) {
+    if (!id) return null;
+    for (var t in P.STORE) if (P.STORE.hasOwnProperty(t) && P.STORE[t][id]) return { t: t, r: P.STORE[t][id] };
+    return null;
+}
+function fieldVal(r, path) {
+    if (path.indexOf('.') < 0) return r[path];
+    var parts = path.split('.'), cur = r, t = null;
+    for (var i = 0; i < parts.length - 1; i++) {
+        var hit = findById(cur && cur[parts[i]]);
+        if (!hit) return undefined;
+        cur = hit.r; t = hit.t;
+    }
+    var last = parts[parts.length - 1];
+    return last === 'sys_class_name' && cur && !cur.sys_class_name ? t : cur[last];
+}
 function makeElement(self, field) {
+    var el = makeElementBase(self, field);
+    return new Proxy(el, {
+        get: function (o, p) {
+            if (p in o || typeof p !== 'string') return o[p];
+            var hit = findById(self._rec ? self._rec[field] : '');
+            if (!hit) return makeElementBase({ _rec: null, table: '' }, p);
+            var rec = hit.r;
+            if (p === 'sys_class_name' && !rec.sys_class_name) rec = Object.assign({}, rec, { sys_class_name: hit.t });
+            return makeElement({ _rec: rec, table: hit.t }, p);
+        }
+    });
+}
+function makeElementBase(self, field) {
     var v = self._rec ? self._rec[field] : undefined;
     var str = (v === undefined || v === null) ? '' : String(v);
     return {
@@ -231,17 +277,13 @@ function GlideRecord(table) {
                 var r = all[ai].r, ok = true;
                 for (var i = 0; i < self.q.length && ok; i++) {
                     var c = self.q[i];
-                    var any = cmp(r[c[0]], c[1], c[2]);
-                    (c.or || []).forEach(function (o) { if (cmp(r[o[0]], o[1], o[2])) any = true; });
+                    var any = cmp(fieldVal(r, c[0]), c[1], c[2]);
+                    (c.or || []).forEach(function (o) { if (cmp(fieldVal(r, o[0]), o[1], o[2])) any = true; });
                     ok = any;
                 }
                 for (var e = 0; e < self.encoded.length && ok; e++) {
-                    var groups = self.encoded[e].groups;
-                    for (var g = 0; g < groups.length && ok; g++) {
-                        var anyG = false;
-                        for (var h = 0; h < groups[g].length; h++) if (cmp(r[groups[g][h].f], groups[g][h].op, groups[g][h].v)) anyG = true;
-                        ok = anyG;
-                    }
+                    var enc = self.encoded[e];
+                    ok = enc.nq ? enc.nq.some(function (b) { return groupsMatch(r, b.groups); }) : groupsMatch(r, enc.groups);
                 }
                 if (ok) rows.push(all[ai]);
             }
@@ -278,6 +320,9 @@ function GlideRecord(table) {
             if (self.rec.work_notes) { self.rec._work_notes = [self.rec.work_notes]; self.rec.work_notes = ''; }
             if (self.rec.comments) { self.rec._comments = [self.rec.comments]; self.rec.comments = ''; }
             if (!self.rec.sys_class_name) self.rec.sys_class_name = table;
+            // task tables number their records, like the platform
+            var PFX = { incident: 'INC', change_request: 'CHG', problem: 'PRB', sc_task: 'SCTASK', sc_req_item: 'RITM', sc_request: 'REQ' };
+            if (!self.rec.number && PFX[table]) self.rec.number = PFX[table] + String(10100 + (++P.guid)).padStart(7, '0');
             P.STORE[table] = P.STORE[table] || {};
             P.STORE[table][sid] = JSON.parse(JSON.stringify(self.rec));
             self.recTable = table;
