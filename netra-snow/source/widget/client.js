@@ -202,19 +202,21 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     /* ============================================================
-     *  R10 - REAL 3D STAGE (three.js, embedded as a widget dependency)
-     *  Mounts the WebGL scene behind the stage UI; on success the 2D
-     *  SVG blob + CSS starfield hide (class netra-3d-on) and the
-     *  bloom-lit glass orb takes over. Any failure -> silent fallback
-     *  to the 2D blob, nothing else changes.
+     *  R22 - THE GEMINI STAGE (the netra_stage3d UI script, a widget
+     *  dependency; no three.js any more). A light renderer paints the
+     *  whole stage behind the UI: a luminous orb on the tap target and
+     *  Gemini Live's glow at the foot, both driven by the same voice
+     *  globals. On success the SVG blob and the legacy layers hide
+     *  (class netra-3d-on); it carries its own no-WebGL fallback, and
+     *  if it can not mount at all the 2D blob stays.
      * ============================================================ */
     function _init3D(attempt) {
         if (!c.liveMode) return;
         var hostEl = document.querySelector('.netra-stage-3d');
         var stageEl = document.querySelector('.netra-stage');
-        if (!hostEl || !stageEl || !window.NetraStage3D || !window.THREE) {
+        if (!hostEl || !stageEl || !window.NetraStage3D) {
             if (attempt < 24) $timeout(function () { _init3D(attempt + 1); }, 250);
-            else logEvent('warn', '3D stage unavailable (three.js dependency not loaded) - keeping 2D blob');
+            else logEvent('warn', 'stage renderer unavailable (netra_stage3d not loaded) - keeping the 2D blob');
             return;
         }
         var ok = false;
@@ -222,9 +224,9 @@ api.controller = function ($scope, $timeout, $window) {
         if (ok) {
             stageEl.classList.add('netra-3d-on');
             _stage3dOn = true;
-            logEvent('lab', '3D stage online: WebGL glass orb + sunrise + bloom');
+            logEvent('lab', 'Gemini stage online');
         } else {
-            logEvent('warn', 'WebGL not available - keeping the 2D blob');
+            logEvent('warn', 'the stage renderer could not start - keeping the 2D blob');
         }
     }
     var _stage3dOn = false;
