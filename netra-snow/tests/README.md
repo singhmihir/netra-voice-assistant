@@ -1,7 +1,7 @@
 # Netra tests
 
 ```
-node netra-snow/tests/run.js            # everything, ~2 seconds
+node netra-snow/tests/run.js            # everything, under half a minute
 node netra-snow/tests/run.js confirm    # just the files whose name contains "confirm"
 ```
 
@@ -32,16 +32,20 @@ node:
 | File | What it protects |
 |---|---|
 | `confirm-gate.test.js` | a "yes" only runs what was just read back, in the next turn; stale, auto-turn, multi-draft, partial-answer and plan cases; plan undo |
+| `heard-writes.test.js` | all 110 declared tools swept: a model that obeys an instruction planted in a ticket, and then repeats the call claiming consent on a turn that is not a yes, changes nothing the user relies on; comments, work notes, messages, batch changes and undo are read back from their real arguments and run on a natural yes; after other people's text is in play, silencing alerts, changing the watchlist, cancelling an order or creating from a draft waits for a heard yes; opening a ticket the user can only read is read back, not refused as a change |
+| `tickets.test.js` | ticket helpers say what is true: overdue rules, the local-hour greeting, the chosen caller, each table's own cancel state on undo, SLAs that can still be saved, true watchlist totals; undo changes nothing with ticket writes off |
+| `mobile.test.js` | the installable app: manifest, service worker scope and offline answer, the install prompt or iOS Home Screen steps, the iOS Start tap that unlocks speech, nothing opening over the stage on a phone |
+| `rest-command.test.js` | the legacy POST /voice/command endpoint reads every write back and runs it only on the caller's next yes; a caller never hears work notes |
 | `routing.test.js` | which utterances the zero-call fast lane answers and which go to the model; basic mode without a key |
 | `investigation.test.js` | evidence first, one model call, invented facts dropped, thin-evidence honesty, CI-vs-ticket guards |
 | `audit-si-investigator.test.js` | a change being worked when the trouble began is a suspect, a later fix is not; no "first ticket" when there is none; grading reads the blamed change and negations; the watch reports only new resolutions and real rollbacks; true neighbour counts; no clock in broadcasts; the user's ACLs on tickets, notes and audit |
-| `permissions.test.js` | Netra acts with exactly the user's permissions (ACLs via GlideRecordSecure, VR tools only for VR roles); approvals need a heard read-back even when a subject tries to instruct the model; resolve never re-resolves and undo restores notes |
+| `permissions.test.js` | Netra acts with exactly the user's permissions (ACLs via GlideRecordSecure on tickets, incident creation and approvals; VR tools only for VR roles); a planted "CISO approved an exception" never defers a vulnerable item unheard; approvals need a heard read-back and the user's own yes - the model's confirm=true on a follow-up question, or a yes to an unheard read-back, decides nothing; the kill switch stops approval decisions and sidebar messages; resolve never re-resolves and undo restores notes |
 | `records.test.js` | who a message really reached, true attachment/SLA/CI/approval counts, current KB versions, reminder cancels, real field names, change journals |
 | `selfcheck.test.js` | the self-check finds and explains a stopped scanner, a rejected key, overdue orders, thin memory, switched-off writes |
 | `speech.test.js` | spoken ticket numbers, sys_id tails, dates and clock times |
 | `client.test.js` | the page's local replies never swallow an awaited answer; "repeat" replays the real reply |
 | `static.test.js` | everything parses, no secrets ship, the hoisting trap stays closed, every declared tool has a handler, installer/packager know every script include |
-| `away.test.js` | standing orders armed on a yes, fired by the real background runner, debriefed and undone by number; human edits and the kill switch stop them |
+| `away.test.js` | standing orders armed only on the user's own yes to a heard read-back (never on the model's confirm=true alone), fired by the real background runner, debriefed and undone by number; human edits and the kill switch stop them |
 | `audit-server-G-semantic-orders-plans.test.js` | standing orders arm only the resolved ticket, state and priority that were read back, on a fresh yes; the debrief speaks every report and the true count; a plan is never silently replaced and its undo never overwrites a later change; "nothing similar" only after every ticket was compared |
 | `audit-si-automation.test.js` | standing orders never lower a priority, put a missed priority lever back, end on closed tickets, chase the owner's own approvals past quiet hours, obey the kill switch on undo; work notes reach fulfillers only; the shared Guest user never gets an inbox; true outage-radar and assignment alerts; installer keeps admin-set properties |
 | `missions.test.js` | a queue mission launched on a yes, reviewed with embeddings only, applied with re-reads, human-routed tickets left alone, undone |

@@ -74,10 +74,11 @@ read-back, and undo restored all 11.
 
 ### Trust, by construction
 
-- **She acts with your permissions, never the app's.** Every ticket, journal,
+- **She acts with your permissions, never the app's.** Every ticket,
   attachment, approval, knowledge and vulnerability read or write she makes
-  for you goes through `GlideRecordSecure`, with field-level checks, so the
-  same ACLs as the ServiceNow forms apply. Checked live with a self-service
+  for you goes through `GlideRecordSecure`, and journal entries are read only
+  after a field-level check on their ticket, so the same ACLs as the
+  ServiceNow forms apply. Approvals are only ever your own. Checked live with a self-service
   caller: their own ticket is read with its comments but never its internal
   work notes, someone else's ticket is "not found, or you can not see it",
   "my tickets" lists only theirs, investigations and "similar past tickets"
@@ -86,15 +87,18 @@ read-back, and undo restored all 11.
   Response and work-note alerts are limited to the roles in the `code_roles`,
   `vr_roles` and `fulfiller_roles` properties. Background jobs act only on
   what their owner authorised, and the `ticket_writes` kill switch stops every
-  write path, undo included.
+  write to tickets, approvals, vulnerability items and messages, on every
+  path: undo, the fast lane's yes and background orders included.
 - **A "yes" only runs what you just heard.** Every write that needs consent is
   read back and parked with the turn it was proposed in; only your next turn
   can confirm it. Comments the caller sees, work notes, messages, batch
   changes and undo are always read back from their real arguments - the exact
   words, the resolved person - before they run. Once text written by other
   people (ticket descriptions, comments, attachments, articles) is in the
-  conversation, every write the model asks for waits for your spoken yes, so
-  an instruction hidden in a ticket can not act for you. A reply you never
+  conversation, every write the model asks for waits for your yes, so an
+  instruction hidden in a ticket can not act for you. Approvals and standing
+  orders go further: the model's own `confirm` flag is never the yes - your
+  words in that turn must be one, answering a read-back you heard. A reply you never
   heard (you barged in, or it arrived late), two drafts in one turn, a stale
   plan, a yes from twelve minutes ago - all dropped or read back again.
 - **Everything she changes is checked and undoable.** Writes are read back
@@ -115,13 +119,15 @@ read-back, and undo restored all 11.
 ### Tested without an instance
 
 `node netra-snow/tests/run.js` runs the real widget and script-include code
-against an in-memory ServiceNow and a scripted Gemini in about two seconds:
+against an in-memory ServiceNow and a scripted Gemini in under half a minute:
 conversations through the real router for the confirm gate, fast-lane
 routing, investigations, standing orders fired by the real background
 runner, queue missions, permissions (with ACLs and roles), record facts,
 spoken numbers and times, the client's local replies and the self-check,
-plus static guarantees (everything parses, no secrets ship, every declared
-tool has a handler, the router hoisting trap stays closed). GitHub Actions
+a sweep of all 110 tools called by a model that obeys an instruction
+planted in a ticket (nothing changes unheard), plus static guarantees
+(everything parses, no secrets ship, every declared tool has a handler, the
+router hoisting trap stays closed). GitHub Actions
 runs it on every push (`.github/workflows/netra-tests.yml`). See
 [`tests/README.md`](tests/README.md).
 
@@ -176,7 +182,9 @@ allowance. Now:
   need (a core set, the groups its words point at, every tool already in the
   conversation) - about 2k tokens. Always for a Guest and for Gemma; the
   `lean_prompt` property (`auto` / `always` / `never`) sets it for the rest.
-- **Gemma 4 first** (`gemma-4-26b-a4b-it`, ~1.2-1.9 s measured live), then
+- **Gemma 4 first** (`gemma-4-26b-a4b-it`, ~1.2-1.9 s a call measured live;
+  on the public page on 24 Sep 2026, a typed question reached its written
+  answer in 1.8-2.4 s on Gemma 4 and in 0.1-0.5 s on the fast lane), then
   every Gemini flash model the key can reach, each with its own allowance;
   a request too big for Gemma's per-minute allowance skips it for free.
 - A web question or a ticket status takes **one** model call, not two;

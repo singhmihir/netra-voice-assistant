@@ -47,7 +47,9 @@ NetraTools.prototype = {
             return { ok: false, read_only: true, error: 'Ticket writes are disabled.', message: this.READ_ONLY_MSG };
         if (!description || String(description).trim().length < 3)
             return { ok: false, error: 'I need a short description of the issue first.' };
-        var gr = new GlideRecord('incident');
+        // the user's own create rights, like problems and changes
+        var gr = new GlideRecordSecure('incident');
+        if (!gr.canCreate()) return { ok: false, error: 'You do not have permission to create incidents, so I created nothing.' };
         gr.initialize();
         gr.short_description = String(description).trim();
         gr.urgency = String(urgency || '3');
@@ -144,7 +146,7 @@ NetraTools.prototype = {
     searchTickets: function (keyword, limit) {
         var q = String(keyword || '').trim();
         if (q.length < 2) return { ok: false, error: 'Please give me a longer search term.' };
-        var gr = new GlideRecord('incident');
+        var gr = new GlideRecordSecure('incident');
         gr.addQuery('caller_id', this.userSysId)
           .addOrCondition('assigned_to', this.userSysId);
         gr.addQuery('short_descriptionLIKE' + q + '^ORdescriptionLIKE' + q);
@@ -169,8 +171,11 @@ NetraTools.prototype = {
     // ============================================================
     //  Approvals
     // ============================================================
+    // The approval records are read and decided under the user's own ACLs
+    // (GlideRecordSecure), and only ever the user's own. The subject comes
+    // from the record being approved, as the approval form shows it.
     listPendingApprovals: function () {
-        var gr = new GlideRecord('sysapproval_approver');
+        var gr = new GlideRecordSecure('sysapproval_approver');
         gr.addQuery('approver', this.userSysId);
         gr.addQuery('state', 'requested');
         gr.orderByDesc('sys_created_on');
@@ -201,7 +206,9 @@ NetraTools.prototype = {
             });
         }
         var total = out.length;
-        try {
+        // fewer than the limit came back: that is every one the user may read,
+        // so the count never names approvals an ACL hides from them
+        if (out.length >= 10) try {
             var ga = new GlideAggregate('sysapproval_approver');
             ga.addQuery('approver', this.userSysId);
             ga.addQuery('state', 'requested');
@@ -215,7 +222,7 @@ NetraTools.prototype = {
     /** the user's pending approval for a record number, with what it is about */
     findPendingApproval: function (refNumber) {
         if (!refNumber) return { ok: false, error: 'Which one should I act on?' };
-        var gr = new GlideRecord('sysapproval_approver');
+        var gr = new GlideRecordSecure('sysapproval_approver');
         gr.addQuery('approver', this.userSysId);
         gr.addQuery('state', 'requested');
         gr.query();
@@ -236,10 +243,14 @@ NetraTools.prototype = {
     },
 
     decideApproval: function (refNumber, approve) {
+        // the kill switch covers decisions too, on every path to this one
+        if (!this._ticketWritesEnabled())
+            return { ok: false, read_only: true, error: 'Approval decisions are switched off by the administrator, so I decided nothing', message: this.READ_ONLY_MSG };
         var found = this.findPendingApproval(refNumber);
         if (!found.ok) return found;
-        var gr = new GlideRecord('sysapproval_approver');
+        var gr = new GlideRecordSecure('sysapproval_approver');
         if (!gr.get(found.approval_sys_id)) return { ok: false, error: 'That approval is gone.' };
+        if (!gr.canWrite()) return { ok: false, error: 'You do not have permission to decide ' + refNumber + ', so I left it alone.' };
         gr.state = approve ? 'approved' : 'rejected';
         gr.comments = approve ? 'Approved via Netra.' : 'Rejected via Netra.';
         if (!gr.update()) return { ok: false, error: 'The platform refused the decision on ' + refNumber + '.' };

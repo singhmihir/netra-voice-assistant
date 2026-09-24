@@ -2647,7 +2647,7 @@
     // tools that change records (draft editing is not a change yet)
     function _partialIsWrite(name) {
         if (/^(start_record_draft|set_record_field|review_draft)$/.test(name)) return false;
-        return !!(_ticketCreateTools()[name] || _ticketMutateTools()[name] || name === 'send_sidebar_message' || name === 'execute_plan');
+        return !!(_ticketCreateTools()[name] || _ticketMutateTools()[name] || name === 'execute_plan');
     }
 
     function _sayToolResult(name, res, args) {
@@ -4918,7 +4918,8 @@
             create_ticket: 1, create_problem: 1, create_change: 1,
             start_record_draft: 1, set_record_field: 1, review_draft: 1,
             confirm_and_create: 1,
-            send_message_to_user: 1   // legacy path opened a tracking incident
+            send_message_to_user: 1,  // legacy path opened a tracking incident
+            send_sidebar_message: 1   // a message is a write too: the kill switch stops it
         };
     }
     function _ticketMutateTools() {
@@ -4972,7 +4973,7 @@
     function _gatedWriteTools() {
         var m = { send_sidebar_message: 1, click_button: 1, open_url: 1, navigate_to_record: 1, go_to_servicenow: 1,
                   remember_fact: 1, define_routine: 1, undo_plan: 1, undo_task_action: 1,
-                  pause_notifications: 1, resume_notifications: 1, cancel_standing_order: 1, delete_routine: 1,
+                  pause_notifications: 1, resume_notifications: 1, add_to_watchlist: 1, remove_from_watchlist: 1, cancel_standing_order: 1, delete_routine: 1,
                   set_reminder: 1, cancel_reminder: 1, cancel_draft: 1 };
         var c = _ticketCreateTools(), u = _ticketMutateTools(), k;
         for (k in c) { if (c.hasOwnProperty(k)) m[k] = 1; }
@@ -5002,6 +5003,8 @@
             }
             case 'pause_notifications': return 'pause your spoken alerts for ' + (Number(a.hours) || 1) + ' hour' + ((Number(a.hours) || 1) === 1 ? '' : 's');
             case 'resume_notifications': return 'turn your spoken alerts back on';
+            case 'add_to_watchlist': return 'watch ' + n + ' and tell you when it changes';
+            case 'remove_from_watchlist': return 'stop watching ' + n + ', so its changes no longer reach you';
             case 'cancel_standing_order': return 'cancel standing order ' + (parseInt(String(a.nt_number || '').replace(/\D/g, ''), 10) || a.nt_number);
             case 'delete_routine': return 'delete your routine called ' + q(a.name, 60);
             case 'set_reminder': return 'set a reminder: ' + q(a.text || a.message || a.reminder, 100);
@@ -5050,6 +5053,15 @@
     function _affirms(msg) {
         return /^\s*(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|please do|confirm(ed)?|absolutely|alright|all right|correct|send it|add it)\b/i.test(String(_cleanMsg(msg || '')));
     }
+    // the user's words this turn are a yes: any yes the fast lane takes, or a
+    // yes that says more ("yes, and check 14 too"). Approvals and standing
+    // orders need this as well as the model's confirm=true.
+    function _userSaidYes() {
+        if (_affirms(_currentUserMsg)) return true;
+        var lc = _normSpoken(_cleanMsg(_currentUserMsg)).replace(/[.!?]+$/, '')
+            .replace(/^(hey |ok |okay |hi )?netra[,!.]*\s+/, '').replace(/^\s+|\s+$/g, '');
+        return _yesNo(lc) === 'yes';
+    }
     function _sameWriteArgs(a, b) {
         var norm = function (o) {
             var out = {}, ks = Object.keys(o || {}).filter(function (k) { return k !== 'confirm'; }).sort();
@@ -5078,6 +5090,9 @@
                 return null;
             }
             if (!args || !args.ticket_number || name === 'batch_update_tickets') return null;
+            // opening a ticket or dropping it from the watchlist changes nothing
+            // on it: only a change to the ticket needs write rights on it
+            if (!_ticketMutateTools()[name]) return null;
             var num = _normNum(args.ticket_number);
             var gr = _getIncident(num);
             if (!gr) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
@@ -5226,8 +5241,11 @@
                     // requesters: same structural gate as standing orders
                     var apRef = _normNum(args.ref_number), apYes = String(args.decision) === 'approve';
                     var apB = _ctxReadBlob(), apD = apB.pendingApproval;
+                    // the model's confirm=true is not the yes: the user's own words
+                    // this turn must be one, and the read-back must have been heard
                     var apArmed = args.confirm === true && apD && apD.ref === apRef && apD.approve === apYes &&
-                                  _draftFresh(apD) && apD.msg !== _currentUserMsg;
+                                  _draftFresh(apD) && apD.msg !== _currentUserMsg &&
+                                  _userSaidYes() && !_brainTurn.prevUnheard;
                     if (!apArmed) {
                         var apInfo = tools.findPendingApproval(apRef);
                         if (!apInfo.ok) return apInfo;
@@ -8877,9 +8895,12 @@
                                        String(args.after_hours || ''), String(args.priority || ''), String(args.comment || '')]);
         var now = new GlideDateTime().getNumericValue();
         // the yes must answer the read-back of the turn just before
+        // and the user's own words this turn must be a yes to a heard
+        // read-back - the model's confirm=true alone never arms anything
         var armed = args.confirm === true && draft && _draftFresh(draft) &&
                     draft.key === draftKey &&
-                    draft.msg !== _currentUserMsg;
+                    draft.msg !== _currentUserMsg &&
+                    _userSaidYes() && !_brainTurn.prevUnheard;
         if (!armed) {
             var keepArgs = {};
             for (var ak in args) { if (args.hasOwnProperty(ak) && ak !== 'confirm') keepArgs[ak] = args[ak]; }
@@ -9612,7 +9633,8 @@
      * =================================================================== */
     function _triageApprovals() {
         var user = gs.getUserID();
-        var gr = new GlideRecord('sysapproval_approver');
+        // the user's own approvals, under their ACLs like list_approvals
+        var gr = _ugr('sysapproval_approver');
         gr.addQuery('approver', user);
         gr.addQuery('state', 'requested');
         gr.orderByDesc('sys_created_on');

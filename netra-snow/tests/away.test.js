@@ -69,4 +69,18 @@ T.test('the kill switch stops background writes', function () {
     T.eq(s.inc('INC0010017').priority, '3', 'no write while ticket_writes is off');
 });
 
+T.test('the model\'s confirm=true is not a yes: an order is armed only by the user\'s own yes to a heard read-back', function () {
+    var s = new S.Session();
+    var o = { kind: 'watch_ticket', ticket_number: 'INC0010013', after_hours: 1, action: 'add_comment', comment: 'Resolved, closing', authorized_utterance: 'x' };
+    s.model(gem.call('create_standing_order', o), gem.text('Shall I arm it?'));
+    s.say('watch incident 10013 and add a comment in an hour');
+    var c = JSON.parse(JSON.stringify(o)); c.confirm = true;
+    s.model(gem.call('create_standing_order', c), gem.text('Shall I?'));
+    s.say('hmm, who is the caller');
+    T.eq(g.P.STORE.x_196061_netra_v1_task, undefined, 'a question never arms it');
+    s.model(gem.call('create_standing_order', c), gem.text('Armed.'));
+    s.say('yes, arm it', { drop_unheard: true });
+    T.eq(g.P.STORE.x_196061_netra_v1_task, undefined, 'a yes to a read-back the page never spoke never arms it');
+});
+
 T.run(__filename);

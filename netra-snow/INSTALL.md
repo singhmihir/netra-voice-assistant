@@ -129,7 +129,7 @@ the installer keeps whatever you set):
 
 | Property (`x_196061_netra_v1.`…) | Default | Meaning |
 |---|---|---|
-| `ticket_writes` | `true` | Kill switch: `false` stops every write Netra makes, undo and background orders included |
+| `ticket_writes` | `true` | Kill switch: `false` stops every write to tickets, approvals, vulnerability items and messages, undo and background orders included (Netra's own reminders, notes and watchlist are not affected) |
 | `vr_roles` | `sn_vul.admin, sn_vul.vulnerability_analyst, sn_vul.remediation_owner, sn_vul.read_all` | Roles that get the Vulnerability Response tools |
 | `code_roles` | `admin` | Roles that may have Netra read, list or narrate platform scripts |
 | `fulfiller_roles` | `itil, admin, sn_incident_read, sn_incident_write` | Roles told about new work notes on watched tickets (everyone else hears comments only) |
