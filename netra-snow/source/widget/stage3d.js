@@ -1,552 +1,376 @@
 /**
- * Netra Live - 3D stage (R10.1b 'Gemini sunrise')
- *
- * the real-3D version of the blob: an iridescent glass orb (WebGL,
- * three.js r147) breathing with the same voice data as everything else.
- * The room is deliberatly cheap now - one painted sunrise billboard
- * behind the orb, a soft warm pool below it, slow camera drift + mouse
- * parallax and bloom on top. The pastel edge hues are CSS (the mesh
- * layer screens over this canvas) so they cost the GPU nothing here.
- *
- * it talks to the widget through four tiny globals the client already
- * writes every frame (no angular digests involved):
- *   window.__netraPrism  -> { h, amp }   hue engine output
- *   window.__netraBands  -> 24-band audio array or null
- *   window.__netraLevel  -> 0..100 average level
- *   window.__netraState  -> 'idle' | 'speaking' | ...
- *
- * mount() returns false when WebGL isnt available - the widget keeps the
- * 2D SVG blob in that case, nothing breaks.
+ * Netra Live - Gemini stage (light field). A near-black surface and two small light
+ * fields, each one fragment shader at ~1/4 CSS resolution, scaled up by CSS: the orb
+ * (flowing gradient light on the tap target; an opaque canvas carrying its own halo)
+ * and Gemini Live's glow at the foot (repainted at 1/3 rate). On software GL the
+ * compositor cost grows with canvas area, so the rest is a plain CSS background.
+ * Canvas2D fallback without WebGL. Reads __netraState/__netraLevel/__netraBands.
+ * API: window.NetraStage3D = { mount(host) -> bool, unmount(), fps() -> number }. ES5.
  */
 window.NetraStage3D = (function () {
     'use strict';
 
-    var renderer, scene, camera, composer, bloomPass;
-    var blob, blobMat, coreLight, sunrise, groundGlow;
-    var coreAura, coreHeart, coreTex = {}, coreKey = '', corePulse = 0;
-    var smoke = [], beatEnv = 0, lastBass = 0;   // R13 - edge smoke + beat glow
-    var rafId = null, clockT = 0, lastTs = 0, host = null;
-    var mouse = { x: 0, y: 0 };
-    var reduceMotion = false;
-    var uniforms = null;
-    var speechMix = 0.25;
-    var slowFrames = 0, degraded = false;
-    var fpsEma = 60;   // R12 - rolling fps, surfaced in Netra Lab
+    var root = null, O = null, G = null, host = null, sprites = null;
+    var raf = 0, mq = null, reduced = false, onVis = null, onMq = null, onResize = null;
+    var lastTs = 0, lastDraw = 0, fpsEma = 0, age = 0, winN = 0, slowN = 0, tier = 0, frameNo = 0;
+    var cssW = 0, cssH = 0, measAt = -1e9, ox = 0, oy = 0, oR = 0;
+    var lvF = 0, lvS = 0, bLo = 0, bHi = 0, errP = 0, lastSt = '';
+    var tFlow = 3.7, shPh = 0, swPh = 0, brPh = 0;
+    var KEYS = ['spd', 'warm', 'think', 'dim', 'gain', 'glowH', 'glowG', 'cool', 'talk', 'voice'];
+    var P = {}, T = {};
+    var OK = 1.8;   // orb canvas half-side, in orb radii (room for the halo)
+    var GH = 0.4;   // glow canvas height, as a fraction of the stage height (capped at 820 px)
+    var BG = '#0e0e10';
+    // 2D sprites: blue deep/main/light, cyan, violet, rose, pale, (orb body), grey
+    var COLS = [[26, 115, 232], [66, 133, 244], [138, 180, 248], [79, 195, 247], [155, 114, 203], [217, 101, 112], [200, 222, 255], null, [118, 128, 150]];
 
-    // ashima 3D simplex noise, the usual GLSL snippet
-    var SNOISE = [
-        'vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}',
-        'vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}',
-        'vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}',
-        'vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}',
-        'float snoise(vec3 v){',
-        'const vec2 C=vec2(1.0/6.0,1.0/3.0);const vec4 D=vec4(0.0,0.5,1.0,2.0);',
-        'vec3 i=floor(v+dot(v,C.yyy));vec3 x0=v-i+dot(i,C.xxx);',
-        'vec3 g=step(x0.yzx,x0.xyz);vec3 l=1.0-g;vec3 i1=min(g.xyz,l.zxy);vec3 i2=max(g.xyz,l.zxy);',
-        'vec3 x1=x0-i1+C.xxx;vec3 x2=x0-i2+C.yyy;vec3 x3=x0-D.yyy;',
-        'i=mod289(i);',
-        'vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));',
-        'float n_=0.142857142857;vec3 ns=n_*D.wyz-D.xzx;',
-        'vec4 j=p-49.0*floor(p*ns.z*ns.z);',
-        'vec4 x_=floor(j*ns.z);vec4 y_=floor(j-7.0*x_);',
-        'vec4 x=x_*ns.x+ns.yyyy;vec4 y=y_*ns.x+ns.yyyy;vec4 h=1.0-abs(x)-abs(y);',
-        'vec4 b0=vec4(x.xy,y.xy);vec4 b1=vec4(x.zw,y.zw);',
-        'vec4 s0=floor(b0)*2.0+1.0;vec4 s1=floor(b1)*2.0+1.0;vec4 sh=-step(h,vec4(0.0));',
-        'vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;',
-        'vec3 p0=vec3(a0.xy,h.x);vec3 p1=vec3(a0.zw,h.y);vec3 p2=vec3(a1.xy,h.z);vec3 p3=vec3(a1.zw,h.w);',
-        'vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));',
-        'p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;',
-        'vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0);m=m*m;',
-        'return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));}'
+    var VS = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.0,1.0);}';
+    // premultiplied out: dormant greys, error tints rose, a hue-keeping soft clip
+    var HEAD = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n' +
+        'const vec3 B0=vec3(.102,.451,.910);const vec3 B1=vec3(.259,.522,.957);const vec3 B2=vec3(.541,.706,.973);' +
+        'const vec3 B3=vec3(.659,.780,.980);const vec3 CY=vec3(.31,.765,.969);const vec3 VL=vec3(.608,.447,.796);' +
+        'const vec3 RL=vec3(.851,.396,.439);const vec3 BG=vec3(.0549,.0549,.0627);\n' +
+        'vec4 outp(vec3 c,float dim,float err){float l=dot(c,vec3(.3,.59,.11));c=mix(c,vec3(l)*vec3(.9,.95,1.08),dim*.65);' +
+        'c=mix(c,vec3(l*1.3,l*.62,l*.7),err*.7);float m=max(c.r,max(c.g,c.b));' +
+        'if(m>.8){float k=.8+.2*(1.0-exp((.8-m)/.2));c=mix(c*(k/m),vec3(k),clamp((m-1.0)*.3,0.0,.3));m=k;}' +
+        'return vec4(c,clamp(m,0.0,1.0));}\n';
+
+    // the orb, in orb radii. No atan (angular terms are Chebyshev multiples of the unit
+    // direction); time-only trig terms arrive as uniforms
+    var FS_ORB = HEAD + [
+        'uniform vec2 uR;uniform vec4 uA,uL,uS,uG,uP,uQ;',
+        'void main(){',
+        'vec2 q=(gl_FragCoord.xy/uR*2.0-1.0)*' + OK.toFixed(2) + ';float d=length(q);',
+        'if(d>' + (OK * 0.99).toFixed(3) + '){gl_FragColor=vec4(BG,1.0);return;}',
+        'float t=uA.x;vec2 n=q/max(d,1e-4);float c=n.x,s=n.y;',
+        'float c2=c*c-s*s,s2=2.0*c*s,c3=c*(4.0*c*c-3.0),s3=s*(3.0-4.0*s*s);',
+        'float r=uA.z*(1.0+uL.x)*(1.0+.015*(s3*uP.x+c3*uP.y)+.01*(s2*uP.w-c2*uP.z)+uL.z*.04*(s2*uP.z+c2*uP.w)+uL.w*.012*(s3*uP.z-c3*uP.w));',
+        'float dn=d/r,h=max(dn-1.0,0.0);',
+        'vec3 L=mix(B0,B1,.45)*(exp(-h*5.0)*.22+exp(-h*1.7)*.1)*smoothstep(.55,1.0,dn);',
+        'if(dn<1.08){',
+        // flowing light: sine domain warp, plus a fine octave on her high band
+        ' vec2 w=q/r*.95;',
+        ' w+=.5*vec2(sin(w.y*1.6+t*.61),sin(w.x*1.4-t*.53));',
+        ' w+=.28*vec2(sin(w.y*2.7-t*.83+1.3),sin(w.x*2.4+t*.71+2.1));',
+        ' if(uL.w>.01)w+=.2*uL.w*vec2(sin(w.y*5.3+uA.y),sin(w.x*4.9-uA.y*1.1));',
+        ' float f1=.5+.5*sin(w.x*1.5+w.y*.9+t*.2),f2=.5+.5*sin(w.y*1.8-w.x*.7+1.9),f3=.5+.5*sin((w.x-w.y)*2.1+.7);',
+        ' float e=sqrt(max(1.0-dn*dn,0.0)),body=1.0-smoothstep(.78,1.03,dn);',
+        // the Gemini gradient (blue > violet > rose) turns slowly across the orb; warm light
+        // replaces the pale blue rather than mixing into it, so it never greys
+        ' float gd=dot(q/r,uQ.zw)*.55+.5+(f1-.5)*.45;',
+        ' float wv=uS.x*smoothstep(.42,.84,gd),wr=uS.x*smoothstep(.8,1.14,gd);',
+        ' vec3 oc=mix(B0,B1,smoothstep(.1,.9,f1));',
+        ' oc=mix(oc,B2,smoothstep(.35,1.0,f2)*(.2+.55*e)*(1.0-.8*wv));',
+        ' oc=mix(oc,CY,smoothstep(.4,1.0,f3)*uG.y*.75);',
+        ' oc=mix(oc,VL,wv*.85);oc=mix(oc,RL,wr*.62);',
+        ' vec2 cc=q/r-vec2(uA.w,.16+.12*uQ.x);',   // a luminous core wandering with the flow
+        ' oc=mix(oc,vec3(.74,.84,.99),exp(-dot(cc,cc)*2.8)*(.26+.16*uL.y)*(1.0-.6*wv));',
+        ' L+=oc*(.42+.5*e+.14*f2)*body;',
+        ' vec3 rc=mix(B2,CY,uG.y*.6);rc=mix(rc,mix(VL,RL,.5+.5*dot(n,uQ.xy)),uS.x*.7);',   // soft rim light
+        ' L+=rc*exp(-(dn-.92)*(dn-.92)*80.0)*.2;',
+        ' float f6=f3*f3*f3;f6*=f6;L+=vec3(.8,.9,1.0)*f6*f6*body*(.02+.4*uL.w);',   // fine shimmer
+        '}',
+        'if(uS.y>.01){',   // thinking: a Gemini gradient arc sweeping around the orb
+        ' float a1=.5+.5*dot(n,uG.zw),a2=1.0-a1;a1*=a1*a1;a1*=a1;a2*=a2*a2;a2*=a2;',
+        ' vec3 sc=mix(B1,VL,.5+.5*dot(n,uQ.yx));sc=mix(sc,RL,a2*.7);',
+        ' L+=(sc*(a1+.55*a2)*exp(-(dn-.92)*(dn-.92)*30.0)*.8+B2*a1*smoothstep(.15,.6,dn)*(1.0-smoothstep(.7,1.0,dn))*.12)*uS.y;',
+        '}',
+        'L*=uG.x*(1.0-smoothstep(' + (OK * 0.76).toFixed(3) + ',' + (OK * 0.99).toFixed(3) + ',d));',
+        'vec4 o=outp(L,uS.z,uS.w);gl_FragColor=vec4(BG*(1.0-o.a)+o.rgb,1.0);}'
     ].join('\n');
 
-    function prism()  { return window.__netraPrism || { h: 152, amp: 0 }; }
-    function bandAvg(from, to) {
-        var b = window.__netraBands;
-        if (!b) return (window.__netraLevel || 0) / 100;
-        var s = 0, n = 0;
-        for (var i = from; i <= to && i < b.length; i++) { s += b[i]; n++; }
-        return n ? (s / n) / 100 : 0;
+    // Gemini Live's glow (stage-height units from the bottom): a blue cloud bank with
+    // drifting plumes, a paler foot, violet/rose clouds while she speaks
+    var FS_GLOW = HEAD + [
+        'uniform vec2 uR;uniform vec4 uA,uG,uW;',
+        'void main(){',
+        'vec2 u=gl_FragCoord.xy/uR;float x=u.x,y=u.y*uA.y,t=uA.x;',
+        'float n1=sin(x*2.9+t*.23)+.55*sin(x*6.1-t*.31+1.7)+.7*sin(x*1.5+t*.13+4.1);',
+        'float n2=sin(x*2.3-t*.19+2.3)+.6*sin(x*4.7+t*.27+.4);',
+        'float p1=x-uW.z,p2=x-uW.w;p1=exp(-p1*p1*18.0);p2=exp(-p2*p2*24.0);',
+        'float hA=uG.x*(.8+.16*n1+.45*p1+.35*p2),hB=uG.x*.5*(1.0+.34*n2+.4*p1);',
+        'float ya=y/hA,gA=exp(-ya*ya*(.55+.45*ya)),gB=exp(-y/hB);',
+        'float bx=.55+.45*(.5+.5*sin(x*2.1-t*.15+n2*.6));',
+        'vec3 cA=mix(B0,B1,.5+.5*sin(x*3.1+t*.11+n1*.5));',
+        'vec3 cB=mix(mix(B2,B3,.5+.3*n2),CY,uG.z*(.5+.5*sin(x*4.3+t*.2+2.0)));',
+        'vec3 L=cA*gA*.85*(.35+.65*bx)+cB*gB*gB*.62*bx;',
+        'float pv=x-uW.x,pr=x-uW.y;pv=exp(-pv*pv*22.0);pr=exp(-pr*pr*28.0);',
+        'L=mix(L,L*.6+(VL*pv*.7+RL*pr*.55)*gA,uG.w*max(pv,pr));',
+        'L*=uG.y*(1.0-smoothstep(uA.y*.5,uA.y*.98,y));',
+        'gl_FragColor=outp(L,uA.z,uA.w);}'
+    ].join('\n');
+
+    function num(v) { v = +v; return isFinite(v) ? v : 0; }
+    function approach(cur, tgt, dt, att, rel) { return cur + (tgt - cur) * (1 - Math.exp(-dt / (tgt > cur ? att : rel))); }
+
+    function targets(st) {
+        T.spd = 1; T.warm = 0.1; T.think = 0; T.dim = 0; T.gain = 0.9; T.glowH = 0.13; T.glowG = 0.62; T.cool = 0.3; T.talk = 1; T.voice = 0;
+        if (st === 'thinking') { T.spd = 1.75; T.think = 1; T.warm = 0.18; T.glowH = 0.12; T.glowG = 0.55; T.cool = 0.15; T.talk = 0; }
+        else if (st === 'speaking') { T.spd = 1.3; T.warm = 0.85; T.gain = 0.95; T.glowH = 0.14; T.glowG = 0.66; T.cool = 0.1; T.talk = 0; T.voice = 1; }
+        else if (st === 'dormant') { T.spd = 0.3; T.dim = 1; T.gain = 0.4; T.glowH = 0.1; T.glowG = 0.2; T.cool = 0; T.warm = 0; T.talk = 0; }
+        else if (st === 'boot') { T.gain = 0.6; T.glowG = 0.35; T.talk = 0; }
     }
 
-    // a painted "studio" for the glass to refract: dark violet room with a
-    // few bright soft light blobs. becomes the PMREM environment map.
-    function makeEnvTexture() {
-        var cv = document.createElement('canvas');
-        cv.width = 1024; cv.height = 512;
-        var g = cv.getContext('2d');
-        // R10.1b - the room got a big lift: it used to fade to near-black
-        // and the orb's rim mirrored that at grazing angles = ugly dark
-        // crescents around the silhouette. A brighter violet room + a warm
-        // horizon band keep the fresnel edge luminous all the way round.
-        var grad = g.createLinearGradient(0, 0, 0, 512);
-        grad.addColorStop(0, '#4a3573');
-        grad.addColorStop(0.55, '#3a2760');
-        grad.addColorStop(1, '#2a1c4e');
-        g.fillStyle = grad;
-        g.fillRect(0, 0, 1024, 512);
-        var horizon = g.createLinearGradient(0, 250, 0, 420);
-        horizon.addColorStop(0, 'rgba(255, 190, 140, 0)');
-        horizon.addColorStop(0.6, 'rgba(255, 175, 130, 0.35)');
-        horizon.addColorStop(1, 'rgba(210, 120, 120, 0.15)');
-        g.fillStyle = horizon;
-        g.fillRect(0, 250, 1024, 170);
-        function light(x, y, r, color, a) {
-            var rg = g.createRadialGradient(x, y, 0, x, y, r);
-            rg.addColorStop(0, color);
-            rg.addColorStop(1, 'rgba(0,0,0,0)');
-            g.globalAlpha = a;
-            g.fillStyle = rg;
-            g.fillRect(x - r, y - r, r * 2, r * 2);
-            g.globalAlpha = 1;
+    function css() {
+        if (document.getElementById('ngs-css')) return;
+        var s = document.createElement('style');
+        s.id = 'ngs-css';
+        s.textContent = '.ngs-stage{position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden;background:' + BG + ';pointer-events:none;z-index:0}' +
+            '.ngs-stage *{pointer-events:none}.ngs-stage .ngs-cv{position:absolute;display:block}';
+        (document.head || document.documentElement).appendChild(s);
+    }
+
+    // ---------- layers: a canvas with a WebGL program or a 2D context ----------
+    function glProg(cv, fs, names, opaque) {
+        var gl = null, o = { alpha: !opaque, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: 'low-power' };
+        try { gl = cv.getContext('webgl', o) || cv.getContext('experimental-webgl', o); } catch (e) { gl = null; }
+        if (!gl) return null;
+        function sh(type, src) { var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null; }
+        var v = sh(gl.VERTEX_SHADER, VS), f = sh(gl.FRAGMENT_SHADER, fs), p = gl.createProgram(), U = {}, i;
+        if (!v || !f) return null;
+        gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) return null;
+        gl.useProgram(p);
+        gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+        i = gl.getAttribLocation(p, 'a'); gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, 2, gl.FLOAT, false, 0, 0);
+        for (i = 0; i < names.length; i++) U[names[i]] = gl.getUniformLocation(p, names[i]);
+        return { gl: gl, U: U };
+    }
+    // placement is inline so page rules such as '.netra-stage-3d canvas {width:100%}' can not stretch it
+    function layer(place, fs, names, useGL, opaque) {
+        var L = { cv: null, gl: null, U: null, c2: null, w: 0, h: 0, scale: 0.32, sig: -1 }, g;
+        function fresh() {
+            if (L.cv && L.cv.parentNode) L.cv.parentNode.removeChild(L.cv);
+            L.cv = document.createElement('canvas'); L.cv.className = 'ngs-cv'; L.cv.style.cssText = place;
+            root.appendChild(L.cv);
         }
-        light(240, 110, 190, '#ffffff', 0.72);   // key light (dimmed - it was washing the glass white)
-        light(790, 150, 230, '#4285F4', 0.8);    // gemini azure fill
-        light(520, 400, 260, '#AD89EB', 0.6);    // gemini lavender bounce
-        light(60,  330, 170, '#D96570', 0.45);   // gemini rose kicker
-        light(512, 470, 300, '#ffd9a0', 0.5);    // sunrise from below
-        var tex = new THREE.CanvasTexture(cv);
-        tex.mapping = THREE.EquirectangularReflectionMapping;
-        return tex;
-    }
-
-    function makeBlob() {
-        var BASE_SCALE = 0.75;   // R10.1 - 25% smaller per user
-        // R12 perf - detail 24 instead of 32: ~45% fewer verts for the
-        // displacement shader to push, zero visible smoothness lost at
-        // this on-screen size
-        var geo = new THREE.IcosahedronGeometry(1.05, 24);
-        // R10.1b - the glass reads GEMINI now, not white: a faint blue base
-        // tint, much shorter attenuation (long light paths through the rim
-        // soak up the hue instead of showing the dark sky refracted = no
-        // more black notches on the silhouette) and a gentler ior/thickness
-        // so the edges dont bend rays clean off the sunrise plane.
-        blobMat = new THREE.MeshPhysicalMaterial({
-            color: 0xdfe8ff,
-            metalness: 0.0,
-            roughness: 0.12,
-            transmission: 0.88,
-            thickness: 0.65,
-            ior: 1.29,
-            iridescence: 1.0,
-            iridescenceIOR: 1.32,
-            iridescenceThicknessRange: [120, 480],
-            clearcoat: 0.85,
-            clearcoatRoughness: 0.18,
-            envMapIntensity: 1.7,
-            attenuationDistance: 1.4,
-            attenuationColor: new THREE.Color().setHSL(0.62, 0.8, 0.55),
-            emissive: new THREE.Color().setHSL(0.62, 0.9, 0.35),
-            emissiveIntensity: 0.28
-        });
-        uniforms = {
-            uTime:  { value: 0 },
-            uBass:  { value: 0 },
-            uTre:   { value: 0 },
-            uSpeech:{ value: 0.25 }
-        };
-        blobMat.onBeforeCompile = function (shader) {
-            shader.uniforms.uTime = uniforms.uTime;
-            shader.uniforms.uBass = uniforms.uBass;
-            shader.uniforms.uTre = uniforms.uTre;
-            shader.uniforms.uSpeech = uniforms.uSpeech;
-            shader.vertexShader = shader.vertexShader
-                .replace('#include <common>',
-                    '#include <common>\nuniform float uTime;uniform float uBass;uniform float uTre;uniform float uSpeech;\n' + SNOISE)
-                .replace('#include <begin_vertex>', [
-                    '#include <begin_vertex>',
-                    'float nA = snoise(normal * 1.7 + vec3(0.0, uTime * 0.32, 0.0));',
-                    'float nB = snoise(normal * 4.6 - vec3(uTime * 0.55));',
-                    'float disp = nA * (0.08 + uBass * 0.15) + nB * (0.02 + uTre * 0.10);',
-                    'transformed += normal * disp * (0.5 + uSpeech * 0.6);'
-                ].join('\n'));
-        };
-        blob = new THREE.Mesh(geo, blobMat);
-        blob.position.y = 0.68;
-        blob.scale.setScalar(BASE_SCALE);
-        scene.add(blob);
-
-        // R12 - the heart is no longer one flat glow: it is a pair of
-        // camera-facing sprites painted with MULTI-HUE radial gradients, so
-        // colour literally starts in the middle and diffuses out through
-        // the glass. One palette per mood - gemini while she talks/idles,
-        // GREEN while she listens, violet while she thinks.
-        function bakeRadial(stops) {
-            var cv = document.createElement('canvas');
-            cv.width = 256; cv.height = 256;
-            var g = cv.getContext('2d');
-            var rg = g.createRadialGradient(128, 128, 6, 128, 128, 126);
-            for (var i = 0; i < stops.length; i++) rg.addColorStop(stops[i][0], stops[i][1]);
-            g.fillStyle = rg;
-            g.fillRect(0, 0, 256, 256);
-            return new THREE.CanvasTexture(cv);
+        fresh();
+        g = useGL ? glProg(L.cv, fs, names, opaque) : null;
+        if (g) {
+            L.gl = g.gl; L.U = g.U;
+            L.cv.addEventListener('webglcontextlost', function (e) { e.preventDefault(); L.gl = null; });
+            L.cv.addEventListener('webglcontextrestored', function () { var r = glProg(L.cv, fs, names, opaque); if (r) { L.gl = r.gl; L.U = r.U; L.w = L.h = 0; measAt = -1e9; } });
+        } else {
+            if (useGL) fresh();
+            try { L.c2 = L.cv.getContext('2d', { alpha: !opaque }); } catch (e) { L.c2 = null; }
+            L.scale = 0.28;
+            if (L.c2) makeSprites();   // no canvas at all (a locked-down VDI): the dark stage alone
         }
-        // R12.1 - MORE colour from the middle: tighter, more saturated
-        // rings so distinct hues actually read through the glass instead
-        // of blurring into one pastel
-        coreTex.gemini = bakeRadial([
-            [0.00, 'rgba(255,244,214,1.0)'],
-            [0.16, 'rgba(255,196,120,0.95)'],
-            [0.34, 'rgba(66,133,244,0.95)'],
-            [0.52, 'rgba(155,114,203,0.80)'],
-            [0.72, 'rgba(233,86,138,0.45)'],
-            [1.00, 'rgba(233,86,138,0)']
-        ]);
-        coreTex.green = bakeRadial([
-            [0.00, 'rgba(238,255,242,1.0)'],
-            [0.18, 'rgba(140,255,190,0.95)'],
-            [0.38, 'rgba(36,214,130,0.90)'],
-            [0.60, 'rgba(16,180,150,0.60)'],
-            [0.82, 'rgba(30,140,190,0.30)'],
-            [1.00, 'rgba(30,140,190,0)']
-        ]);
-        coreTex.violet = bakeRadial([
-            [0.00, 'rgba(248,242,255,1.0)'],
-            [0.18, 'rgba(196,160,255,0.95)'],
-            [0.40, 'rgba(150,100,245,0.85)'],
-            [0.64, 'rgba(96,70,220,0.50)'],
-            [0.85, 'rgba(66,133,244,0.25)'],
-            [1.00, 'rgba(66,133,244,0)']
-        ]);
-        function makeGlowSprite(scale, opacity) {
-            var m = new THREE.SpriteMaterial({
-                map: coreTex.gemini, transparent: true, opacity: opacity,
-                blending: THREE.AdditiveBlending, depthWrite: false
-            });
-            var s = new THREE.Sprite(m);
-            s.position.copy(blob.position);
-            s.scale.setScalar(scale);
-            scene.add(s);
-            return s;
-        }
-        coreHeart = makeGlowSprite(1.2, 0.95);    // bright multi-hue center
-        coreHeart.material.toneMapped = false;    // let the colours punch through the glass
-        coreAura  = makeGlowSprite(2.3, 0.38);    // wide diffusion halo
-        coreKey = 'gemini';
-
-        coreLight = new THREE.PointLight(0x9a5cff, 1.4, 10, 2);
-        coreLight.position.copy(blob.position);
-        scene.add(coreLight);
+        return L;
+    }
+    function size(L, w, h) {
+        w = Math.max(16, Math.round(w)); h = Math.max(16, Math.round(h));
+        if (w === L.w && h === L.h) return;
+        L.w = L.cv.width = w; L.h = L.cv.height = h; L.sig = -1;
+        if (L.gl) L.gl.viewport(0, 0, w, h);
     }
 
-    // R12 - which gradient palette belongs to which mood
-    function coreKeyFor(st) {
-        if (st === 'listening' || st === 'awaiting') return 'green';
-        if (st === 'thinking') return 'violet';
-        return 'gemini';
-    }
-
-    // R13 - SMOKE. Soft wisps hugging the orb's edge that diffuse outward
-    // as she talks: violet smoke while SPEAKING, a greenish haze around
-    // the whole perimeter while LISTENING, and every strong beat of voice
-    // makes the wisps glow and push out a little further.
-    function makeSmokeTexture() {
-        var cv = document.createElement('canvas');
-        cv.width = 128; cv.height = 128;
-        var g = cv.getContext('2d');
-        function puff(x, y, r, a) {
-            var rg = g.createRadialGradient(x, y, 1, x, y, r);
-            rg.addColorStop(0, 'rgba(255,255,255,' + a + ')');
-            rg.addColorStop(0.55, 'rgba(255,255,255,' + (a * 0.35) + ')');
-            rg.addColorStop(1, 'rgba(255,255,255,0)');
-            g.fillStyle = rg;
-            g.fillRect(0, 0, 128, 128);
-        }
-        puff(64, 64, 60, 0.55);
-        puff(46, 52, 34, 0.5);
-        puff(82, 58, 30, 0.45);
-        puff(58, 84, 30, 0.4);
-        puff(78, 82, 24, 0.35);
-        return new THREE.CanvasTexture(cv);
-    }
-    function makeSmoke() {
-        var tex = makeSmokeTexture();
-        for (var i = 0; i < 14; i++) {
-            var m = new THREE.SpriteMaterial({
-                map: tex, transparent: true, opacity: 0,
-                blending: THREE.AdditiveBlending, depthWrite: false
-            });
-            var s = new THREE.Sprite(m);
-            var ang = (i / 14) * Math.PI * 2;
-            s.userData = {
-                ang: ang,
-                drift: 0.10 + (i % 5) * 0.035,       // slow orbit, staggered
-                wob: 0.5 + (i % 4) * 0.31,            // per-wisp bob phase
-                scl: 0.55 + (i % 3) * 0.22
-            };
-            s.position.copy(blob.position);
-            scene.add(s);
-            smoke.push(s);
+    // every ~500 ms and on resize; buffers are only touched when a size changes
+    function measure(now) {
+        measAt = now;
+        var hr = host.getBoundingClientRect(), wrap = document.querySelector('.netra-stage-blob-wrap'), r = wrap && wrap.getBoundingClientRect(), box, R, half, s, x, y;
+        cssW = hr.width || window.innerWidth || 1280; cssH = hr.height || window.innerHeight || 800;
+        if (r && r.width > 10) { ox = r.left + r.width / 2 - hr.left; oy = r.top + r.height / 2 - hr.top; box = Math.min(r.width, r.height); }
+        else { ox = cssW * 0.5; oy = cssH * 0.39; box = Math.min(cssW, cssH) * 0.58; }
+        R = Math.round(0.36 * box); half = Math.round(OK * R);
+        x = Math.round(ox - half) + 'px'; y = Math.round(oy - half) + 'px'; s = O.cv.style;
+        if (R !== oR || s.left !== x || s.top !== y) { oR = R; s.left = x; s.top = y; s.width = s.height = 2 * half + 'px'; }
+        x = Math.min(2 * half * O.scale * 0.8, 180); size(O, x, x);
+        if (G) {   // the glow keeps its pixel height on tall screens: clear of the controls, less area to composite
+            y = Math.round(GH * Math.min(cssH, 820)); if (G.cv.style.height !== y + 'px') G.cv.style.height = y + 'px';
+            x = Math.min(cssW * G.scale * 0.6, 320); size(G, x, x * y / cssW);
         }
     }
 
-    // R10.1 - SUNRISE. A golden-hour glow rising behind the blob: one big
-    // painted billboard (sky + sun) and a soft warm pool of light under
-    // the orb. Two draw calls total - this REPLACED the mirror floor and
-    // the 3D starfield, which together were most of the frame cost.
-    function makeSunrise() {
-        var cv = document.createElement('canvas');
-        cv.width = 1024; cv.height = 640;
-        var g = cv.getContext('2d');
-        // R10.1b pulled the sky ~35% darker; R12 dials it ANOTHER 15% down
-        // per Mihir - the room goes properly moody and the blob (which
-        // keeps its own light) pops out of it even harder.
-        var sky = g.createLinearGradient(0, 0, 0, 640);
-        sky.addColorStop(0.0, '#0e0a1f');
-        sky.addColorStop(0.5, '#17112d');
-        sky.addColorStop(0.75, '#2f1d3c');
-        sky.addColorStop(0.9, '#3a2542');
-        sky.addColorStop(1.0, '#463030');
-        g.fillStyle = sky;
-        g.fillRect(0, 0, 1024, 640);
-        // R13 - the sun moved to the TOP RIGHT per Mihir (was sitting low
-        // behind her like a horizon sunrise)
-        var sun = g.createRadialGradient(816, 104, 10, 816, 104, 500);
-        sun.addColorStop(0.0, 'rgba(255, 240, 205, 0.7)');
-        sun.addColorStop(0.16, 'rgba(255, 205, 140, 0.42)');
-        sun.addColorStop(0.4, 'rgba(240, 140, 105, 0.24)');
-        sun.addColorStop(0.7, 'rgba(200, 95, 115, 0.12)');
-        sun.addColorStop(1.0, 'rgba(155, 114, 203, 0)');
-        g.fillStyle = sun;
-        g.fillRect(0, 0, 1024, 640);
-        var tex = new THREE.CanvasTexture(cv);
-        var mat = new THREE.MeshBasicMaterial({ map: tex });
-        // bigger than the view on purpose: refracted rays through the orb's
-        // rim must still land ON the plane, never on the void behind it
-        sunrise = new THREE.Mesh(new THREE.PlaneGeometry(38, 23.75), mat);
-        sunrise.position.set(0, 1.6, -8);
-        scene.add(sunrise);
-
-        // warm pool of light under the orb instead of the mirror
-        var cv2 = document.createElement('canvas');
-        cv2.width = 512; cv2.height = 512;
-        var g2 = cv2.getContext('2d');
-        var rg = g2.createRadialGradient(256, 256, 10, 256, 256, 250);
-        rg.addColorStop(0, 'rgba(255, 214, 160, 0.17)');
-        rg.addColorStop(0.5, 'rgba(217, 120, 130, 0.07)');
-        rg.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        g2.fillStyle = rg;
-        g2.fillRect(0, 0, 512, 512);
-        // tone-mapped now - the unmapped version turned into a blown-white
-        // streak behind the mic buttons once bloom got hold of it
-        groundGlow = new THREE.Mesh(
-            new THREE.PlaneGeometry(9, 9),
-            new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv2), transparent: true, depthWrite: false })
-        );
-        groundGlow.rotation.x = -Math.PI / 2;
-        groundGlow.position.y = -1.2;
-        scene.add(groundGlow);
-
-        // warm key so the glass rim catches the sun - from the top right,
-        // matching where the sun sits in the sky now
-        var sunLight = new THREE.DirectionalLight(0xffc98a, 0.42);
-        sunLight.position.set(4.5, 4.5, -2.5);
-        sunLight.target = blob;
-        scene.add(sunLight);
+    // ---------- WebGL draws (uniforms only, no allocations) ----------
+    function drawOrb(swell) {
+        var gl = O.gl, U = O.U, lift = lvS * (0.5 * P.talk + 0.4 * P.voice), p3 = tFlow * 0.7, p2 = tFlow * 1.3;
+        gl.uniform2f(U.uR, O.w, O.h);
+        gl.uniform4f(U.uA, tFlow, shPh, 1 + (reduced ? 0 : 0.022 * (1 - 0.5 * P.dim) * Math.sin(brPh)), 0.14 * Math.sin(tFlow * 0.31));
+        gl.uniform4f(U.uL, swell, lvS, bLo * P.voice, bHi * P.voice);
+        gl.uniform4f(U.uS, P.warm, P.think, P.dim, errP);
+        gl.uniform4f(U.uG, P.gain * (1 + lift * 0.25) + (reduced ? 0 : 0.05 * P.think * Math.sin(brPh * 3.5)), P.cool + 0.5 * lvS * P.talk, Math.cos(swPh), Math.sin(swPh));
+        gl.uniform4f(U.uP, Math.cos(p3), Math.sin(p3), Math.cos(p2), Math.sin(p2));
+        gl.uniform4f(U.uQ, Math.cos(tFlow * 0.4), Math.sin(tFlow * 0.4), Math.cos(tFlow * 0.13 + 0.8), Math.sin(tFlow * 0.13 + 0.8));
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    function drawGlow() {
+        var gl = G.gl, U = G.U, lift = lvS * (0.55 * P.talk + 0.45 * P.voice);
+        gl.uniform2f(U.uR, G.w, G.h);
+        gl.uniform4f(U.uA, tFlow, GH, P.dim, errP);
+        gl.uniform4f(U.uG, P.glowH + 0.08 * lift, P.glowG + 0.34 * lift, P.cool + 0.6 * lvS * P.talk, P.warm * P.voice + 0.25 * P.think);
+        gl.uniform4f(U.uW, 0.24 + 0.08 * Math.sin(tFlow * 0.09), 0.78 + 0.07 * Math.sin(tFlow * 0.07 + 2), 0.3 + 0.22 * Math.sin(tFlow * 0.05), 0.72 + 0.2 * Math.sin(tFlow * 0.041 + 2));
+        gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
 
-    function onMouse(ev) {
-        var w = window.innerWidth, h = window.innerHeight;
-        mouse.x = (ev.clientX / w) * 2 - 1;
-        mouse.y = (ev.clientY / h) * 2 - 1;
+    // ---------- Canvas2D fallback: pre-rendered soft light sprites, added ----------
+    function sprite(rgb) {
+        var n = rgb ? 64 : 128, m = n / 2, s = document.createElement('canvas'), x, g, c, i, st;
+        s.width = s.height = n; x = s.getContext('2d');
+        if (!x) return s;
+        g = x.createRadialGradient(m, m, 0, m, m, m);
+        // orb body: light centre, blue, deep rim with a lighter edge; else a soft light
+        st = rgb ? [0, 1, 0.35, 0.78, 0.62, 0.34, 0.82, 0.09, 1, 0] : [0, '112,162,246,1', 0.5, '60,125,240,1', 0.78, '26,115,232,.95', 0.88, '98,158,246,.75', 0.95, '26,115,232,.25', 1, '26,115,232,0'];
+        c = rgb ? 'rgba(' + rgb.join(',') + ',' : 'rgba(';
+        for (i = 0; i < st.length; i += 2) g.addColorStop(st[i], c + st[i + 1] + ')');
+        x.fillStyle = g; x.fillRect(0, 0, n, n);
+        return s;
+    }
+    function makeSprites() {
+        if (sprites) return;
+        sprites = [];
+        for (var i = 0; i < COLS.length; i++) sprites.push(sprite(COLS[i]));
+    }
+    function blot(c2, i, x, y, w, h, a) { if (a > 0.004) { c2.globalAlpha = a > 1 ? 1 : a; c2.drawImage(sprites[i], x - w / 2, y - h / 2, w, h); } }
+    function orb2D(swell) {
+        var c2 = O.c2, w = O.w, t = tFlow, cx = w / 2, cy = cx, R = w / (2 * OK) * (1 + swell) * (reduced ? 1 : 1 + 0.022 * Math.sin(brPh));
+        var g = P.gain * (1 + 0.25 * lvS * (0.5 * P.talk + 0.4 * P.voice)), k = g * (1 - 0.6 * P.dim), wm = P.warm;
+        c2.globalCompositeOperation = 'source-over'; c2.globalAlpha = 1; c2.fillStyle = BG; c2.fillRect(0, 0, w, w);
+        c2.globalCompositeOperation = 'lighter';
+        blot(c2, 0, cx, cy, R * 3.6, R * 3.6, 0.2 * k);
+        blot(c2, 7, cx, cy, R * 2.12, R * 2.12, 0.74 * k);
+        blot(c2, 8, cx, cy, R * 2.1, R * 2.1, 0.4 * g * P.dim);
+        blot(c2, 2, cx + Math.cos(t * 0.5) * R * 0.32, cy + Math.sin(t * 0.43) * R * 0.3 - R * 0.1, R * 1.3, R * 1.3, 0.18 * k * (1 - 0.5 * wm));
+        blot(c2, 3, cx + Math.cos(t * 0.37 + 2) * R * 0.34, cy + Math.sin(t * 0.51 + 2) * R * 0.32, R * 1.1, R * 1.1, 0.34 * k * (P.cool + 0.5 * lvS * P.talk));
+        blot(c2, 4, cx - R * 0.3 + Math.cos(t * 0.41 + 4) * R * 0.2, cy + R * 0.25 + Math.sin(t * 0.33 + 4) * R * 0.15, R * 1.4, R * 1.4, 0.62 * k * wm);
+        blot(c2, 5, cx + R * 0.35 + Math.cos(t * 0.29 + 1) * R * 0.15, cy - R * 0.35, R * 0.9, R * 0.9, 0.42 * k * wm);
+        blot(c2, 6, cx + Math.sin(t * 0.31) * R * 0.14, cy - R * 0.16, R * 0.8, R * 0.8, 0.1 * k);
+        if (P.think > 0.01) {
+            blot(c2, 4, cx + Math.cos(swPh) * R * 0.9, cy - Math.sin(swPh) * R * 0.9, R * 0.75, R * 0.75, 0.55 * P.think);
+            blot(c2, 2, cx - Math.cos(swPh) * R * 0.9, cy + Math.sin(swPh) * R * 0.9, R * 0.6, R * 0.6, 0.35 * P.think);
+        }
+        blot(c2, 5, cx, cy, R * 2.2, R * 2.2, 0.35 * errP);
+    }
+    function glow2D() {
+        var c2 = G.c2, w = G.w, h = G.h, t = tFlow, lift = lvS * (0.55 * P.talk + 0.45 * P.voice), i, warm = P.warm * P.voice;
+        var gh = (P.glowH + 0.08 * lift) / GH * h * 3.3, ga = (P.glowG + 0.34 * lift) * 0.5 * (1 - 0.6 * P.dim);
+        c2.globalCompositeOperation = 'source-over'; c2.globalAlpha = 1; c2.clearRect(0, 0, w, h);
+        c2.globalCompositeOperation = 'lighter';
+        blot(c2, 0, w * 0.5, h, w * 1.5, gh * 0.9, ga * 0.7);
+        for (i = 0; i < 6; i++) blot(c2, i & 1, w * (i + 0.5) / 6 + Math.sin(t * 0.2 + i * 1.9) * w * 0.06, h, w * 0.42, gh * (1 + 0.25 * Math.sin(t * 0.27 + i * 2.3)), ga * 0.7);
+        blot(c2, 2, w * (0.5 + 0.1 * Math.sin(t * 0.11)), h, w * 1.2, gh * 0.55, ga * 0.6);
+        blot(c2, 4, w * 0.24, h, w * 0.34, gh * 0.9, ga * 0.7 * warm);
+        blot(c2, 5, w * 0.78, h, w * 0.3, gh * 0.75, ga * 0.55 * warm);
     }
 
+    // ---------- frame ----------
     function frame(ts) {
-        rafId = requestAnimationFrame(frame);
-        var dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0.016;
+        raf = requestAnimationFrame(frame);
+        try { tick(ts); } catch (e) {}
+    }
+    function tick(ts) {
+        var dt = lastTs ? (ts - lastTs) / 1000 : 0.016, i, k, st, lv, b, lo, hi, swell, sig, gap, dO = true, dG = true;
         lastTs = ts;
-        clockT += dt;
+        dt = dt > 0.25 ? 0.25 : (dt < 0.001 ? 0.001 : dt);
+        age += dt;
+        // the glow's context starts on frame 1: GL start-up is split over two frames
+        if (!G) { G = layer('left:0;top:auto;bottom:0;width:100%', FS_GLOW, ['uR', 'uA', 'uG', 'uW'], !!O.gl, false); measAt = -1e9; }
+        if (ts - measAt > 500) measure(ts);
 
-        var p = prism();
-        var st = window.__netraState || 'idle';
-        var amp = p.amp || 0;
-        var hue = ((p.h || 152) % 360) / 360;
+        st = window.__netraState || 'idle';
+        if (st === 'error' && lastSt !== 'error') errP = 1;   // a brief rose tint, then calm
+        lastSt = st;
+        errP = errP > 0.001 ? errP * Math.exp(-dt / 1.4) : 0;
+        targets(st);
+        for (i = 0; i < KEYS.length; i++) { k = KEYS[i]; P[k] = approach(P[k], T[k], dt, 0.16, 0.16); }   // ~0.5 s crossfade
 
-        var speechTarget = st === 'speaking' ? 1 : (st === 'thinking' ? 0.55 : 0.25);
-        speechMix += (speechTarget - speechMix) * 0.05;
-
-        uniforms.uTime.value = clockT;
-        uniforms.uBass.value += (bandAvg(0, 4) - uniforms.uBass.value) * 0.25;
-        uniforms.uTre.value  += (bandAvg(16, 23) - uniforms.uTre.value) * 0.25;
-        uniforms.uSpeech.value = speechMix;
-
-        // hue-linked glass (emissive rides the hue too so the body of the
-        // glass actually LOOKS coloured instead of washed white)
-        blobMat.attenuationColor.setHSL(hue, 0.8, 0.5);
-        blobMat.emissive.setHSL(hue, 0.85, 0.4);
-        blobMat.emissiveIntensity = 0.24 + amp * 0.35;
-
-        // R12 - swap the heart's gradient palette with the mood (green when
-        // she listens, violet thinking, gemini otherwise) with a short
-        // brightness dip so the change lands soft, not like a light switch
-        var wantKey = coreKeyFor(st);
-        if (wantKey !== coreKey) {
-            coreKey = wantKey;
-            coreHeart.material.map = coreTex[coreKey];
-            coreAura.material.map  = coreTex[coreKey];
-            coreHeart.material.needsUpdate = true;
-            coreAura.material.needsUpdate = true;
-            corePulse = 1;
+        lv = Math.min(1, Math.max(0, num(window.__netraLevel) / 100));
+        if (st !== 'speaking' && st !== 'idle' && st !== 'awaiting' && st !== 'listening' && st !== 'error') lv = 0;
+        b = window.__netraBands; lo = lv; hi = 0;
+        if (b && b.length >= 24) {
+            lo = 0;
+            for (i = 0; i < 6; i++) lo += num(b[i]);
+            for (i = 14; i < 24; i++) hi += num(b[i]);
+            lo = Math.min(1, lo / 600); hi = Math.min(1, hi / 1000);
         }
-        if (corePulse > 0) corePulse = Math.max(0, corePulse - dt * 3.2);
-        var dip = 1 - corePulse * 0.55;
-        var breath = Math.sin(clockT * 2.2) * 0.04;
-        coreHeart.material.opacity = (0.72 + amp * 0.28) * dip;
-        coreAura.material.opacity  = (0.28 + amp * 0.32) * dip;
-        coreHeart.scale.setScalar(1.2 * (1 + amp * 0.45 + breath));
-        coreAura.scale.setScalar(2.3 * (1 + amp * 0.30 + breath * 0.6));
-        coreLight.color.setHSL(hue, 0.85, 0.6);
-        coreLight.intensity = 1.0 + amp * 2.6;
+        if (!lv) lo = hi = 0;
+        lvF = approach(lvF, lv, dt, 0.07, 0.3);    // shape: fast attack, gentle release
+        lvS = approach(lvS, lv, dt, 0.3, 0.75);    // large-area light: slow, never flashes at syllable rate
+        bLo = approach(bLo, lo, dt, 0.06, 0.3);
+        bHi = approach(bHi, hi, dt, 0.05, 0.25);
+        swell = reduced ? 0 : (P.talk * 0.075 * lvF + P.voice * (0.07 * bLo + 0.05 * lvF));
 
-        blob.rotation.y += dt * 0.12;
-        blob.rotation.z = Math.sin(clockT * 0.15) * 0.08;
-        var bs = 0.75 * (1 + amp * 0.10);
-        blob.scale.setScalar(bs);
-
-        // R13 - SMOKE around the edge. Beat detector first: a rising bass
-        // edge = one "beat" -> the wisps flash and push outward, then decay.
-        var bass = bandAvg(0, 4);
-        if (bass - lastBass > 0.09) beatEnv = 1;
-        lastBass += (bass - lastBass) * 0.3;
-        beatEnv = Math.max(0, beatEnv - dt * 2.6);
-        var speaking = (st === 'speaking');
-        var hearing  = (st === 'listening' || st === 'awaiting');
-        // violet smoke when SHE talks, greenish haze when she hears YOU,
-        // barely-there neutral wisps otherwise
-        var smokeBase = speaking ? 0.16 : (hearing ? 0.13 : 0.05);
-        var smokeHue  = speaking ? 0.74 : (hearing ? 0.36 : hue);
-        var smokeSat  = (speaking || hearing) ? 0.75 : 0.35;
-        for (var si = 0; si < smoke.length; si++) {
-            var sp = smoke[si], ud = sp.userData;
-            ud.ang += dt * ud.drift * (1 + amp * 0.8);
-            var breathe = Math.sin(clockT * 0.7 + ud.wob * 7) * 0.06;
-            var rad = 0.84 + breathe + amp * 0.34 + beatEnv * 0.16;   // diffuse outward with the voice
-            sp.position.set(
-                blob.position.x + Math.cos(ud.ang) * rad,
-                blob.position.y + Math.sin(ud.ang) * rad * 0.9,
-                blob.position.z + Math.sin(ud.ang * 2 + ud.wob) * 0.25
-            );
-            sp.scale.setScalar(ud.scl * (1 + amp * 0.7 + beatEnv * 0.5));
-            sp.material.opacity = smokeBase * (0.6 + 0.4 * Math.sin(clockT * 0.9 + ud.wob * 9))
-                                + amp * 0.22 + beatEnv * 0.18;
-            sp.material.color.setHSL(smokeHue, smokeSat, 0.55 + beatEnv * 0.2);
+        if (!reduced) {
+            tFlow += dt * P.spd * 0.9; if (tFlow > 4000) tFlow -= 3600;
+            shPh = (shPh + dt * (1.5 + 9 * bHi) * P.spd) % 6283.19;
+            swPh = (swPh + dt * 2.6) % 6283.19;
+            brPh = (brPh + dt * 1.2566 * (1 - 0.5 * P.dim)) % 6283.19;   // ~0.2 Hz breathing
+            // adaptive: if most of 45 frames missed ~40 fps, repaint the slow glow less
+            // often (never resize buffers here: a resize stalls software GL)
+            if (age > 2) {
+                if (dt > 0.025) slowN++;
+                if (++winN >= 45) { if (slowN > 27 && tier < 2) tier++; winN = slowN = 0; }
+            }
+            k = tier ? 3 + tier : 3;
+            i = 1;
+            if (P.dim > 0.9) { i = 2; k = 6; }   // muted: barely moving, so half-rate saves the CPU
+            frameNo++;
+            dO = frameNo % i === 0;
+            dG = frameNo % k === 1;
+        } else {
+            // calm: a composed still, redrawn only on visible change, at most ~8/s
+            swPh = 0.9; tFlow = 20.5;
+            sig = Math.round((lvS * 2 + P.gain + P.warm * 2 + P.think * 3 + P.dim * 4 + errP * 5 + P.cool) * 60) + O.w + G.w;
+            dO = dG = sig !== O.sig && ts - lastDraw > 120;
+            if (dO) O.sig = sig;
         }
-
-        if (!reduceMotion) {
-            var cx = Math.sin(clockT * 0.1) * 0.18 + mouse.x * 0.45;
-            var cy = 0.42 + Math.sin(clockT * 0.07) * 0.06 - mouse.y * 0.28;
-            camera.position.x += (cx - camera.position.x) * 0.035;
-            camera.position.y += (cy - camera.position.y) * 0.035;
-            camera.lookAt(0, 0.45, 0);
+        if (dO) {
+            if (O.gl) drawOrb(swell); else if (O.c2) orb2D(swell);
+            gap = (ts - lastDraw) / 1000; lastDraw = ts;   // fps() reports how often the orb really repaints
+            if (gap > 0 && gap < 0.5) fpsEma = fpsEma ? fpsEma + (1 / gap - fpsEma) * 0.06 : 1 / gap;
         }
-
-        if (bloomPass) bloomPass.strength = (degraded ? 0 : 0.4) + amp * 0.7 * (degraded ? 0 : 1);
-
-        if (composer && !degraded) composer.render();
-        else renderer.render(scene, camera);
-
-        // adaptive insurance: if we cant hold ~30fps, drop bloom + dpr once
-        if (dt > 0.033) { if (++slowFrames > 90 && !degraded) degrade(); }
-        else if (slowFrames > 0) slowFrames--;
-        fpsEma += ((1 / Math.max(dt, 0.001)) - fpsEma) * 0.05;
-        window.__netra3dFps = Math.round(fpsEma);
-    }
-
-    function degrade() {
-        degraded = true;
-        try { renderer.setPixelRatio(1); } catch (e) {}
-        resize();
-    }
-
-    function resize() {
-        if (!host || !renderer) return;
-        var w = host.clientWidth || window.innerWidth;
-        var h = host.clientHeight || window.innerHeight;
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
-        renderer.setSize(w, h);
-        if (composer) composer.setSize(w, h);
+        if (dG) { if (G.gl) drawGlow(); else if (G.c2) glow2D(); }
     }
 
     function mount(el) {
-        if (renderer) return true;   // already mounted
-        if (!window.THREE) return false;
-        host = el;
+        if (root) return true;
+        if (!el) return false;
         try {
-            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-        } catch (e) { renderer = null; return false; }
-        try {
-            reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.35));   // R12 perf - 1.5 -> 1.35, ~22% fewer shaded pixels
-            renderer.outputEncoding = THREE.sRGBEncoding;
-            renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            renderer.toneMappingExposure = 1.02;
-            host.appendChild(renderer.domElement);
-
-            scene = new THREE.Scene();
-            // matched to the darkened sky mid-tones - if a refracted ray
-            // somehow still misses the sunrise plane it lands on a colour
-            // that blends in instead of a black notch
-            scene.background = new THREE.Color(0x19122e);
-            camera = new THREE.PerspectiveCamera(45, 1, 0.1, 120);
-            camera.position.set(0, 0.42, 5.4);
-            camera.lookAt(0, 0.45, 0);
-
-            var pmrem = new THREE.PMREMGenerator(renderer);
-            scene.environment = pmrem.fromEquirectangular(makeEnvTexture()).texture;
-
-            makeBlob();
-            makeSunrise();
-            makeSmoke();
-
-            // gentle fill so nothing goes pitch black off-reflection
-            scene.add(new THREE.AmbientLight(0x33224d, 0.45));
-            var rim = new THREE.DirectionalLight(0xAD89EB, 0.6);
-            rim.position.set(-3, 4, -4);
-            scene.add(rim);
-            var key = new THREE.PointLight(0xeaf2ff, 0.85, 30);
-            key.position.set(3.5, 3.2, 3.5);
-            scene.add(key);
-            var kick = new THREE.PointLight(0x4285F4, 0.7, 24);
-            kick.position.set(-3.2, -0.5, 2.8);
-            scene.add(kick);
-
-            composer = new THREE.EffectComposer(renderer);
-            composer.addPass(new THREE.RenderPass(scene, camera));
-            bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(512, 512), 0.5, 0.5, 0.8);
-            composer.addPass(bloomPass);
-
-            resize();
-            if (window.ResizeObserver) new ResizeObserver(resize).observe(host);
-            else window.addEventListener('resize', resize);
-            window.addEventListener('mousemove', onMouse, { passive: true });
-            document.addEventListener('visibilitychange', function () {
-                if (document.hidden) { if (rafId) cancelAnimationFrame(rafId); rafId = null; lastTs = 0; }
-                else if (!rafId) rafId = requestAnimationFrame(frame);
-            });
-            rafId = requestAnimationFrame(frame);
-            return true;
-        } catch (e2) {
-            try { if (renderer) { renderer.dispose(); if (renderer.domElement && renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement); } } catch (e3) {}
-            renderer = null;
-            return false;
+            host = el; css();
+            reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+            root = document.createElement('div'); root.className = 'ngs-stage'; root.setAttribute('aria-hidden', 'true');
+            host.appendChild(root);
+            targets(window.__netraState || 'boot');
+            for (var i = 0; i < KEYS.length; i++) P[KEYS[i]] = T[KEYS[i]] * (KEYS[i] === 'gain' || KEYS[i] === 'glowG' ? 0.4 : 1);   // fade in
+            O = layer('bottom:auto;right:auto', FS_ORB, ['uR', 'uA', 'uL', 'uS', 'uG', 'uP', 'uQ'], true, true);
+            measure(performance.now());
+            onVis = function () {
+                if (document.hidden) { if (raf) cancelAnimationFrame(raf); raf = 0; }
+                else if (!raf && root) { lastTs = 0; O.sig = -1; raf = requestAnimationFrame(frame); }
+            };
+            document.addEventListener('visibilitychange', onVis);
+            onResize = function () { measAt = -1e9; O.sig = -1; };
+            window.addEventListener('resize', onResize);
+            if (window.matchMedia) {
+                mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+                onMq = function () { reduced = mq.matches; O.sig = -1; };
+                if (mq.addEventListener) mq.addEventListener('change', onMq); else if (mq.addListener) mq.addListener(onMq);
+            }
+            if (!document.hidden) raf = requestAnimationFrame(frame);
+            return true;   // even with no canvas at all the stage still paints the Gemini black
+        } catch (e) {
+            return !!(root && root.parentNode);
         }
     }
 
     function unmount() {
-        if (rafId) cancelAnimationFrame(rafId);
-        rafId = null;
-        window.removeEventListener('mousemove', onMouse);
         try {
-            if (renderer) {
-                renderer.dispose();
-                if (renderer.domElement && renderer.domElement.parentNode) {
-                    renderer.domElement.parentNode.removeChild(renderer.domElement);
-                }
-            }
+            if (raf) cancelAnimationFrame(raf);
+            raf = 0;
+            if (onVis) document.removeEventListener('visibilitychange', onVis);
+            if (onResize) window.removeEventListener('resize', onResize);
+            if (mq && onMq) { if (mq.removeEventListener) mq.removeEventListener('change', onMq); else if (mq.removeListener) mq.removeListener(onMq); }
+            if (O && O.gl && O.gl.getExtension('WEBGL_lose_context')) O.gl.getExtension('WEBGL_lose_context').loseContext();
+            if (G && G.gl && G.gl.getExtension('WEBGL_lose_context')) G.gl.getExtension('WEBGL_lose_context').loseContext();
+            if (root && root.parentNode) root.parentNode.removeChild(root);
         } catch (e) {}
-        renderer = null; scene = null; composer = null;
+        root = O = G = sprites = host = null; onVis = onResize = onMq = mq = null;
+        lastTs = lastDraw = fpsEma = age = winN = slowN = tier = oR = 0; measAt = -1e9; lastSt = '';
     }
 
-    return { mount: mount, unmount: unmount };
+    function fps() { return Math.round(fpsEma); }
+
+    return { mount: mount, unmount: unmount, fps: fps };
 })();
