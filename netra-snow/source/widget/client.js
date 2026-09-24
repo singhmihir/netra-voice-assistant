@@ -337,7 +337,7 @@ api.controller = function ($scope, $timeout, $window) {
         // never talk over a question the user has not answered yet, and never
         // squeeze in while a user turn is on the wire or queued behind one
         var awaitingAnswer = _stillAwaiting();
-        if (calibBusy || awaitingAnswer || _chatInFlight || _queuedUtterance || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
+        if (calibBusy || awaitingAnswer || _chatInFlight || _queuedUtterance || !c.alert || c._hushed || c.state === 'speaking' || c.state === 'thinking') {
             if (tries < 12) $timeout(function () { _maybeAutoBrief(tries + 1); }, 12000);
             return;
         }
@@ -355,7 +355,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (!c.liveMode || !(c.data && c.data.away_pending > 0)) return;
         var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
         var awaitingAnswer = _stillAwaiting();
-        if (calibBusy || awaitingAnswer || _chatInFlight || _queuedUtterance || !c.alert || c.state === 'speaking' || c.state === 'thinking') {
+        if (calibBusy || awaitingAnswer || _chatInFlight || _queuedUtterance || !c.alert || c._hushed || c.state === 'speaking' || c.state === 'thinking') {
             if (tries < 12) $timeout(function () { _maybeAwayDebrief(tries + 1); }, 12000);
             return;
         }
@@ -377,7 +377,8 @@ api.controller = function ($scope, $timeout, $window) {
     };
     c.labCmdKey = function (ev) { if (ev && ev.keyCode === 13) c.labSendCmd(); };
 
-    // NLP dry-run: full brain round-trip, TTS muted, result panel in the Lab
+    // NLP test: a real turn (its writes happen), result panel in the Lab;
+    // speech is muted only until the reply or local answer comes back
     var _labNlpArm = false, _labNlpPrevMute = false, _labNlpSent = '';
     c.labNlpText = '';
     c.labNlp = null;   // { sent, reply, tools, ms }
@@ -560,14 +561,31 @@ api.controller = function ($scope, $timeout, $window) {
         // Ignore finals landing suspiciously fast after her own prompt -
         // those are echo tails of Netra reading the sentence herself.
         if (Date.now() - _calibListenStart < 1200) return true;
-        // R9 - voice escape hatch: "skip" / "not now" bails out instantly
-        if (/^(skip( it)?|cancel|not now|later|no thanks?)[.!,\s]*$/i.test(clean)) {
+        // R9 - voice escape hatch: "skip" / "not now" bails out instantly.
+        // "Stop listening" and friends still mean sleep (routed below).
+        var lcCal = clean.toLowerCase().replace(/[.!,?]+/g, ' ').replace(/\s+/g, ' ').trim();
+        if (/^((hey |ok |okay )?netra )?(please )?(skip|cancel|stop|not now|later|no thanks?)( (it|this|that|please|now|for now|thanks|thank you|netra|(the )?(mic )?(check|test|calibration)))*$/.test(lcCal) &&
+            (lcCal === 'stop' || !matchSleep(lcCal))) {
             c.calibSkip();
             return true;
         }
+        var score = _wordAccuracy(CALIB_SENTENCE, clean);
+        // not the sentence at all: the user moved on. End the check unscored
+        // and let this final run as the command it is.
+        var own = {}, shared = 0;
+        _normTokens(CALIB_SENTENCE).forEach(function (w) { if (w !== 'the') own[w] = 1; });
+        _normTokens(clean).forEach(function (w) { if (own[w]) { shared++; own[w] = 0; } });
+        if (score < 30 && shared < 2) {
+            _calibActive = false;
+            _calibSession++;
+            if (_calibTimer) { $timeout.cancel(_calibTimer); _calibTimer = null; }
+            c.labCalib.stage = 'skipped';
+            logEvent('lab', 'calibration ended unscored - "' + clean + '" is a command, not the read-back');
+            $scope.$applyAsync();
+            return false;
+        }
         _calibActive = false;
         if (_calibTimer) { $timeout.cancel(_calibTimer); _calibTimer = null; }
-        var score = _wordAccuracy(CALIB_SENTENCE, clean);
         c.labCalib = {
             stage: 'done', heard: clean, score: score,
             verdict: score >= 90 ? 'Excellent - crystal clear.' :
@@ -1530,27 +1548,6 @@ api.controller = function ($scope, $timeout, $window) {
         if (!s) return null;
         var lc = s.toLowerCase().trim();
 
-        // R2.2 - voice-correction: "no, I meant X" / "I said X" / "the word is X"
-        // Auto-learn an alias from the previously-heard transcript to X.
-        var corrMatch = lc.match(/^(?:no,?\s+)?(?:i\s+(?:said|meant)|the\s+word\s+is)\s+(.+)$/i);
-        if (corrMatch) {
-            var intended = corrMatch[1].trim();
-            var misheard = (c.lastHeard || '').toLowerCase().trim();
-            if (misheard && intended && misheard !== intended.toLowerCase()) {
-                c.aliases[misheard] = intended;
-                intended.toLowerCase().split(/\s+/).forEach(function (tk) {
-                    if (tk.length < 2) return;
-                    c.personalVocab[tk] = c.personalVocab[tk] || { count: 0, lastSeen: 0 };
-                    c.personalVocab[tk].count += 3;
-                    c.personalVocab[tk].lastSeen = Date.now();
-                });
-                saveTrainingData();
-                if (contRec) attachGrammar(contRec);
-                return { intent: 'correction',
-                         reply: 'Noted — I will hear "' + intended + '" from now on.' };
-            }
-        }
-
         // R18 - every shortcut below matches the WHOLE utterance. The old
         // versions matched anywhere, so "hey netra, list my tickets" got a
         // greeting, "thanks, now resolve it" got "you're welcome", "what
@@ -1561,6 +1558,39 @@ api.controller = function ($scope, $timeout, $window) {
         // confirms a ticket, so the ticket never got raised.
         var bare = lc.replace(/[!.,?]+$/g, '').replace(/^(hey |ok |okay )?netra[,!.]*\s*/, '').trim();
         var expecting = c._awaitingConfirm || /\?\s*["']?\s*$/.test(String(c.lastAnswer || ''));
+
+        // R2.2 - voice-correction: "I said X" / "I meant X" / "the word is X"
+        // learns an alias from the PREVIOUS transcript to X. While an answer
+        // is awaited, or when it starts with "no", it is that answer: the
+        // server must hear it, or the rejected read-back stays live for the
+        // next "okay".
+        var corrMatch = (expecting || /^no\b/.test(lc)) ? null
+            : String(s).trim().match(/^(?:i\s+(?:said|meant)|the\s+word\s+is)\s+(.+)$/i);
+        if (corrMatch) {
+            var intended = corrMatch[1].trim();
+            var misheard = (c.prevHeard || '').toLowerCase().trim();
+            // only a restatement of the whole last utterance is a mishearing;
+            // "I meant 14" or another ticket number is a changed request
+            var restated = !!misheard && misheard !== intended.toLowerCase() &&
+                           intended.split(/\s+/).length * 2 >= misheard.split(/\s+/).length &&
+                           !/\d/.test(normalizeNumbers(misheard + ' ' + intended));
+            var wordIs = /^the\s+word\s+is\b/.test(lc);
+            if (restated) c.aliases[misheard] = intended;
+            if (restated || wordIs) {
+                intended.toLowerCase().split(/\s+/).forEach(function (tk) {
+                    if (tk.length < 2) return;
+                    c.personalVocab[tk] = c.personalVocab[tk] || { count: 0, lastSeen: 0 };
+                    c.personalVocab[tk].count += 3;
+                    c.personalVocab[tk].lastSeen = Date.now();
+                });
+                saveTrainingData();
+                if (contRec) attachGrammar(contRec);
+            }
+            // "I said X" asks for X: run it instead of only noting it
+            if (!wordIs) return { intent: 'correction', forward: intended };
+            return { intent: 'correction',
+                     reply: 'Noted — I will listen for "' + intended + '" from now on.' };
+        }
 
         // greetings (English + Indian) - only when that is ALL they said
         if (/^(hi|hello|hey|hiya|namaste|namaskar|salaam|salam|good\s*(morning|afternoon|evening|day)|shubh\s*prabhat|shubh\s*ratri)( there)?( netra)?$/.test(lc.replace(/[!.,]+/g, '').trim())) {
@@ -1590,14 +1620,17 @@ api.controller = function ($scope, $timeout, $window) {
             var hh = t.getHours(), mm = t.getMinutes();
             var ampm = hh < 12 ? 'A M' : 'P M';
             var h12 = hh % 12; if (h12 === 0) h12 = 12;
-            return { intent: 'time', reply: 'The time is ' + h12 + ' ' + (mm < 10 ? 'oh ' + mm : mm) + ' ' + ampm + '.' };
+            var mmTxt = mm === 0 ? "o'clock" : (mm < 10 ? 'oh ' + mm : String(mm));
+            return { intent: 'time', reply: 'The time is ' + h12 + ' ' + mmTxt + ' ' + ampm + '.' };
         }
         // date
         if (/^(what(\s+is|'s)?(\s+the|\s+today'?s)?\s+date( today)?|today'?s\s+date|what day is (it|today)|aaj\s+kya\s+tareekh\s+hai|tareekh)$/.test(bare)) {
             var d = new Date();
             var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
             var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-            return { intent: 'date', reply: 'Today is ' + days[d.getDay()] + ', the ' + d.getDate() + 'th of ' + months[d.getMonth()] + '.' };
+            var dn = d.getDate();
+            var sfx = (dn % 100 >= 11 && dn % 100 <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[dn % 10] || 'th');
+            return { intent: 'date', reply: 'Today is ' + days[d.getDay()] + ', the ' + dn + sfx + ' of ' + months[d.getMonth()] + '.' };
         }
         // small talk
         if (/^(how are you( doing)?( today)?|how'?s it going|how do you do|kaise ho|kya haal( hai)?|sab theek( hai)?)$/.test(bare)) {
@@ -1631,7 +1664,7 @@ api.controller = function ($scope, $timeout, $window) {
         }
         // R2.9.1 - quiet / silence (without sleeping)
         if (/^(quiet|silence|hush|be quiet|chup|chup ho)$/i.test(bare)) {
-            return { intent: 'quiet', reply: 'Of course. I will stay silent until you speak to me again.' };
+            return { intent: 'quiet', reply: 'Of course. I will stay silent until you speak to me again - only a reminder you set will still speak up.' };
         }
         // R2.9.1 - speed up / slow down playback
         if (/^(please )?((speak|talk) (faster|quicker)|hurry up|jaldi)( please)?$/.test(bare)) {
@@ -1655,6 +1688,16 @@ api.controller = function ($scope, $timeout, $window) {
                      reply: 'Okay, I have set that last exchange aside. If I changed anything in it, that still stands - say "undo that" to reverse it. What would you like to do?' };
         }
         return null;
+    }
+
+    // "speak slower/faster" moves the same pace the setup slider sets
+    function _stepPace(up) {
+        var r = parseFloat(c.speechRate) || 1.06;
+        var next = Math.max(0.85, Math.min(1.3, Math.round((r + (up ? 0.08 : -0.08)) * 100) / 100));
+        if (next === r) return up ? 'That is already my fastest pace.' : 'That is already my slowest pace.';
+        c.speechRate = next;
+        try { localStorage.setItem('netra_speechRate', String(next)); } catch (e) {}
+        return up ? 'I will speak a bit quicker from now on.' : 'I will slow down a touch.';
     }
 
     /* ============================================================
@@ -1708,14 +1751,18 @@ api.controller = function ($scope, $timeout, $window) {
         // R5 - "vulnerable item 2345" / "vit 2345" -> VIT0002345
         out = out.replace(/\b(?:vulnerable\s+item|vulnerability\s+item|vit)\s+(\d+)\b/gi, function(_,d){return 'VIT' + d;});
 
-        // coalesce PREFIX + digits possibly separated by spaces
-        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK|VIT)\s*([\d\s]+)/g, function (_, prefix, digits) {
+        // coalesce PREFIX + digits possibly separated by spaces. The match
+        // ends on a digit so the next word keeps its space ("INC0010013 please"),
+        // and a number never takes more than 7 digits ("INC0010013 10 users").
+        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK|VIT)\s*(\d(?:\s*\d)*)/g, function (_, prefix, digits) {
             var cleaned = digits.replace(/\s+/g,'');
+            var rest = '';
+            if (cleaned.length > 7) { rest = ' ' + cleaned.substring(7); cleaned = cleaned.substring(0, 7); }
             // pad to 7 digits for ticket-like prefixes
             if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB|REQ|TASK|VIT)$/.test(prefix)) {
                 while (cleaned.length < 7) cleaned = '0' + cleaned;
             }
-            return prefix + cleaned;
+            return prefix + cleaned + rest;
         });
 
         // R5 - CVE identifiers: "CVE 2021 44228" / "cve-2021-44228" -> CVE-2021-44228
@@ -2474,12 +2521,10 @@ api.controller = function ($scope, $timeout, $window) {
             speak('Your browser does not support voice. Kindly use Chrome or Edge.');
             return;
         }
-        if (!c.data.has_api_key) {
-            setState('error');
-            logEvent('err', 'Gemini API key not configured');
-            speak('Sorry, the Gemini API key has not been configured on the server.');
-            return;
-        }
+        // no key is basic mode, not a dead end: the server still reads and
+        // lists tickets, raises one and gives the debrief, so the mic starts
+        var noKey = !c.data.has_api_key;
+        if (noKey) logEvent('warn', 'Gemini API key not configured - basic mode');
 
         unlockAudio();
         populateVoices();
@@ -2508,7 +2553,8 @@ api.controller = function ($scope, $timeout, $window) {
                 // (user preference). First-ever boot gets the long intro;
                 // later boots get a quick "mic check" pass. Say "skip" or
                 // tap Skip on the stage card to jump straight in.
-                speak(todGreet + ', ' + firstName + '. I am Netra.', function () {
+                speak(todGreet + ', ' + firstName + '. I am Netra.' +
+                      (noKey ? ' My Gemini key is not set up yet, so I am in basic mode - I can still read tickets, list your work, raise a ticket and give you the debrief.' : ''), function () {
                     _firstRunCheck();
                 });
                 // Once per session, auto-offer a daily briefing 4 seconds after greeting
@@ -3202,6 +3248,8 @@ api.controller = function ($scope, $timeout, $window) {
         // R8.1 - calibration read-back has priority over command routing
         if (_calibConsume(clean)) return;
         var lower = clean.toLowerCase();
+        c._hushed = false;   // "quiet" lasts until the user speaks again
+        c.prevHeard  = c.lastHeard;   // what "I said X" corrects
         c.lastHeard  = clean;
         c.confidence = conf ? conf.toFixed(2) : '-';
         if (typeof conf === 'number') _pushConfidence(conf);   // R1 chart
@@ -3327,14 +3375,23 @@ api.controller = function ($scope, $timeout, $window) {
             c.alert = false;
             setState('dormant');
             cue('pause');
-            speak('Going to sleep. Say "Netra" to bring me back.');
+            speak('Going to sleep. Say "Netra" to bring me back.', function () {
+                _labNlpCapture('Going to sleep.', ['local:sleep'], 0);
+            });
             return;
         }
 
         // Local intent shortcut
-        var local = matchLocal(lower);
+        var local = matchLocal(text);
         if (local) {
+            if (local.forward) {
+                logEvent('local', 'correction - running "' + local.forward + '"');
+                processCommand(local.forward, conf);
+                return;
+            }
             logEvent('local', 'intent=' + local.intent);
+            if (local.intent === 'pace') local.reply = _stepPace(/faster|quicker|hurry|jaldi/.test(lower));
+            if (local.intent === 'quiet') c._hushed = true;
             // R2.10 - intent may carry a server-side _action (e.g. rewind_mem)
             // Drop the last exchange from local geminiHistory (back to before
             // its prompt, tool calls and all) and ping the server to drop the
@@ -3355,6 +3412,7 @@ api.controller = function ($scope, $timeout, $window) {
             if (local.intent !== 'repeat') { c.lastAnswer = String(local.reply || ''); c.lastAnswerAt = Date.now(); }
             setState('speaking');
             speak(local.reply, function () {
+                _labNlpCapture(local.reply, ['local:' + local.intent], 0);
                 if (c.alert) {
                     setState('idle');
                     openConversation('after local reply');
@@ -3769,6 +3827,13 @@ api.controller = function ($scope, $timeout, $window) {
     function stopSpeaking(reason) {
         _speakSessionId++;                      // aborts pipelined sentence queue
         _turnEpoch++;                           // any in-flight reply is now stale
+        // a cut-off calibration prompt never reaches its tone (edge-live
+        // drops the done-callback): end the check, do not leave it stuck
+        if (_calibActive && c.labCalib && c.labCalib.stage === 'prompt') {
+            _calibActive = false;
+            _calibSession++;
+            c.labCalib.stage = 'skipped';
+        }
         stopFillerChain();
         // R7 - kill the live synthesis socket so streamed audio stops
         // being produced, not just played.
@@ -3909,7 +3974,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (!/\?\s*$/.test(String(replyText || '').trim())) return;
         _repromptArmed = true;
         _repromptTimer = $timeout(function () {
-            if (!_repromptArmed || !c.alert) return;
+            if (!_repromptArmed || !c.alert || c._hushed) return;
             if (_speakingNow || c.state === 'thinking' || c.state === 'speaking') return;
             _repromptArmed = false;
             var bank = _repromptPhrases();
@@ -5613,6 +5678,7 @@ api.controller = function ($scope, $timeout, $window) {
         }
         if (c.state === 'listening' || c.state === 'speaking' || c.state === 'awaiting' || c.state === 'thinking') return;
         if (!c.alert || _chatInFlight || _speakingNow) return;  // don't disturb when dormant
+        if (c._hushed && n.kind !== 'reminder') return;         // "quiet": only the user's own reminders
         seenIds[n.id] = true;
         // R4.5 - cap seenIds to last 500 keys so long-lived
         // PWA sessions don't accumulate thousands of sys_ids.
