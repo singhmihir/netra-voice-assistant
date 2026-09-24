@@ -112,6 +112,13 @@ the navigator menu).
 5. Set your Gemini key in the `x_196061_netra_v1.gemini_api_key` property
    (shipped blank on purpose) and open `/sp?id=netra_live`
 
+The `netra_live` page and the widget ship **public**: anyone with the link
+can open Netra without logging in and talk to her as Guest (reads and
+writes then run with Guest's permissions, which is to say none - tickets
+need a login). Testers on a network that blocks the browser's speech
+service get the on-device ear automatically; it downloads its model once
+from huggingface.co and its runtime from jsdelivr.net.
+
 Upgrading from v6.0: commit the v7.0 batch on top. It removes the old
 `gemini_model` pin (v7 routes across a governed chain of four models), so
 if you had pinned a model, set `x_196061_netra_v1.model_chain` instead.

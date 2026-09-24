@@ -2705,19 +2705,22 @@ api.controller = function ($scope, $timeout, $window) {
     var EAR_MODEL_GPU = 'onnx-community/whisper-base.en';    // clearer, on a GPU-capable browser
     var EAR_START_LEVEL = 18;     // meter level that opens a segment
     var EAR_STOP_LEVEL = 9;       // and below which silence is counted
-    var EAR_SILENCE_MS = 900;     // this much silence closes the segment
-    var EAR_MIN_SPEECH_MS = 350;  // shorter is a click, not a word
+    var EAR_SILENCE_MS = 650;     // this much silence closes the segment
+    var EAR_MIN_SPEECH_MS = 300;  // shorter is a click, not a word
+    var EAR_PARTIAL_MS = 1200;    // while the user still speaks, the words so far every this often
     var EAR_MAX_MS = 15000;       // a segment never runs longer
     var EAR_PREROLL_MS = 320;     // audio kept from before the meter rose
     var DEAF_LOUD_LEVEL = 22;     // speech-loud on the meter
     var DEAF_WINDOW_MS = 10000;   // judged every ten seconds
     var DEAF_LOUD_MS = 1500;      // this much speech with no words is a strike
     var EAR_HALLUCINATION_RE = /^[\s\W]*$|^\[.*\]$|^\(.*\)$|^(you|thank you|thanks|thanks for watching|bye|so|the end|okay)[.!]?$/i;
-    c.ear = { mode: 'auto', on: false, status: 'off', progress: 0, model: EAR_MODEL, device: 'wasm', error: '', heard: 0, why: '' };
-    try { c.ear.mode = localStorage.getItem('netra_ear') || 'auto'; } catch (eEM) {}
+    c.ear = { mode: 'auto', size: 'auto', on: false, status: 'off', progress: 0, model: EAR_MODEL, device: 'wasm', error: '', heard: 0, why: '', lastMs: 0 };
+    try { c.ear.mode = localStorage.getItem('netra_ear') || 'auto'; c.ear.size = localStorage.getItem('netra_ear_size') || 'auto'; } catch (eEM) {}
     if (c.ear.mode !== 'on' && c.ear.mode !== 'off') c.ear.mode = 'auto';
+    if (c.ear.size !== 'tiny' && c.ear.size !== 'base') c.ear.size = 'auto';
     var _earWorker = null, _earBusy = false, _earQueue = [], _earNativeSeen = 0, _earSaid = false;
     var _earProc = null, _earSink = null, _earRing = [], _earRingMs = 0, _earSeg = [], _earSegMs = 0, _earVoiceMs = 0, _earInSpeech = false, _earSilenceMs = 0, _earRate = 48000;
+    var _earLastPartialAt = 0, _earPartialMs = 0, _earPartialOk = true;
     var _deafStrikes = 0, _deafWinStart = 0, _deafLoudMs = 0, _deafLastFrameAt = 0, _srNoGrammar = false, _langFellBack = false;
     // the worker: transformers.js from the CDN, the model from the hub,
     // both cached by the browser after the first load
@@ -2728,22 +2731,35 @@ api.controller = function ($scope, $timeout, $window) {
         "self.onmessage = async (e) => {\n" +
         "  try {\n" +
         "    if (e.data.cmd === 'load') {\n" +
-        "      asr = await pipeline('automatic-speech-recognition', e.data.model, { dtype: e.data.device === 'webgpu' ? 'fp32' : 'q8', device: e.data.device,\n" +
+        "      const dtype = e.data.device === 'webgpu' ? { encoder_model: 'fp32', decoder_model_merged: 'q4' } : 'q8';\n" +
+        "      asr = await pipeline('automatic-speech-recognition', e.data.model, { dtype, device: e.data.device,\n" +
         "        progress_callback: (p) => { if (p.status === 'progress' && p.file && /\\.onnx$/.test(p.file)) self.postMessage({ progress: Math.round(p.progress || 0), file: p.file }); } });\n" +
-        "      self.postMessage({ loaded: true });\n" +
+        "      const w = Date.now(); await asr(new Float32Array(16000)); self.postMessage({ loaded: true, warmMs: Date.now() - w });\n" +
         "    } else if (e.data.cmd === 'run') {\n" +
         "      const t = Date.now();\n" +
         "      const r = await asr(e.data.audio);\n" +
-        "      self.postMessage({ id: e.data.id, text: String(r && r.text || ''), ms: Date.now() - t });\n" +
+        "      self.postMessage({ id: e.data.id, partial: !!e.data.partial, text: String(r && r.text || ''), ms: Date.now() - t });\n" +
         "    }\n" +
         "  } catch (err) { self.postMessage({ id: e.data && e.data.id, error: String(err && err.message || err) }); }\n" +
         "};\n";
     c.earSummary = function () {
         var e = c.ear;
         if (e.status === 'loading') return 'on-device: loading Whisper ' + e.progress + '%';
-        if (e.status === 'on') return 'on-device Whisper (' + (/base/.test(e.model) ? 'base' : 'tiny') + ', English, ' + e.device + ') - ' + e.heard + ' heard' + (e.why ? ' - ' + e.why : '');
+        if (e.status === 'on') return 'on-device Whisper (' + (/base/.test(e.model) ? 'base' : 'tiny') + ', English, ' + e.device + ') - ' + e.heard + ' heard' + (e.lastMs ? ', last ' + (e.lastMs / 1000).toFixed(1) + 's' : '') + (e.why ? ' - ' + e.why : '');
         if (e.status === 'error') return 'on-device failed: ' + e.error;
         return 'browser recognizer (' + (c.recLang || 'en-IN') + ')' + (c.hasSR ? '' : ' - none in this browser');
+    };
+    // the model size: tiny is quick anywhere, base is clearer on a GPU; a
+    // change while the ear is on reloads it
+    c.labSetEarSize = function () {
+        try { localStorage.setItem('netra_ear_size', c.ear.size); } catch (e) {}
+        logEvent('lab', 'ear model -> ' + c.ear.size);
+        if (c.ear.on || c.ear.status === 'loading') {
+            var why = c.ear.why || 'switched on in the Lab';
+            try { if (_earWorker) _earWorker.terminate(); } catch (e) {}
+            _earWorker = null; _earBusy = false; _earQueue = []; c.ear.on = false; c.ear.status = 'off';
+            _earStart(why, true);
+        }
     };
     c.labSetEar = function () {
         try { localStorage.setItem('netra_ear', c.ear.mode); } catch (e) {}
@@ -2765,7 +2781,8 @@ api.controller = function ($scope, $timeout, $window) {
         try {
             if (!_earWorker) {
                 var gpu = !!(navigator.gpu);
-                c.ear.device = gpu ? 'webgpu' : 'wasm'; c.ear.model = gpu ? EAR_MODEL_GPU : EAR_MODEL;
+                c.ear.device = gpu ? 'webgpu' : 'wasm';
+                c.ear.model = c.ear.size === 'base' ? EAR_MODEL_GPU : (c.ear.size === 'tiny' ? EAR_MODEL : (gpu ? EAR_MODEL_GPU : EAR_MODEL));
                 _earSpawn();
             } else {
                 _earReady();
@@ -2820,7 +2837,7 @@ api.controller = function ($scope, $timeout, $window) {
     function _earOnMessage(ev) {
         var d = ev.data || {};
         if (d.progress !== undefined) { c.ear.progress = d.progress; $scope.$applyAsync(); return; }
-        if (d.loaded) { _earReady(); return; }
+        if (d.loaded) { if (d.warmMs) logEvent('rec', 'on-device ear warmed up in ' + d.warmMs + ' ms'); _earReady(); return; }
         if (d.error) {
             if (c.ear.status === 'loading') return _earLoadFailed(d.error);
             logEvent('err', 'on-device ear: ' + d.error);
@@ -2830,8 +2847,17 @@ api.controller = function ($scope, $timeout, $window) {
             _earNext();
             return;
         }
+        if (d.text !== undefined && d.partial) {
+            // the words so far, while the user is still speaking: live text
+            // only, never a command; a slow device stops asking for them
+            _earBusy = false; _earPartialMs = d.ms; _earPartialOk = d.ms < 1800;
+            var ptext = String(d.text).replace(/\s+/g, ' ').trim();
+            if (_earInSpeech && !_speakingNow && !EAR_HALLUCINATION_RE.test(ptext)) { c.interim = '(on-device) ' + ptext; $scope.$applyAsync(); }
+            _earNext();
+            return;
+        }
         if (d.text !== undefined) {
-            _earBusy = false;
+            _earBusy = false; c.ear.lastMs = d.ms;
             var text = String(d.text).replace(/\s+/g, ' ').trim();
             if (EAR_HALLUCINATION_RE.test(text)) {
                 logEvent('rec.f', 'on-device: nothing said (' + JSON.stringify(text) + ', ' + d.ms + ' ms)');
@@ -2889,7 +2915,7 @@ api.controller = function ($scope, $timeout, $window) {
             _earRing.push(frame); _earRingMs += ms;
             while (_earRingMs > EAR_PREROLL_MS && _earRing.length > 1) { _earRingMs -= _earRing[0].length / rate * 1000; _earRing.shift(); }
             if (level >= EAR_START_LEVEL) {
-                _earInSpeech = true; _earSeg = _earRing.slice(); _earSegMs = _earRingMs; _earVoiceMs = 0; _earSilenceMs = 0;
+                _earInSpeech = true; _earSeg = _earRing.slice(); _earSegMs = _earRingMs; _earVoiceMs = 0; _earSilenceMs = 0; _earLastPartialAt = 0;
                 _earRing = []; _earRingMs = 0;
                 if (!_speakingNow) { c.interim = '(on-device) hearing…'; $scope.$applyAsync(); }
             }
@@ -2897,6 +2923,13 @@ api.controller = function ($scope, $timeout, $window) {
         }
         _earSeg.push(frame); _earSegMs += ms; _earVoiceMs += ms;
         if (level < EAR_STOP_LEVEL) _earSilenceMs += ms; else _earSilenceMs = 0;
+        // live words while the user still speaks, when the worker is free
+        if (_earPartialOk && !_earBusy && !_earQueue.length && _earWorker && _earSilenceMs < EAR_STOP_LEVEL && _earVoiceMs - _earLastPartialAt >= EAR_PARTIAL_MS && _earVoiceMs >= EAR_PARTIAL_MS) {
+            _earLastPartialAt = _earVoiceMs;
+            _earBusy = true;
+            var part = _earTo16k(_earSeg, rate);
+            _earWorker.postMessage({ cmd: 'run', id: Date.now(), partial: true, audio: part }, [part.buffer]);
+        }
         if (_earSilenceMs >= EAR_SILENCE_MS || _earSegMs >= EAR_MAX_MS) {
             // the voiced part is what was said after the meter rose, less the trailing silence: the pre-roll is not speech
             var seg = _earSeg, voicedMs = _earVoiceMs - _earSilenceMs;

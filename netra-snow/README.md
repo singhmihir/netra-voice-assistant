@@ -156,8 +156,11 @@ recognizer stays deaf (or the speech service is unreachable, or the browser
 has no recognizer at all) it opens its own ear: Whisper running inside the
 browser in a worker, fed straight from the mic's audio graph, no speech
 service involved. Every word it hears travels the same road a browser final
-does. The Lab's **ear** switch forces it on or off; its status row says
-which ear is listening and why. The model (about 40 MB, cached by the
+does, and the words so far show live while you are still speaking. On a
+browser with WebGPU it runs the clearer *base* model with a light decoder,
+elsewhere the quick *tiny* one; the Lab's **model** switch overrides that
+and its **ear** switch forces the ear on or off; the status row says which
+ear is listening, why, and how long the last utterance took. The model (about 40 MB, cached by the
 browser after the first load) comes from the Hugging Face hub and the
 runtime from jsDelivr, so those two hosts must be reachable once.
 

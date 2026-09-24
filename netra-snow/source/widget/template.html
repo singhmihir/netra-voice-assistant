@@ -790,6 +790,7 @@
         <div class="netra-lab-row netra-lab-selects">
           <label>ear</label>
           <select ng-model="c.ear.mode" ng-change="c.labSetEar()" ng-options="m as m for m in ['auto','on','off']" aria-label="Which ear hears you: automatic, the on-device one, or the browser only"></select>
+          <select ng-model="c.ear.size" ng-change="c.labSetEarSize()" ng-options="m as (m === 'auto' ? 'model: auto' : (m === 'tiny' ? 'model: tiny (fast)' : 'model: base (clear)')) for m in ['auto','tiny','base']" aria-label="On-device model: tiny is fastest, base is clearer"></select>
           <em class="netra-lab-ear-status">{{c.earSummary()}}</em>
         </div>
         <div class="netra-lab-heard-row" ng-repeat="h in c.heard track by $index">

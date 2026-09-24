@@ -181,4 +181,33 @@ T.test('while the ear listens the browser\'s own finals stay out; three in a row
     T.eq(queued, ['read the newest one'], 'and the healed recognizer\'s words count from then on');
 });
 
+T.test('the words so far are live text, never a command; a final records its latency; a slow device stops asking for partials', function () {
+    var cl = page(), f = cl.fn, c = cl.c, queued = [], posted = [];
+    cl.set('_enqueueFinalTranscript', function (t, conf) { queued.push(t); });
+    cl.set('applyAliases', function (t) { return t; });
+    cl.set('_earWorker', { postMessage: function (m) { posted.push(m); } });
+    cl.set('_earPartialOk', true); cl.set('_earLastPartialAt', 0);
+    c.ear.on = true; c.ear.status = 'on';
+    var rate = 48000, i;
+    for (i = 0; i < 4; i++) f._earFeed(frame(2), rate);
+    for (i = 0; i < 20; i++) f._earFeed(frame(50), rate);   // ~1.7 s of speech
+    T.eq(posted.length, 1, 'one partial run asked for while the user still speaks');
+    T.eq(posted[0].partial, true);
+    f._earOnMessage({ data: { partial: true, text: ' my tick', ms: 400 } });
+    T.match(c.interim, /^\(on-device\) my tick/, 'live words in the Lab');
+    T.eq(queued, [], 'a partial is never a command');
+    T.eq(cl.get('_earBusy'), false);
+    for (i = 0; i < 12; i++) f._earFeed(frame(2), rate);    // silence closes the segment
+    T.eq(posted.length, 2); T.ok(!posted[1].partial, 'the final run');
+    f._earOnMessage({ data: { text: ' My tickets. ', ms: 900 } });
+    T.eq(queued, ['My tickets.']);
+    T.eq(c.ear.lastMs, 900);
+    // a slow device: partials stop, finals continue
+    f._earOnMessage({ data: { partial: true, text: ' x', ms: 2500 } });
+    T.eq(cl.get('_earPartialOk'), false);
+    posted.length = 0;
+    for (i = 0; i < 20; i++) f._earFeed(frame(50), rate);
+    T.eq(posted.length, 0, 'no partial asked for on a slow device');
+});
+
 T.run(__filename);
