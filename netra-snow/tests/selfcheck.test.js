@@ -78,4 +78,18 @@ T.test('a log it cannot read is not reported as "no errors"', function () {
     T.notMatch(r.say, /no Netra errors/, 'never claims no errors when it could not look');
 });
 
+T.test('asked in conversation, the self-check is answered free - and so is the fix it suggests', function () {
+    var s = healthy();
+    g.P.STORE.x_196061_netra_v1_kb_embedding = {};
+    ['run a self check', 'health check', 'are you working properly'].forEach(function (u) {
+        var r = s.say(u);
+        T.eq(r.route_reason, 'fast_lane', u);
+        T.match(r.message, /^Self-check done/, u);
+    });
+    T.match(s.say('run a self check').message, /say "reindex my tickets"/);
+    var ri = s.say('reindex my tickets');
+    T.match(ri.message, /^Indexed \d+ more tickets?/);
+    T.eq(s.gemini.generate.length, 0, 'no generate calls for any of it');
+});
+
 T.run(__filename);

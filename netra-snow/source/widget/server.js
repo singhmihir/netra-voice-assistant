@@ -1588,8 +1588,20 @@
         return [
             // quota / health - honest, from the ledger, free
             function (lc, norm, contents) {
-                if (!/^(quota status|quota|brain status|model status|how'?s your brain|how is your brain|are you (ok|okay|alright)|are you in basic mode|how are your models|health check|what'?s your quota|how much quota( do you have)?( left)?|how much (brain|thinking|model|ai|quota|capacity)( power)?( do you have| have you got| is there)? left|how many (calls|questions|requests)( do you have| have you got)? left|(what'?s|what is) (your|the) (brain|model|ai) status|are you running low)$/.test(lc)) return null;
+                if (!/^(quota status|quota|brain status|model status|how'?s your brain|how is your brain|are you (ok|okay|alright)|are you in basic mode|how are your models|what'?s your quota|how much quota( do you have)?( left)?|how much (brain|thinking|model|ai|quota|capacity)( power)?( do you have| have you got| is there)? left|how many (calls|questions|requests)( do you have| have you got)? left|(what'?s|what is) (your|the) (brain|model|ai) status|are you running low)$/.test(lc)) return null;
                 return _flReply(_sayQuota(), contents, 'quota_status');
+            },
+            // self-check - Netra tests her own tools, free
+            function (lc, norm, contents) {
+                if (!/^((run|do) (a |your )?(self[- ]?check|self[- ]?test|health check|diagnostics?)|self[- ]?check|health check|diagnose yourself|check yourself|test yourself|are you working( properly)?|is everything (ok|okay|working)( with you)?)$/.test(lc)) return null;
+                var sc = new NetraSelfCheck(user), res = sc.run();
+                return _flReply(sc.sentence(res), contents, 'self_check', 'fast_lane', { self_check: { problems: res.problems, warnings: res.warnings, checks: res.checks } });
+            },
+            // reindex - fills the semantic memory (embedding quota, never a generate call)
+            function (lc, norm, contents) {
+                if (!/^(reindex|re-index|index)( my| the| all)?( tickets| incidents)?( please)?$/.test(lc)) return null;
+                var ri = _reindexIncidents(25);
+                return _flReply(ri.ok ? ri.message : ('I could not index right now: ' + (ri.error || 'no detail') + '.'), contents, 'reindex_incidents');
             },
             // repeat
             function (lc, norm, contents) {
@@ -3435,6 +3447,11 @@
                     } }
                 },
                 {
+                    name: 'self_check',
+                    description: 'Netra checks her own tools for real: Gemini key, her tables, cross-scope reads, the background scanner heartbeat, overdue standing orders, kill switches, quota, semantic memory coverage, recent errors. Use for "are you working properly", "run a self check", or when something she tried failed in a way that looks like her own setup. Speak the returned sentence as is.',
+                    parameters: { type: 'object', properties: {} }
+                },
+                {
                     name: 'reindex_incidents',
                     description: 'Warms the semantic index over tickets so resolution memory and triage get better. Only call when the user explicitly asks to reindex or when another intelligence tool reports many skipped_uncached tickets.',
                     parameters: { type: 'object', properties: {
@@ -4304,6 +4321,10 @@
                     return _incidentPatterns(args.days);
                 case 'reindex_incidents':
                     return _reindexIncidents(args.max);
+                case 'self_check': {
+                    var scK = new NetraSelfCheck(user), scR = scK.run();
+                    return { ok: true, final_speech: scK.sentence(scR), problems: scR.problems, warnings: scR.warnings };
+                }
                 // ------- R14 advanced layer -------
                 case 'undo_last_action':
                     return _undoLastAction();
