@@ -2120,14 +2120,21 @@ api.controller = function ($scope, $timeout, $window) {
      *  by visible text + aria-label. Refuses to click outside the SP root
      *  container so we never interact with non-ServiceNow elements.
      * ============================================================ */
-    function _findAndClickButton(labelSub) {
-        if (!labelSub) return false;
-        var sub = labelSub.toLowerCase().trim();
+    // Picks the ONE button a label means, before anything is pressed: an
+    // exact text/aria-label match wins, else a whole-word partial match; two
+    // different buttons ("Close Complete" / "Close Incomplete") are a
+    // question, never a guess. Returns { el, name, say } - say is spoken.
+    function _pickButton(labelSub) {
+        function norm(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, ''); }
+        var sub = norm(labelSub);
+        var none = { el: null, say: 'I could not find a "' + String(labelSub || '') + '" button on this page, so I pressed nothing.' };
+        if (!sub) return none;
         // Scope to the page itself, NOT including our own widget (no clicking our own dev panel)
         var scope = document.querySelector('main, .sp-page-root, body');
-        if (!scope) return false;
+        if (!scope) return none;
         var candidates = scope.querySelectorAll('button, [role="button"], a.btn, input[type="button"], input[type="submit"], [ng-click]');
-        var match = null, matchScore = 999;
+        var word = new RegExp('(^|[^a-z0-9])' + sub.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '($|[^a-z0-9])');
+        var exact = [], partial = [];
         for (var i = 0; i < candidates.length; i++) {
             var el = candidates[i];
             // Skip our own widget's buttons
@@ -2136,32 +2143,24 @@ api.controller = function ($scope, $timeout, $window) {
             var rect = el.getBoundingClientRect();
             if (rect.width < 4 || rect.height < 4) continue;
             if (el.disabled) continue;
-            var txt   = (el.textContent || '').toLowerCase().trim();
-            var aria  = (el.getAttribute('aria-label') || '').toLowerCase();
-            var title = (el.getAttribute('title') || '').toLowerCase();
-            var blob  = (txt + ' ' + aria + ' ' + title).trim();
-            if (!blob) continue;
-            if (blob.indexOf(sub) < 0) continue;
-            // Prefer shorter button text (exact match wins)
-            var score = Math.abs(txt.length - sub.length);
-            if (score < matchScore) {
-                matchScore = score;
-                match = el;
-            }
+            var txt   = norm(el.textContent || el.value);
+            var aria  = norm(el.getAttribute('aria-label'));
+            var title = norm(el.getAttribute('title'));
+            var hit = { el: el, name: String(el.textContent || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').substring(0, 40) };
+            if (txt === sub || aria === sub || title === sub) exact.push(hit);
+            else if (word.test(txt) || word.test(aria) || word.test(title)) partial.push(hit);
         }
-        if (!match) {
-            logEvent('click', 'no button found matching "' + labelSub + '"');
-            return false;
+        var hits = exact.length ? exact : partial;
+        if (!hits.length) return none;
+        // the same button twice (form header and footer) is still one button
+        var names = [];
+        for (var h = 0; h < hits.length; h++) if (names.indexOf(norm(hits[h].name)) < 0) names.push(norm(hits[h].name));
+        if (names.length > 1) {
+            var said = [];
+            for (var s = 0; s < hits.length && said.length < 3; s++) if (said.indexOf(hits[s].name) < 0) said.push(hits[s].name);
+            return { el: null, say: 'I found more than one button like "' + labelSub + '": ' + said.join(', ') + (names.length > 3 ? ' and more' : '') + '. I pressed nothing - which one?' };
         }
-        try {
-            match.click();
-            var label = (match.textContent || match.getAttribute('aria-label') || labelSub).trim().substring(0, 40);
-            logEvent('click', 'clicked: "' + label + '"');
-            return true;
-        } catch (e) {
-            logEvent('err', 'click failed: ' + e.message);
-            return false;
-        }
+        return { el: hits[0].el, name: hits[0].name, say: 'Pressing "' + hits[0].name + '".' };
     }
 
     /* ============================================================
@@ -3540,6 +3539,7 @@ api.controller = function ($scope, $timeout, $window) {
                         // this page never navigates away.
                         if (c.liveMode && (r.directives.navigate_url || r.directives.open_url || r.directives.click_button_label)) {
                             logEvent('nav', 'live stage - navigation/click directive suppressed');
+                            if (r.directives.click_button_label) r.message = String(r.message || '') + ' I can not press buttons from this page, so I pressed nothing.';
                         } else {
                         if (r.directives.navigate_url) {
                             logEvent('nav', 'navigating to ' + r.directives.navigate_url);
@@ -3570,10 +3570,15 @@ api.controller = function ($scope, $timeout, $window) {
                             }, 1500);
                         }
                         if (r.directives.click_button_label) {
-                            logEvent('click', 'clicking button: ' + r.directives.click_button_label);
-                            $timeout(function () {
-                                _findAndClickButton(r.directives.click_button_label);
-                            }, 800);
+                            // decide now, so the reply says what really happens
+                            var btnPick = _pickButton(r.directives.click_button_label);
+                            logEvent('click', btnPick.el ? 'pressing: "' + btnPick.name + '"' : btnPick.say);
+                            r.message = String(r.message || '') + ' ' + btnPick.say;
+                            if (btnPick.el) {
+                                $timeout(function () {
+                                    try { btnPick.el.click(); } catch (e) { logEvent('err', 'click failed: ' + e.message); }
+                                }, 800);
+                            }
                         }
                         }   // end live-stage nav lock
                     }

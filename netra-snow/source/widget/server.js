@@ -432,10 +432,13 @@
         if (b.plan && !b.plan.confirmed && b.plan.turn === turn) _dropPlanDraft(b);
     }
 
-    // a plan dropped before its yes gives back the plan it replaced, so that
-    // plan's undo breadcrumbs survive the "no"
+    // a plan dropped before its yes: a part-run plan whose "carry on?"
+    // read-back is dropped goes back to stopped, so its finished steps stay
+    // undoable; a new plan gives back the plan it replaced, so that plan's
+    // undo breadcrumbs survive the "no"
     function _dropPlanDraft(b) {
-        if (b.plan && b.plan.prev) b.plan = b.plan.prev;
+        if (b.plan.cursor > 0) { b.plan.confirmed = true; b.plan.halted = true; }
+        else if (b.plan.prev) b.plan = b.plan.prev;
         else delete b.plan;
     }
 
@@ -1412,6 +1415,10 @@
             return (did + 'The plan stopped at step ' + out.halted_at_step + ': ' + out.step_error + '. ' +
                     out.completed + ' of ' + out.total + ' steps are done.' + undoLine).replace(/\s{2,}/g, ' ');
         }
+        if (out.needs_confirmation && out.read_back && out.resume) {
+            _brainTurn.draftHeard = true;
+            return 'That plan stopped after ' + out.completed + ' of ' + out.total + ' steps. What is left: ' + out.read_back.join('; ') + '. Shall I carry on?';
+        }
         if (out.needs_confirmation && out.read_back) {
             _brainTurn.draftHeard = true;
             return 'That plan was read back a while ago, so here it is again: ' + out.read_back.join('; ') + '. Shall I run it?';
@@ -1646,6 +1653,13 @@
         }
         // plan filed in the previous turn
         if (b.plan && !b.plan.confirmed && !b.plan.finished && _draftFresh(b.plan)) {
+            if (yn === 'no' && b.plan.cursor > 0) {
+                // a "no" to carrying on keeps what already ran undoable
+                b.plan.halted = true; b.plan.confirmed = true;
+                _ctxWriteBlob(b);
+                return _flReply('Okay, I will not carry on - ' + b.plan.cursor + ' of ' + b.plan.steps.length + ' steps were done earlier.' +
+                                (b.plan.undo && b.plan.undo.length ? ' Say "undo the plan" to put those changes back.' : ''), contents, 'confirm_no');
+            }
             if (yn === 'no') { _dropPlanDraft(b); _ctxWriteBlob(b); return _flReply('Okay, I dropped the plan. Nothing was changed.', contents, 'confirm_no'); }
             var out = _executePlan();
             return _flReply(_sayPlanHop(out), contents, 'execute_plan', 'fast_lane', { plan: out });
@@ -3913,9 +3927,9 @@
                 },
                 {
                     name: 'click_button',
-                    description: 'Find and click a button on the currently-displayed Service Portal page by its visible label (case-insensitive substring match on the buttons text or aria-label). Use when user says "click resolve", "submit the form", "save this", "approve". Limited to buttons on the current SN tab only. Returns the buttons label on success.',
+                    description: 'Find and click a button on the currently-displayed Service Portal page by its visible label. Use when user says "click resolve", "submit the form", "save this", "approve". Limited to buttons on the current SN tab only. The page presses it only when exactly one button matches and then says what it pressed (or that it found none) - never claim it was clicked yourself.',
                     parameters: { type: 'object', properties: {
-                        label: { type: 'string', description: 'Substring of the button text/aria-label, e.g. "Resolve", "Submit", "Approve"' }
+                        label: { type: 'string', description: 'The button label exactly as the user said it, e.g. "Resolve", "Close Incomplete", "Approve"' }
                     }, required: ['label'] }
                 },
                 // ------- R2.4 - update_field + URL navigation -------
@@ -4180,7 +4194,8 @@
         var allowWrites = _ticketWritesEnabled();
         var LIVE_BLOCKED = { navigate_to_record: 1, open_url: 1, go_to_servicenow: 1, click_button: 1 };
         var vrOk = _vrAllowed(), vrMap = _vrTools();
-        if (allowWrites && !liveMode && vrOk) return all;
+        var codeOk = _codeAllowed(), codeMap = _codeTools();
+        if (allowWrites && !liveMode && vrOk && codeOk) return all;
         var createMap = _ticketCreateTools();
         var mutateMap = _ticketMutateTools();
         var kept = [];
@@ -4188,6 +4203,7 @@
         for (var d = 0; d < decls.length; d++) {
             var nm = decls[d] && decls[d].name;
             if (!vrOk && vrMap[nm]) continue;   // vulnerability data is for VR roles only
+            if (!codeOk && codeMap[nm]) continue;   // platform code is for admins only
             if (!allowWrites && (createMap[nm] || mutateMap[nm])) continue;
             if (liveMode && LIVE_BLOCKED[nm]) continue;
             kept.push(decls[d]);
@@ -4224,6 +4240,7 @@
             resolve_ticket: 1, update_ticket: 1, change_priority: 1,
             escalate_ticket: 1, assign_ticket_to_group: 1,
             assign_ticket_to_user: 1, add_work_note: 1, update_field: 1,
+            click_button: 1,   // form buttons resolve, approve and delete too
             batch_update_tickets: 1, undo_last_action: 1,   // R14
             decide_approval: 1, assign_vulnerable_item: 1, set_vulnerable_item_state: 1,
             defer_vulnerable_item: 1, add_vulnerability_note: 1
@@ -4347,6 +4364,26 @@
         }
         return { ok: false, needs_confirmation: true, final_speech: say,
                  message: 'NOT done. Text in this conversation came from other people, so the user must hear this and say yes in their next message first.' };
+    }
+    // Platform code is admin-only on the platform, but the app reads it with
+    // its own cross-scope rights: the same roles gate it here
+    function _codeTools() { return { read_script: 1, list_scripts: 1, narrate_script: 1 }; }
+    function _codeAllowed() {
+        var roles = String(gs.getProperty(SCOPE + '.code_roles', 'admin')).split(',');
+        for (var i = 0; i < roles.length; i++) {
+            var r = roles[i].replace(/^\s+|\s+$/g, '');
+            if (r && gs.hasRole(r)) return true;
+        }
+        return false;
+    }
+    function _codeRefusal() {
+        return { ok: false, error: 'Reading platform code needs the admin role, and your account does not have it - so I can not read or list scripts for you.' };
+    }
+    // literal credentials in code are masked before it is spoken or sent to Gemini
+    function _redactSecrets(s) {
+        return String(s || '')
+            .replace(/((?:password|passwd|pwd|secret|token|api[_-]?key|authorization)["']?\s*[:=,]\s*)(["'])[^"'\r\n]{3,}\2/gi, '$1$2[redacted]$2')
+            .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+\/._=-]{8,}/g, '$1 [redacted]');
     }
     function _ticketWritesEnabled() {
         // R8 default: ON. Only an explicit 'false' disables ticket writes.
@@ -8449,6 +8486,17 @@
             }
             plan.confirmed = true;
             delete plan.prev;   // its breadcrumbs are in plan.undo now
+        } else if (!plan.finished && (plan.halted || new GlideDateTime().getNumericValue() - (plan.hop_at || 0) > 5 * 60000)) {
+            // a stopped, failed or long-paused plan does not resume on its old
+            // yes: what is left is read back and needs a fresh one
+            plan.confirmed = false; plan.hops = 0;
+            plan.turn = _curTurn(); plan.at = new GlideDateTime().getNumericValue();
+            b.plan = plan;
+            _ctxWriteBlob(b);
+            if (_brainTurn.parked) _brainTurn.parked.push('plan');
+            return { ok: false, needs_confirmation: true, resume: true, completed: plan.cursor, total: plan.steps.length,
+                     read_back: plan.steps.slice(plan.cursor).map(function (s0, ix) { return (plan.cursor + ix + 1) + '. ' + _planStepText(s0); }),
+                     message: 'This plan was stopped or paused after ' + plan.cursor + ' of ' + plan.steps.length + ' steps. Read the REMAINING steps back and ask "Shall I carry on?"; call execute_plan only after their NEXT yes.' };
         }
         if (plan.hops >= 5) {
             plan.halted = true;
@@ -8649,6 +8697,16 @@
         if (!items.length) {
             return { ok: true, count: 0, message: 'No approvals pending. Nothing to triage.', triage: [] };
         }
+        // the true total, not the 15 read here
+        var total = items.length;
+        try {
+            var ga = new GlideAggregate('sysapproval_approver');
+            ga.addQuery('approver', user);
+            ga.addQuery('state', 'requested');
+            ga.addAggregate('COUNT');
+            ga.query();
+            if (ga.next()) total = Math.max(items.length, parseInt(ga.getAggregate('COUNT'), 10) || 0);
+        } catch (eA) {}
 
         var corpus = items.map(function (it, i) {
             return (i+1) + '. ' + it.source_table + ' ' + (it.ctx.number || '(no number)') +
@@ -8684,21 +8742,39 @@
             required: ['summary', 'items']
         };
 
-        var userMsg = 'My ' + items.length + ' pending approvals:\n\n' + corpus;
+        var userMsg = (total > items.length ? 'The newest ' + items.length + ' of my ' + total : 'My ' + items.length) + ' pending approvals:\n\n' + corpus;
         var resp = _reason(systemText, userMsg, schema, 1024);
 
         if (resp.error) {
             return { ok: false, error: 'Reasoning engine failed: ' + resp.error,
-                     count: items.length, triage: [] };
+                     count: total, triage: [] };
         }
         var parsed = resp.json || {};
+        // join the model's verdicts back to the real records by index, so the
+        // numbers read out are the ones that were triaged - never a guess
+        var RANK = { RISKY: 0, SCRUTINY: 1, ROUTINE: 2 }, seen = {}, out = [];
+        (parsed.items || []).forEach(function (t) {
+            var ix = parseInt(t && t.index, 10);
+            if (!(ix >= 1 && ix <= items.length) || seen[ix] || !RANK.hasOwnProperty(String(t.level))) return;
+            seen[ix] = true;
+            var it = items[ix - 1];
+            out.push({ number: it.ctx.number || '', short_description: it.ctx.short_description || '', table: it.source_table,
+                       level: String(t.level), rationale: String(t.rationale || '').substring(0, 240), approval_sys_id: it.approval_sys_id });
+        });
+        out.sort(function (a, b2) { return RANK[a.level] - RANK[b2.level]; });
+        var head = total > items.length ? 'I triaged the newest ' + items.length + ' of your ' + total + ' pending approvals.'
+                                        : 'I triaged your ' + total + ' pending approval' + (total === 1 ? '' : 's') + '.';
+        var top = out.slice(0, 2).map(function (x) {
+            return x.number + (x.short_description ? ' (' + x.short_description.substring(0, 80) + ')' : '') + ' is ' + x.level.toLowerCase() + ': ' + x.rationale.replace(/[.\s]+$/, '');
+        });
         return {
             ok: true,
             via: 'gemini-reason',
-            count: items.length,
-            summary: parsed.summary || ('You have ' + items.length + ' approvals pending.'),
-            triage: parsed.items || [],
-            message: parsed.summary || 'Triage complete.'
+            count: total,
+            triaged: items.length,
+            summary: head,
+            triage: out,
+            message: head + (top.length ? ' ' + top.join('. ') + '.' : ' I could not classify them this time.')
         };
     }
 
@@ -8712,6 +8788,11 @@
     function _narrateScript(query) {
         var src = _readScript(query);
         if (!src.ok) return src;
+        // _readScript returns the code as script_source, or a widget's excerpts
+        var code = src.script_source || [src.server_script_excerpt ? 'Server script:\n' + src.server_script_excerpt : '',
+                                         src.client_script_excerpt ? 'Client script:\n' + src.client_script_excerpt : '',
+                                         src.template_excerpt ? 'Template:\n' + src.template_excerpt : ''].filter(function (x) { return !!x; }).join('\n\n');
+        if (!String(code || '').replace(/\s+/g, '')) return { ok: false, error: 'I found ' + src.name + ' but it has no code to read.' };
         var systemText = 'You are reading ServiceNow source code aloud to a BLIND developer. ' +
                          'Produce a clear 4-6 sentence narrative that explains what this script does, ' +
                          'its inputs, its outputs, and any non-obvious behaviour. Do not narrate every ' +
@@ -8722,7 +8803,7 @@
         var userMsg = 'Table: ' + src.table + '\nName: ' + src.name +
                       '\nDescription: ' + (src.description || '(none)') +
                       '\nActive: ' + src.active +
-                      '\n\nSource code:\n' + (src.source_code || '');
+                      '\n\nSource code' + (src.truncated ? ' (NOTE: source truncated at 8000 characters - say you read only the first part)' : '') + ':\n' + code;
 
         var resp = _reasonText(systemText, userMsg, 700);
         if (resp.error) return { ok: false, error: 'Reasoning engine failed: ' + resp.error };
@@ -8746,6 +8827,11 @@
     function _buildQuery(naturalLanguage, table) {
         if (!naturalLanguage) return { ok: false, error: 'A natural-language filter is required.' };
         var tbl = String(table || 'incident').toLowerCase();
+        // the preview count ignores ACLs: ticket tables the user can read
+        // only, never an arbitrary table (checked before any quota is spent)
+        var OKT = { incident: 1, problem: 1, change_request: 1, sc_req_item: 1, sc_task: 1 };
+        if (!OKT[tbl]) return { ok: false, error: 'I can only build filters on incidents, problems, changes, requested items and catalog tasks.' };
+        if (!_ugr(tbl).canRead()) return { ok: false, error: 'You do not have access to ' + tbl.replace(/_/g, ' ') + ' records, so I can not filter them.' };
         var systemText =
             'You convert natural-language ticket-filter descriptions into ServiceNow encoded query strings ' +
             'for the table specified.\n' +
@@ -8777,18 +8863,29 @@
         var query = String((resp.json && resp.json.encoded_query) || '').trim();
         // Strip any accidental code fences
         query = query.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim().split('\n')[0].trim();
-        // R4.5 - reject prompt-injection: only allow the four documented
-        // ServiceNow encoded-query JS helpers, refuse anything else.
+        // R4.5 - reject prompt-injection: only the documented encoded-query JS
+        // helpers (the ones the prompt above teaches), each a whole condition
+        // value - anything after one up to the next ^ would run as script too.
         if (/javascript:/i.test(query)) {
-            var _allowed = /javascript:gs\.(daysAgoStart|beginningOfThisWeek|endOfYesterday|getUserID|hoursAgoStart|hoursAgoEnd)\(\)/g;
+            var _allowed = /javascript:\s*(gs\.(daysAgoStart|daysAgoEnd|hoursAgoStart|hoursAgoEnd|minutesAgoStart)\(\d{1,4}\)|gs\.(beginningOfThisWeek|endOfYesterday|beginningOfToday|endOfToday|nowDateTime|getUserID)\(\)|gs\.getUser\(\)\.getMyGroups\(\)(\.join\(","\))?|getMyGroups\(\))(?=[\^@]|$)/g;
             var _stripped = query.replace(_allowed, 'X');
             if (/javascript:/i.test(_stripped)) {
-                return { ok: false, error: 'Query contains unsupported javascript: helper. Allowed helpers: daysAgoStart, beginningOfThisWeek, endOfYesterday, getUserID, hoursAgoStart, hoursAgoEnd.' };
+                return { ok: false, error: 'Query contains an unsupported javascript: helper. Allowed, each as a whole value: gs.daysAgoStart(N), gs.daysAgoEnd(N), gs.hoursAgoStart(N), gs.hoursAgoEnd(N), gs.minutesAgoStart(N), gs.beginningOfThisWeek(), gs.endOfYesterday(), gs.beginningOfToday(), gs.endOfToday(), gs.nowDateTime(), gs.getUserID(), gs.getUser().getMyGroups().join(","). Tell the user this filter could not be built; do not retry the same helper.' };
             }
         }
 
-        if (query.indexOf('=') < 0 && query.indexOf('LIKE') < 0) {
-            return { ok: false, error: 'Model output did not look like an encoded query: ' + query.substring(0, 100) };
+        // every condition must name a real field: the platform silently drops
+        // an unknown one, and the preview would then count the whole table
+        var probe = new GlideRecord(tbl), terms = query.split('^'), conds = 0, badField = '';
+        for (var ti = 0; ti < terms.length && !badField; ti++) {
+            var term = terms[ti].replace(/^(NQ|OR)(?=[a-z])/, '').replace(/^ORDERBY(DESC)?/, '');
+            if (!term || term === 'NQ' || term === 'EQ') continue;
+            var fm = /^([a-z][a-z0-9_]*)[a-z0-9_.]*/.exec(term);
+            if (!fm || !probe.isValidField(fm[1])) badField = term.substring(0, 60);
+            else conds++;
+        }
+        if (badField || !conds) {
+            return { ok: false, error: 'That filter is not a set of conditions on real ' + tbl.replace(/_/g, ' ') + ' fields (' + (badField || query.substring(0, 60)) + '), so I did not count anything.' };
         }
 
         // Preview count so the user knows scale before drilling in
@@ -8906,75 +9003,88 @@
         }
         var table = _tableForNumber(num);
         if (!table) return { ok: false, error: 'Unrecognised ticket number: ' + num };
-        var gr = new GlideRecord(table);
-        if (!gr.get('number', num)) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
-
-        var oldValue = '';
-        try { oldValue = String(gr.getValue(fieldNorm) || ''); } catch (eOld) { oldValue = ''; }
-        // Special handling for choice fields - try human label -> value
+        var fieldSay = fieldNorm.replace(/_/g, ' ');
+        // Special handling for choice fields - try human label -> value.
+        // Urgency and impact are 1 High / 2 Medium / 3 Low; priority is 1-5.
         var newValue = value;
-        if (fieldNorm === 'urgency' || fieldNorm === 'impact' || fieldNorm === 'priority') {
-            var lc = String(value).toLowerCase().trim();
-            if (lc.indexOf('crit') === 0 || lc === 'p1')  newValue = '1';
-            else if (lc.indexOf('high') === 0 || lc === 'p2') newValue = '2';
-            else if (lc.indexOf('mod') === 0 || lc.indexOf('med') === 0 || lc === 'p3') newValue = '3';
-            else if (lc.indexOf('low') === 0 || lc === 'p4') newValue = '4';
+        var lc = String(value).toLowerCase().replace(/^\s+|\s+$/g, '').replace(/^(priority\s*|p\s*(?=\d))/, '');
+        if (fieldNorm === 'urgency' || fieldNorm === 'impact') {
+            newValue = /^(crit|high|1\b)/.test(lc) ? '1' : /^(med|mod|2\b)/.test(lc) ? '2' : /^(low|3\b)/.test(lc) ? '3' : '';
+            if (!newValue) return { ok: false, error: fieldSay + ' is high, medium or low (1 to 3) - "' + value + '" is not one of those, so I changed nothing.' };
         }
-        if (fieldNorm === 'assignment_group') {
-            // Try to resolve group by name
-            var gg = new GlideRecord('sys_user_group');
-            gg.addEncodedQuery('nameLIKE' + value);
-            gg.setLimit(1);
-            gg.query();
-            if (gg.next()) newValue = gg.getUniqueValue();
+        if (fieldNorm === 'priority') {
+            newValue = /^(crit|1\b)/.test(lc) ? '1' : /^(high|2\b)/.test(lc) ? '2' : /^(mod|med|3\b)/.test(lc) ? '3' : /^(low|4\b)/.test(lc) ? '4' : /^(plan|5\b)/.test(lc) ? '5' : '';
+            if (!newValue) return { ok: false, error: 'Priority is 1 to 5 (critical, high, moderate, low, planning) - "' + value + '" is not one of those, so I changed nothing.' };
+            // priority is usually derived from impact x urgency: the priority
+            // tool writes, reads back, falls back to the matrix and leaves undo
+            return _changePriority(num, newValue);
         }
-        if (fieldNorm === 'assigned_to') {
-            var u = new GlideRecord('sys_user');
-            u.addEncodedQuery('active=true^nameLIKE' + value + '^ORuser_nameLIKE' + value);
-            u.setLimit(1);
-            u.query();
-            if (u.next()) newValue = u.getUniqueValue();
-            else return { ok: false, error: 'No active user matching "' + value + '"' };
+        var gr = _ugr(table);
+        if (!gr.get('number', num)) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
+        if (!gr.isValidField(fieldNorm)) return { ok: false, error: num + ' has no ' + fieldSay + ' field, so I changed nothing.' };
+
+        var oldValue = '', oldDisplay = '';
+        try { oldValue = String(gr.getValue(fieldNorm) || ''); oldDisplay = String(gr.getDisplayValue(fieldNorm) || ''); } catch (eOld) { oldValue = ''; }
+        // reference fields: an exact name wins, several matches are a question
+        // - a blind user can not see which "Network..." group it landed on
+        if (fieldNorm === 'assignment_group' || fieldNorm === 'assigned_to') {
+            var pk = _pickByName(fieldNorm === 'assigned_to' ? 'sys_user' : 'sys_user_group', String(value).replace(/^\s+|\s+$/g, ''));
+            if (pk.error) return { ok: false, error: pk.error, ambiguous: !!pk.ambiguous };
+            newValue = String(pk.gr.sys_id);
         }
-        gr.setValue(fieldNorm, newValue);
-        gr.update();
-        // R17 - VERIFY AFTER WRITE. update() lies by omission: business rules
-        // and data lookups can quietly put a field back (incident priority is
-        // the poster child - its recalculated from impact x urgency, so the
-        // old code "updated" it, reported success, and nothing moved). Read
-        // it back; if the platform stomped us, either use the right lever or
-        // say so honestly. Journal fields are write-only, skip those.
-        var JOURNAL = { comments: 1, work_notes: 1 };
-        if (!JOURNAL[fieldNorm]) {
-            var chk = new GlideRecord(table);
-            chk.get(String(gr.sys_id));
-            var readBack = String(chk.getValue(fieldNorm) || '');
-            if (readBack !== String(newValue)) {
-                if (fieldNorm === 'priority') {
-                    var pr = new NetraTaskRunner().setPriority(chk, String(newValue));
-                    if (pr.ok) {
-                        return {
-                            ok: true, ticket: num, field: 'priority',
-                            old_value: oldValue.substring(0, 120), new_value: String(newValue),
-                            via: 'impact_urgency_matrix',
-                            message: 'Priority on ' + num + ' is calculated from impact and urgency here, so I set those instead - it now reads priority ' + String(newValue) + '.'
-                        };
-                    }
-                    return { ok: false, error: 'Priority on ' + num + ' is recalculated by the platform and my impact/urgency lever did not take either (' + pr.why + '). Tell the user it did not stick.' };
-                }
-                return {
-                    ok: false, wrote: String(newValue).substring(0, 120), read_back: readBack.substring(0, 120),
-                    error: 'I wrote ' + fieldNorm + ' but the platform immediately put it back to "' + readBack.substring(0, 60) + '" (probably a business rule or calculated field). It did NOT stick - say so honestly and suggest what usually controls that field.'
-                };
+        if (fieldNorm === 'cmdb_ci') {
+            // no active flag on the CMDB: exact name first, then partial
+            var ciHits = [], ciName = String(value).replace(/^\s+|\s+$/g, '');
+            var ce = _ugr('cmdb_ci');
+            ce.addQuery('name', ciName);
+            ce.setLimit(2);
+            ce.query();
+            while (ce.next()) ciHits.push({ id: String(ce.sys_id), name: String(ce.name) });
+            if (!ciHits.length) {
+                var cl = _ugr('cmdb_ci');
+                cl.addEncodedQuery('nameLIKE' + _eqv(ciName));
+                cl.orderBy('name');
+                cl.setLimit(4);
+                cl.query();
+                while (cl.next()) ciHits.push({ id: String(cl.sys_id), name: String(cl.name) });
             }
+            if (!ciHits.length) return { ok: false, error: 'No configuration item matching "' + value + '", so I changed nothing.' };
+            if (ciHits.length > 1) {
+                return { ok: false, ambiguous: true, error: '"' + value + '" matches more than one configuration item: ' +
+                         ciHits.slice(0, 3).map(function (h) { return h.name; }).join(', ') + (ciHits.length > 3 ? ' and more' : '') + ' - which one?' };
+            }
+            newValue = ciHits[0].id;
         }
+        if (!gr.canWrite() || !gr.getElement(fieldNorm).canWrite()) return _deniedWrite(gr, 'change the ' + fieldSay);
+        gr.setValue(fieldNorm, newValue);
+        if (!gr.update()) return _deniedWrite(gr, 'change the ' + fieldSay);
+        // Journal fields are write-only: nothing to read back or undo
+        var JOURNAL = { comments: 1, work_notes: 1 };
+        if (JOURNAL[fieldNorm]) {
+            return { ok: true, ticket: num, field: fieldNorm, message: 'Added the ' + (fieldNorm === 'comments' ? 'comment' : 'work note') + ' to ' + num + '.' };
+        }
+        // R17 - VERIFY AFTER WRITE. update() lies by omission: business rules
+        // and data lookups can quietly put a field back. Read it back; if the
+        // platform stomped us, say so honestly.
+        var chk = new GlideRecord(gr.getTableName());
+        chk.get(String(gr.sys_id));
+        var readBack = String(chk.getValue(fieldNorm) || '');
+        if (readBack !== String(newValue)) {
+            return {
+                ok: false, wrote: String(newValue).substring(0, 120), read_back: readBack.substring(0, 120),
+                error: 'I wrote ' + fieldNorm + ' but the platform immediately put it back to "' + readBack.substring(0, 60) + '" (probably a business rule or calculated field). It did NOT stick - say so honestly and suggest what usually controls that field.'
+            };
+        }
+        _noteUndo({ kind: 'field', number: num, table: gr.getTableName(), field: fieldNorm, old: oldValue, old_display: oldDisplay || 'empty' });
+        var newDisplay = String(chk.getDisplayValue(fieldNorm) || readBack);
         return {
             ok: true,
+            verified:   true,
             ticket:     num,
             field:      fieldNorm,
             old_value:  oldValue.substring(0, 120),
-            new_value:  String(value).substring(0, 120),
-            message:    'Updated ' + fieldNorm + ' on ' + num + ' - verified it stuck.'
+            new_value:  newDisplay.substring(0, 120),
+            message:    fieldSay.charAt(0).toUpperCase() + fieldSay.substring(1) + ' on ' + num + ' is now ' + newDisplay.substring(0, 120) + ' - I read it back.'
         };
     }
 
@@ -9010,6 +9120,7 @@
      * =================================================================== */
 
     function _readScript(query) {
+        if (!_codeAllowed()) return _codeRefusal();
         try {
             if (!query) return { ok: false, error: 'Query is required.' };
             var q = String(query || '').trim();
@@ -9034,7 +9145,7 @@
                 var t = TABLES[i];
                 var gr;
                 try {
-                    gr = new GlideRecord(t.table);
+                    gr = _ugr(t.table);
                     if (isSysId) {
                         if (gr.get(q)) return _formatScript(t, gr);
                         continue;
@@ -9045,8 +9156,8 @@
                     gr.query();
                     if (gr.next()) return _formatScript(t, gr);
                     // Try LIKE name
-                    var gr2 = new GlideRecord(t.table);
-                    gr2.addEncodedQuery(t.nameField + 'LIKE' + q);
+                    var gr2 = _ugr(t.table);
+                    gr2.addEncodedQuery(t.nameField + 'LIKE' + _eqv(q));
                     gr2.setLimit(1);
                     gr2.query();
                     if (gr2.next()) return _formatScript(t, gr2);
@@ -9057,11 +9168,11 @@
 
             // Service Portal widget by name OR id
             try {
-                var w = new GlideRecord('sp_widget');
+                var w = _ugr('sp_widget');
                 if (isSysId) {
                     if (w.get(q)) return _formatWidget(w);
                 } else {
-                    w.addEncodedQuery('nameLIKE' + q + '^ORid=' + q.toLowerCase().replace(/\s+/g, '-'));
+                    w.addEncodedQuery('nameLIKE' + _eqv(q) + '^ORid=' + _eqv(q).toLowerCase().replace(/\s+/g, '-'));
                     w.setLimit(1);
                     w.query();
                     if (w.next()) return _formatWidget(w);
@@ -9079,7 +9190,7 @@
             // Use getValue() defensively - bracket access on GlideRecord
             // can return GlideElement objects that don't coerce cleanly.
             var raw    = gr.getValue(t.scriptField);
-            var script = (raw === null || raw === undefined) ? '' : String(raw);
+            var script = (raw === null || raw === undefined) ? '' : _redactSecrets(raw);
             var truncated = false;
             if (script.length > 8000) {
                 script = script.substring(0, 8000) + '\n\n[... truncated, ' + (script.length - 8000) + ' more chars]';
@@ -9123,15 +9234,16 @@
             sys_id: w.getUniqueValue(),
             id:    String(w.id || ''),
             description: String(w.description || ''),
-            client_script_excerpt: String(w.client_script || '').substring(0, 3000),
-            server_script_excerpt: String(w.script || '').substring(0, 3000),
-            template_excerpt:      String(w.template || '').substring(0, 2000),
+            client_script_excerpt: _redactSecrets(w.getValue('client_script')).substring(0, 3000),
+            server_script_excerpt: _redactSecrets(w.getValue('script')).substring(0, 3000),
+            template_excerpt:      _redactSecrets(w.getValue('template')).substring(0, 2000),
             css_excerpt:           String(w.css || '').substring(0, 2000),
             message: 'Read Service Portal widget. Has template + client + server + css.'
         };
     }
 
     function _listScripts(table, keyword) {
+        if (!_codeAllowed()) return _codeRefusal();
         if (!table) return { ok: false, error: 'table is required (sys_script_include, sys_script, sys_ui_script, sys_script_client, sysauto_script, sys_processor, sys_ws_operation, sys_script_email, sys_ui_action, sp_widget)' };
         var TABLES = [
             { table: 'sys_script_include', nameField: 'name' },
@@ -9150,8 +9262,8 @@
             return { ok: false, error: 'Unsupported table. Use one of: ' + SCRIPT_TABLES.map(function (x) { return x.table; }).join(', ') + ', sp_widget' };
         }
         try {
-            var gr = new GlideRecord(table);
-            if (keyword) gr.addEncodedQuery((t ? t.nameField : 'name') + 'LIKE' + keyword);
+            var gr = _ugr(table);
+            if (keyword) gr.addEncodedQuery((t ? t.nameField : 'name') + 'LIKE' + _eqv(keyword));
             if (gr.isValid && !gr.isValid()) {} else {
                 if (gr.orderBy) gr.orderBy(t ? t.nameField : 'name');
             }
@@ -9180,16 +9292,20 @@
         var allowed = ['save','submit','update','resolve','close','reopen','approve','reject',
                        'cancel','back','next','order now','add to cart','request',
                        'create','delete','attach','send','post','reply','escalate'];
-        var lc = label.toLowerCase().trim();
-        var matched = allowed.find(function (a) { return lc.indexOf(a) >= 0; });
-        if (!matched) {
+        var lc = label.toLowerCase().replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        // whole words only ("Feedback" is not "back"), and never the undoing
+        // form of an allowed action ("Unresolve", "Disapprove")
+        var words = '(' + allowed.join('|') + ')';
+        if (new RegExp('(^|[^a-z])(un|dis|non|de)-?\\s?' + words + '($|[^a-z])').test(lc) ||
+            !new RegExp('(^|[^a-z])' + words + '($|[^a-z])').test(lc)) {
             return { ok: false, error: 'I am only allowed to click standard form buttons (Save, Submit, Resolve, Approve, etc). I cannot click "' + label + '".' };
         }
-        // Client side will pick up click_button_label and execute the DOM click
+        // the page gets the WHOLE label ("close incomplete", not "close"),
+        // presses only a button it can tell apart, and says what it pressed
         return {
             ok: true,
-            click_button_label: matched,
-            message: 'Clicking ' + matched + ' for you.'
+            click_button_label: lc,
+            message: 'The page will look for a "' + label + '" button, press it only if exactly one matches, and then say what it pressed. Nothing is pressed yet - do not say it was clicked.'
         };
     }
 
