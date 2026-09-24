@@ -394,14 +394,14 @@
         _brainTurn.calls = 0; _brainTurn.attempts = []; _brainTurn.skipped = 0;
         _brainTurn.mode = 'full'; _brainTurn.blobWritten = false;
         _brainTurn.parked = []; _brainTurn.draftHeard = false; _brainTurn.investigated = false; _brainTurn.noKey = false;
-        _brainTurn.prevUnheard = !!(input && input.drop_unheard);
+        _brainTurn.prevUnheard = !!(input && input.drop_unheard && !input.auto);
         var tb = null;
         // auto turns (debrief/briefing) are Netra talking, not the user
         // answering - they must not age a draft that is waiting for a yes
         try { tb = _ctxReadBlob(); if (!(input && input.auto)) tb.turn = (tb.turn || 0) + 1; } catch (eT) {}
         // the page never spoke the last reply (the user barged in): whatever it
         // parked was never heard, so it can not be confirmed by this turn
-        try { if (tb && input && input.drop_unheard) _dropDraftsOfTurn(tb, (tb.turn || 0) - 1); } catch (eD) {}
+        try { if (tb && input && input.drop_unheard && !input.auto) _dropDraftsOfTurn(tb, (tb.turn || 0) - 1); } catch (eD) {}
         var out;
         try {
             out = _chatCore(userMessage, history, liveMode, prosody);
@@ -472,7 +472,9 @@
         _ctxWriteBlob(b);
         var say = many ? 'I lined up more than one change at once, so to be safe I have not kept any of them waiting - ask me for them one at a time.'
                        : 'Nothing is waiting for a yes from that - ask me again when you want it.';
-        out.message = String(out.message || '').replace(/\s*Shall I (run it|arm it)\?/g, '') + ' ' + say;
+        // no question may stand in front of "nothing is waiting": drop every
+        // "Shall I" sentence, and the model's claim that anything is lined up
+        out.message = (String(out.message || '').replace(/[^.!?]*\b(Shall I|lined up|ready for your)\b[^.!?]*[.!?]/gi, '').replace(/^\s+|\s+$/g, '') + ' ' + say).replace(/^\s+/, '');
         var h = out.history;
         if (h && h.length && h[h.length - 1] && h[h.length - 1].role === 'model' && h[h.length - 1].parts && h[h.length - 1].parts[0]) {
             h[h.length - 1].parts[0].text = out.message;
@@ -792,7 +794,7 @@
                     }
                     var gated = (tainted || _heardFirst(fc.name, fc.args)) ? _gateModelWrite(fc.name, fc.args || {}) : null;
                     var result = gated || _runTool(fc.name, fc.args || {});
-                    if (_untrustedTools()[fc.name]) tainted = true;
+                    if (_isUntrusted(fc.name)) tainted = true;
                     // the focus follows the ticket a tool just worked on, and the
                     // prompt carries it - "it" next turn needs no recall_focus round
                     if (!gated && result && result.ok !== false && fc.args && fc.args.ticket_number && fc.name !== 'set_focus_ticket') {
@@ -1798,7 +1800,9 @@
         var b = _ctxReadBlob();
         b.flDraft = { kind: kind, args: args, turn: _curTurn(), at: new GlideDateTime().getNumericValue() };
         _ctxWriteBlob(b);
-        if (_brainTurn.parked) _brainTurn.parked.push('flDraft:' + kind);
+        // two different held writes are two drafts, not one - the second must
+        // not silently replace the first
+        if (_brainTurn.parked) _brainTurn.parked.push('flDraft:' + kind + (kind === 'model_write' ? ':' + JSON.stringify(args) : ''));
     }
 
     /**
@@ -1934,6 +1938,8 @@
                         return _flReply('My last change was ' + _spokenRefs(a.what) + ', and that can not be undone - comments, notes, messages and decisions stay once made.' +
                                         (b.plan && b.plan.undo && b.plan.undo.length ? ' To reverse the last plan, say "undo the plan".' : ''), contents, 'undo_last_action');
                     }
+                    var mv = _undoMoved(a);
+                    if (mv.length) return _flReply('Someone has changed ' + mv.join(' and ') + ' on ' + _spkNum(a.number) + ' since I set it, so I will leave it alone - their change stands.', contents, 'undo_last_action');
                     _parkDraft('undo_last', { key: _undoKey(a) });
                     return _flReply('That would ' + _undoLastSay(a) + '. Shall I?', contents, 'undo_last_draft');
                 }
@@ -1953,6 +1959,19 @@
     }
 
     // what "undo that" will do, from the breadcrumb
+    // fields someone has changed since Netra set them - undo leaves those alone
+    function _undoMoved(a) {
+        var moved = [];
+        try {
+            if (!a || !a.wrote || !a.number) return moved;
+            var t = a.table || _tableForNumber(a.number);
+            var cur = t ? new GlideRecord(t) : null;
+            if (!cur || !cur.get('number', a.number)) return moved;
+            for (var f in a.wrote) if (a.wrote.hasOwnProperty(f) && String(cur.getValue(f) || '') !== String(a.wrote[f] || '')) moved.push(f.replace(/_/g, ' '));
+        } catch (e) {}
+        return moved;
+    }
+
     // identifies one breadcrumb, so a yes can only undo the change it heard about
     function _undoKey(a) {
         return a ? [a.kind, a.number || '', a.field || '', a.at_ms || a.at || ''].join('|') : '';
@@ -2124,8 +2143,8 @@
         // can not be answering it - say what it was instead of acting
         if (yn === 'yes' && lc !== 'apply them' && _brainTurn.prevUnheard) {
             var unheard = _lastModelText(contents.slice(0, contents.length - 1)).replace(/[^.!?]*\?\s*["']?\s*$/, '').replace(/^\s+|\s+$/g, '');
-            return _flReply('Nothing has been done - that came before you heard my last answer.' + (unheard ? ' It was: ' + unheard : '') +
-                            ' Ask me again if you still want it.', contents, 'unheard_reply');
+            return _flReply('I did not act on that yes - you said it before my last answer reached you.' + (unheard ? ' My last answer was: ' + unheard : '') +
+                            ' If you were answering a question of mine, ask me again and I will read it back.', contents, 'unheard_reply');
         }
         if (yn) {
             var c = _flConfirm(yn, contents);
@@ -4473,18 +4492,31 @@
     }
     // tools whose results carry text other people wrote (callers, requesters,
     // authors, web pages, screens) - it may be written to steer the model
-    function _untrustedTools() {
-        return { summarize_ticket: 1, summarize_change: 1, read_text_attachment: 1, list_attachments: 1,
-                 search_incidents: 1, search_knowledge: 1, semantic_search_knowledge: 1, read_knowledge_article: 1,
-                 find_similar_resolved: 1, recall_past_conversations: 1, search_web: 1, investigate: 1,
-                 investigation_followup: 1, suspect_changes: 1, analyze_screenshot: 1, get_ticket_status: 1,
-                 list_tickets: 1, list_approvals: 1, triage_approvals: 1, approvals_for_record: 1 };
+    // tools whose results carry no text other people wrote: counts, the
+    // user's own settings, and Netra's own read-backs. Every other tool's
+    // result - a new tool included - is treated as possibly steering the model.
+    function _trustedTools() {
+        return { quota_status: 1, self_check: 1, recall_focus: 1, set_focus_ticket: 1, list_watchlist: 1,
+                 add_to_watchlist: 1, remove_from_watchlist: 1, list_routines: 1, define_routine: 1, delete_routine: 1,
+                 tell_joke: 1, lookup_user: 1, team_workload: 1, workload_summary: 1, list_capabilities: 1,
+                 list_reminders: 1, set_reminder: 1, cancel_reminder: 1, pause_notifications: 1, resume_notifications: 1,
+                 make_plan: 1, create_standing_order: 1, list_standing_orders: 1, cancel_standing_order: 1,
+                 start_record_draft: 1, set_record_field: 1, review_draft: 1, cancel_draft: 1, reindex_incidents: 1,
+                 remember_fact: 1, list_mandatory_fields: 1, form_buttons: 1, explain_button: 1, field_change_effects: 1 };
+    }
+    function _isUntrusted(name) {
+        if (_trustedTools()[name]) return false;
+        // a write's own result is Netra's message about what it did
+        if (_ticketCreateTools()[name] || _ticketMutateTools()[name]) return false;
+        return true;
     }
     // writes held for a heard yes once that text is in play; approvals, plans,
     // standing orders and missions already have their own read-back gates
     function _gatedWriteTools() {
         var m = { send_sidebar_message: 1, click_button: 1, open_url: 1, navigate_to_record: 1, go_to_servicenow: 1,
-                  remember_fact: 1, define_routine: 1, undo_plan: 1, undo_task_action: 1 };
+                  remember_fact: 1, define_routine: 1, undo_plan: 1, undo_task_action: 1,
+                  pause_notifications: 1, resume_notifications: 1, cancel_standing_order: 1, delete_routine: 1,
+                  set_reminder: 1, cancel_reminder: 1, cancel_draft: 1 };
         var c = _ticketCreateTools(), u = _ticketMutateTools(), k;
         for (k in c) { if (c.hasOwnProperty(k)) m[k] = 1; }
         for (k in u) { if (u.hasOwnProperty(k)) m[k] = 1; }
@@ -4492,10 +4524,9 @@
         return m;
     }
     function _contextTainted(contents) {
-        var U = _untrustedTools();
         for (var i = 0; i < (contents || []).length; i++) {
             var ps = (contents[i] && contents[i].parts) || [];
-            for (var j = 0; j < ps.length; j++) if (ps[j] && ps[j].functionResponse && U[ps[j].functionResponse.name]) return true;
+            for (var j = 0; j < ps.length; j++) if (ps[j] && ps[j].functionResponse && _isUntrusted(ps[j].functionResponse.name)) return true;
         }
         return false;
     }
@@ -4506,7 +4537,20 @@
         switch (name) {
             case 'create_problem': return 'raise a problem: ' + q(a.short_description, 80);
             case 'create_change': return 'raise a ' + String(a.change_type || 'normal') + ' change: ' + q(a.short_description, 80);
-            case 'confirm_and_create': return 'create the record from the draft we built';
+            case 'confirm_and_create': {
+                // the real payload is the stored draft: say every field of it
+                var dr = _draftRead(), parts = [];
+                for (var dk in ((dr && dr.fields) || {})) if (dr.fields.hasOwnProperty(dk)) parts.push(dk.replace(/_/g, ' ') + ' ' + q(dr.fields[dk], 80));
+                return dr ? 'create a new ' + String(dr.record_type || 'record').replace(/_/g, ' ') + (parts.length ? ' with ' + parts.join(', ') : '') : 'create the record from the draft we built';
+            }
+            case 'pause_notifications': return 'pause your spoken alerts for ' + (Number(a.hours) || 1) + ' hour' + ((Number(a.hours) || 1) === 1 ? '' : 's');
+            case 'resume_notifications': return 'turn your spoken alerts back on';
+            case 'cancel_standing_order': return 'cancel standing order ' + (parseInt(String(a.nt_number || '').replace(/\D/g, ''), 10) || a.nt_number);
+            case 'delete_routine': return 'delete your routine called ' + q(a.name, 60);
+            case 'set_reminder': return 'set a reminder: ' + q(a.text || a.message || a.reminder, 100);
+            case 'cancel_reminder': return 'cancel the reminder ' + q(a.text || a.match || a.reminder_id, 80);
+            case 'cancel_draft': return 'throw away the record draft we were building';
+            case 'mission': return String(a.action) + ' the mission' + (a.nt_number ? ' ' + a.nt_number : '');
             case 'escalate_ticket': return 'raise the priority of ' + n + ' by one';
             case 'batch_update_tickets': {
                 var nums = [], tn = a.ticket_numbers || [];
@@ -4568,6 +4612,8 @@
             if (name === 'undo_last_action') {
                 var la = _ctxReadBlob().last_action;
                 if (!la || la.kind === 'one_way' || la.kind === 'batch') return null;   // the tool says those itself
+                var mv0 = _undoMoved(la);
+                if (mv0.length) return { ok: false, changed_since: true, error: 'someone has changed ' + mv0.join(' and ') + ' on ' + la.number + ' since I set it, so I left it alone' };
                 var t0 = la.table || _tableForNumber(la.number);
                 var g0 = t0 ? _ugr(t0) : null;
                 if (!g0 || !g0.get('number', la.number)) return { ok: false, error: la.number + ' is already gone, or you can not see it.' };
@@ -4608,7 +4654,8 @@
                      final_speech: 'Before I run it, here is the plan again: ' + pl.steps.map(function (s0, ix) { return (ix + 1) + '. ' + _planStepText(s0); }).join('; ') + '. Shall I run it?',
                      message: 'NOT run. The user must hear the plan and say yes in their next message.' };
         }
-        if (!_gatedWriteTools()[name]) return null;
+        var missionCtl = name === 'mission' && /^(pause|resume|cancel)$/.test(String((args || {}).action || ''));
+        if (!_gatedWriteTools()[name] && !missionCtl) return null;
         var pre = _writePreflight(name, args);
         if (pre) return pre;
         // refusals (kill switch, no VR role) need no read-back
@@ -5819,6 +5866,17 @@
      * =================================================================== */
     function _noteUndo(entry) {
         try {
+            // what the change left behind: undo puts old values back only while
+            // the record still holds these - never over someone's later edit
+            if (!entry.wrote && entry.number && (entry.kind === 'field' || entry.kind === 'fields' || entry.kind === 'resolved')) {
+                var wt = entry.table || _tableForNumber(entry.number);
+                var fs = entry.kind === 'field' ? [entry.field] : entry.kind === 'fields' ? Object.keys(entry.fields || {}) : ['state'];
+                var cur = wt ? new GlideRecord(wt) : null;
+                if (cur && cur.get('number', entry.number)) {
+                    entry.wrote = {};
+                    for (var fi = 0; fi < fs.length; fi++) if (fs[fi] && cur.isValidField(fs[fi])) entry.wrote[fs[fi]] = String(cur.getValue(fs[fi]) || '');
+                }
+            }
             var b = _ctxReadBlob();
             entry.at = new GlideDateTime().toString();
             entry.at_ms = new GlideDateTime().getNumericValue();
@@ -6084,14 +6142,20 @@
     // the instance defines no choices for it there is nothing to check against
     function _isChoice(table, field, value) {
         try {
-            var ch = new GlideRecord('sys_choice');
-            ch.addQuery('name', 'IN', _tableChainOf(table).join(','));
-            ch.addQuery('element', field);
-            ch.addQuery('inactive', false);
-            ch.query();
-            var any = false;
-            while (ch.next()) { any = true; if (String(ch.getValue('value')) === String(value)) return true; }
-            return !any;
+            // the most specific table that defines choices for the field decides:
+            // incident's states are not task's
+            var chain = _tableChainOf(table);
+            for (var i = 0; i < chain.length; i++) {
+                var ch = new GlideRecord('sys_choice');
+                ch.addQuery('name', chain[i]);
+                ch.addQuery('element', field);
+                ch.addQuery('inactive', false);
+                ch.query();
+                var any = false;
+                while (ch.next()) { any = true; if (String(ch.getValue('value')) === String(value)) return true; }
+                if (any) return false;
+            }
+            return true;
         } catch (e) { return true; }
     }
 
@@ -6123,12 +6187,17 @@
             // state codes differ per table: incident 6 is not a change state
             if (state && !_isChoice(gr.getTableName(), 'state', String(state))) { failed.push({ number: num, why: 'state ' + state + ' does not exist on a ' + gr.getTableName().replace(/_/g, ' ') }); continue; }
             try {
+                var since = new GlideDateTime().getNumericValue() - 2000;
                 if (comment)  gr.comments = '[Netra batch] ' + comment;
                 if (state)    gr.setValue('state', String(state));
                 if (!gr.update()) { failed.push({ number: num, why: 'the platform refused the change' }); continue; }
-                // priority goes the same way as change_priority (impact x urgency)
+                if (comment && !_journalLanded(gr.sys_id, 'comments', '[Netra batch] ' + comment, since)) { failed.push({ number: num, why: 'the comment is not on it when I read it back' }); continue; }
+                // priority goes the same way as change_priority (impact x urgency),
+                // on a fresh record so the comment is not posted a second time
                 if (priority) {
-                    var pr = new NetraTaskRunner().setPriority(gr, String(priority));
+                    var pgr = _ugr(gr.getTableName());
+                    pgr.get(String(gr.sys_id));
+                    var pr = new NetraTaskRunner().setPriority(pgr, String(priority));
                     if (!pr.ok) { failed.push({ number: num, why: 'priority did not change - ' + pr.why }); continue; }
                 }
                 var ck = new GlideRecord(gr.getTableName());

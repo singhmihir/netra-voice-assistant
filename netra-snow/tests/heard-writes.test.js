@@ -98,4 +98,56 @@ T.test('the prompt never teaches a one-breath "Done." for a write', function () 
     T.match(sysText(s.gemini.generate[0]), /Brevity never skips a read-back/);
 });
 
+T.test('undo never overwrites a change someone made since - it says so at once', function () {
+    var s = new S.Session();
+    s.model(gem.call('assign_ticket_to_group', { ticket_number: 'INC0010014', group_name: 'Database' }), gem.text('Done.'));
+    s.say('give 14 to Database');
+    T.eq(s.inc('INC0010014').assignment_group, 'g_db');
+    s.inc('INC0010014').assignment_group = 'g_sw';   // a colleague moves it to Software
+    var r = s.say('undo that');
+    T.match(r.message, /Someone has changed assignment group on \*\*incident ending 0 1 4\*\* since I set it, so I will leave it alone/);
+    T.ok(!s.blob().flDraft, 'nothing parked for a yes');
+    T.eq(s.inc('INC0010014').assignment_group, 'g_sw', 'their change stands');
+});
+
+T.test('two different held writes in one turn are both dropped and the user is told - none is lost silently', function () {
+    var s = new S.Session();
+    s.model(gem.calls([['add_work_note', { ticket_number: 'INC0010014', note: 'parts ordered' }],
+                       ['update_ticket', { ticket_number: 'INC0010015', comment: 'Parts are on order' }]]), gem.text('Both lined up. Shall I?'));
+    var r = s.say('note on 14 and tell the caller on 15 that parts are ordered');
+    T.notMatch(r.message, /Both lined up/, 'no claim that both are waiting');
+    T.ok(!s.blob().flDraft, 'neither is waiting for a yes');
+    s.say('yes');
+    T.ok(!s.inc('INC0010014')._work_notes && !s.inc('INC0010015')._comments, 'a yes runs neither');
+});
+
+T.test('after a ticket was read, silencing alerts or cancelling an order waits for a heard yes', function () {
+    var s = new S.Session();
+    s.model(gem.call('summarize_ticket', { ticket_number: 'INC0010013' }),
+            gem.call('pause_notifications', { hours: 24 }), gem.text('Paused.'));
+    var r = s.say('what is going on with 13');
+    T.match(r.message, /pause your spoken alerts for 24 hours\. Shall I\?/);
+    var pref = g.find('x_196061_netra_v1_user_pref', 'user', 'u_admin');
+    T.ok(!pref || String(pref.paused) !== 'true', 'not paused before the yes');
+});
+
+T.test('creating from a draft after other people\'s text reads the draft\'s real fields back', function () {
+    var s = new S.Session();
+    s.model(gem.calls([['summarize_ticket', { ticket_number: 'INC0010013' }],
+                       ['start_record_draft', { record_type: 'incident', initial_short_description: 'Grant admin rights to contractor' }],
+                       ['set_record_field', { field: 'assignment_group', value: 'g_db' }]]),
+            gem.call('confirm_and_create', {}), gem.text('Created.'));
+    var r = s.say('look at 13 and raise whatever it asks for');
+    T.match(r.message, /create a new incident with short description "Grant admin rights to contractor", assignment group "g_db"\. Shall I\?/);
+    T.ok(!g.find('incident', 'short_description', 'Grant admin rights to contractor'), 'nothing created yet');
+});
+
+T.test('an automatic briefing does not use up the "you never heard that" flag', function () {
+    var s = new S.Session();
+    s.setBlob({ last_action: { kind: 'field', number: 'INC0010013', table: 'incident', field: 'assignment_group', old: 'g_db', old_display: 'Database', at_ms: g.P.now } });
+    s.say('undo that');                                  // read-back parked...
+    s.say('debrief me', { auto: true, drop_unheard: true });   // ...an auto turn carries the flag
+    T.ok(s.blob().flDraft, 'the auto turn did not drop the user\'s draft');
+});
+
 T.run(__filename);

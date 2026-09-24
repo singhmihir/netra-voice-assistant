@@ -43,7 +43,9 @@ NetraIntent.prototype = {
             return this._intent('partial_resolve', { reprompt: true }, raw);
         }
         if (pendingContext === 'confirm_destructive') {
-            if (/^(yes|yeah|yep|confirm|do it|go ahead|proceed)/.test(t)) return this._intent('confirm_yes', {}, raw);
+            // the whole answer must be a yes: "yeah no", "do it later" and
+            // "yesterday" are not
+            if (/^(yes|yeah|yep|yup|sure|ok|okay|confirm|confirmed|do it|go ahead|proceed)( please| do it| go ahead| please do)?[.!]?$/.test(t)) return this._intent('confirm_yes', {}, raw);
             return this._intent('confirm_no', {}, raw);
         }
         if (pendingContext === 'chat_reply_body') {

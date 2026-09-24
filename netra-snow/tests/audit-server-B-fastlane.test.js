@@ -37,11 +37,11 @@ T.test('undo refuses when someone changed the field after Netra did', function (
     s.say('assign INC0010014 to Database');
     s.inc('INC0010014').assignment_group = 'g_sw';          // a human re-routed it
     var r = s.say('undo that');
-    T.match(r.message, /That would put assignment group on \*\*incident ending 0 1 4\*\* back to Network\. Shall I\?/);
-    var y = s.say('yes');
-    T.match(y.message, /someone has changed assignment group on INC0010014 since I set it/i);
+    // said at once - no read-back and yes for an undo that can not happen
+    T.match(r.message, /someone has changed assignment group on \*\*incident ending 0 1 4\*\* since I set it/i);
+    T.ok(!s.blob().flDraft, 'nothing parked');
+    s.say('yes');
     T.eq(s.inc('INC0010014').assignment_group, 'g_sw', 'the human edit stands');
-    T.ok(!s.blob().last_action, 'the dead breadcrumb is not offered again');
 });
 
 T.test('an old breadcrumb is read back with its age, never as "just created"', function () {

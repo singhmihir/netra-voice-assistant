@@ -45,7 +45,7 @@ T.test('a bare yes to a read-back the page never spoke is not a yes - it hears w
     s.say('undo that');                                   // reply lands stale: never spoken
     var r = s.say('yes', { drop_unheard: true });
     T.eq(s.gemini.generate.length, 0, 'answered for free');
-    T.match(r.message, /^Nothing has been done - that came before you heard my last answer\. It was: That would put assignment group on \*\*incident ending 0 1 3\*\* back to Network\. Ask me again/);
+    T.match(r.message, /^I did not act on that yes - you said it before my last answer reached you\. My last answer was: That would put assignment group on \*\*incident ending 0 1 3\*\* back to Network\. If you were answering a question of mine, ask me again/);
     T.eq(s.inc('INC0010013').assignment_group, 'g_db', 'nothing undone');
     s.say('yes');
     T.eq(s.inc('INC0010013').assignment_group, 'g_db', 'the dropped draft can not be revived by a later yes');
@@ -222,7 +222,7 @@ T.test('page: rewind and trims land on a prompt, and the rewind says what still 
 T.test('the brain stopping mid-turn still reports writes that came after many lookups', function () {
     var s = new S.Session();
     s.model(gem.calls([['lookup_user', { query: 'beth' }], ['lookup_user', { query: 'bert' }], ['team_workload', {}],
-                       ['lookup_user', { query: 'admin' }], ['sla_radar', {}]]),
+                       ['lookup_user', { query: 'admin' }], ['workload_summary', {}]]),
             gem.calls([['assign_ticket_to_group', { ticket_number: 'INC0010015', group_name: 'Database' }],
                        ['change_priority', { ticket_number: 'INC0010016', priority: '4' }]]),
             gem.quota429('day'), gem.quota429('day'), gem.quota429('day'), gem.quota429('day'));
