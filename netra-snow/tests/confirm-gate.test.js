@@ -16,7 +16,7 @@ function withLastAction(s) {
 T.test('read-back then yes runs it, and says what it did', function () {
     var s = new S.Session(); withLastAction(s);
     var r1 = s.say('undo that');
-    T.match(r1.message, /That would put priority back on \*\*incident ending 0 1 3\*\*\. Shall I\?/);
+    T.match(r1.message, /That would put priority on \*\*incident ending 0 1 3\*\* back to priority 3\. Shall I\?/);
     T.eq(s.inc('INC0010013').priority, '1', 'nothing changes before the yes');
     var r2 = s.say('yes');
     T.eq(r2.route_reason, 'fast_lane');

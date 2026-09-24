@@ -97,7 +97,7 @@ T.test('"undo that" after update_field reverses that field, not an older action'
     s.say('change the urgency of INC0010014 to high');
     T.eq(s.inc('INC0010014').urgency, '1');
     var rb = s.say('undo that');
-    T.match(rb.message, /put urgency back on \*\*incident ending 0 1 4\*\*/);
+    T.match(rb.message, /put urgency on \*\*incident ending 0 1 4\*\* back to 2 - Medium/);
     T.match(s.say('yes').message, /Undone/);
     T.eq(s.inc('INC0010014').urgency, '2', 'urgency restored');
     T.eq(s.inc('INC0010013').state, '2', 'the older ticket was not touched');
@@ -107,8 +107,8 @@ T.test('update_field journal writes: "added", never "verified", and a refused no
     var s = new S.Session();
     var r = fns()._updateField('INC0010013', 'work notes', 'checked the VPN logs');
     T.ok(r.ok, JSON.stringify(r));
-    T.match(r.message, /Added the work note to INC0010013/);
-    T.notMatch(r.message, /verified|read it back/);
+    // journal entries are read back from the journal before "added" is said
+    T.match(r.message, /Added the work note to INC0010013 - I read it back/);
     T.eq(s.inc('INC0010013')._work_notes, ['checked the VPN logs']);
     g.P.ACL = function (table, op) { return !(table === 'incident' && op === 'write'); };
     var denied = fns()._updateField('INC0010014', 'comments', 'hello');

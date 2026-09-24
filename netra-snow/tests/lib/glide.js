@@ -321,14 +321,15 @@ function GlideRecord(table) {
             if (self.rec.work_notes) { self.rec._work_notes = [self.rec.work_notes]; self.rec.work_notes = ''; }
             if (self.rec.comments) { self.rec._comments = [self.rec.comments]; self.rec.comments = ''; }
             if (!self.rec.sys_class_name) self.rec.sys_class_name = table;
-            // task tables number their records, like the platform
-            var PFX = { incident: 'INC', change_request: 'CHG', problem: 'PRB', sc_task: 'SCTASK', sc_req_item: 'RITM', sc_request: 'REQ' };
-            if (!self.rec.number && PFX[table]) self.rec.number = PFX[table] + String(10100 + (++P.guid)).padStart(7, '0');
             P.STORE[table] = P.STORE[table] || {};
             P.STORE[table][sid] = JSON.parse(JSON.stringify(self.rec));
             self.recTable = table;
             self.base = JSON.parse(JSON.stringify(self.rec));
             if (GlideRecord.onInsert[table]) GlideRecord.onInsert[table](P.STORE[table][sid]);
+            // task tables number their records, like the platform
+            var PFX = { incident: 'INC', change_request: 'CHG', problem: 'PRB', sc_task: 'SCTASK', sc_req_item: 'RITM', sc_request: 'REQ' };
+            if (!P.STORE[table][sid].number && PFX[table]) P.STORE[table][sid].number = PFX[table] + String(10100 + (++P.guid)).padStart(7, '0');
+            if (P.STORE[table][sid].number) self.rec.number = P.STORE[table][sid].number;
             return sid;
         },
         update: function () {

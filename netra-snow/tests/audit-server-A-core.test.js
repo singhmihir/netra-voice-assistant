@@ -45,7 +45,7 @@ T.test('a bare yes to a read-back the page never spoke is not a yes - it hears w
     s.say('undo that');                                   // reply lands stale: never spoken
     var r = s.say('yes', { drop_unheard: true });
     T.eq(s.gemini.generate.length, 0, 'answered for free');
-    T.match(r.message, /^Nothing has been done - that came before you heard my last answer\. It was: That would put assignment group back on \*\*incident ending 0 1 3\*\*\. Ask me again/);
+    T.match(r.message, /^Nothing has been done - that came before you heard my last answer\. It was: That would put assignment group on \*\*incident ending 0 1 3\*\* back to Network\. Ask me again/);
     T.eq(s.inc('INC0010013').assignment_group, 'g_db', 'nothing undone');
     s.say('yes');
     T.eq(s.inc('INC0010013').assignment_group, 'g_db', 'the dropped draft can not be revived by a later yes');
@@ -57,7 +57,7 @@ T.test('a longer yes to an unheard read-back reaches the model, but its write wa
     s.model(gem.call('undo_last_action', {}), gem.text('Undone.'));
     var r = s.say('yes go ahead and undo it now', { drop_unheard: true });
     T.eq(s.inc('INC0010013').assignment_group, 'g_db', 'not undone on an answer to an unheard question');
-    T.match(r.message, /That would put assignment group back on \*\*incident ending 0 1 3\*\*\. Shall I\?$/);
+    T.match(r.message, /That would put assignment group on \*\*incident ending 0 1 3\*\* back to Network\. Shall I\?$/);
     T.match(s.say('yes').message, /Undone/);
     T.eq(s.inc('INC0010013').assignment_group, 'g_net');
 });
@@ -230,7 +230,7 @@ T.test('the brain stopping mid-turn still reports writes that came after many lo
     T.eq(s.inc('INC0010016')._work_notes, ['[Netra] parts ordered'], 'the second note really happened');
     T.match(r.message, /Internal note added to \*\*incident ending 0 1 5\*\*/);
     T.match(r.message, /Internal note added to \*\*incident ending 0 1 6\*\*/);
-    T.match(r.message, /and 1 more lookup/);
+    T.match(r.message, /I also did 1 more lookup\./);
     T.match(r.message, /Those changes are already made/);
     T.notMatch(r.message, /Ask me again/, 'a retry would repeat the notes');
 });

@@ -44,6 +44,7 @@ node:
 | `engines.test.js` | quota governor, missions and semantic-search harnesses |
 | `audit-server-A-core.test.js` | a yes said before a reply was heard confirms nothing; model replies end on the draft's own read-back; writes asked for after reading other people's text wait for a heard yes; notifications are delivered only once spoken; history cuts keep tool calls with their responses; partial answers name every write; the digest keeps the oldest prompts; the voice tag does not pick the model |
 | `audit-server-H-learning-misc.test.js` | update_field writes the group, person or CI the user meant, on the right urgency/priority scale, and leaves an undo; a button is pressed only when it can be told apart; script narration reads the real code, admins only; approval triage names real records with true totals; build_query accepts the helpers it teaches, on ticket tables only; a stopped plan needs a fresh yes |
+| `audit-server-B-fastlane.test.js` | undo reaches only the latest write, says its age and never clobbers a later edit; the debrief speaks every report; spoken numbers parse exactly; investigations respect ACLs; partial answers name every write; board, "pardon" and "read the rest" keep a yes answerable; true timing facts |
 
 CI runs the suite on every push and pull request that touches `netra-snow/`
 (`.github/workflows/netra-tests.yml`).
