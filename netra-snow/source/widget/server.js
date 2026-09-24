@@ -9269,7 +9269,8 @@
         if (!num) return { ok: false, error: 'Ticket number is required.' };
         var table = _tableForNumber(num);
         if (!table) return { ok: false, error: 'Unrecognised number: ' + num };
-        var gr = new GlideRecord(table);
+        // only a record the user could open; its description is read out
+        var gr = _ugr(table);
         if (!gr.get('number', num)) return { ok: false, error: 'Ticket ' + num + ' was not found, or you can not see it.' };
 
         // Map table -> SP page id (the Now portal default ticket page)
