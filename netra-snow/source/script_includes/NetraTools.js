@@ -162,7 +162,7 @@ NetraTools.prototype = {
         if (!gr) return { ok: false, error: 'Ticket ' + number + ' not found.' };
         var shaped = this._shape(gr);
         shaped.description = String(gr.description || '');
-        shaped.recent_comments = this._recentJournal(String(gr.sys_id), 5);
+        shaped.recent_comments = this._recentJournal(gr, 5);
         return { ok: true, ticket: shaped };
     },
 
@@ -369,10 +369,15 @@ NetraTools.prototype = {
         return this._findByNumber(number);
     },
 
-    _recentJournal: function (sysId, limit) {
+    // only the journals the user may read: a caller never hears work notes
+    _recentJournal: function (gr, limit) {
+        var els = [];
+        if (!gr.isValidField('comments') || gr.comments.canRead()) els.push('comments');
+        if (gr.isValidField('work_notes') && gr.work_notes.canRead()) els.push('work_notes');
+        if (!els.length) return [];
         var j = new GlideRecord('sys_journal_field');
-        j.addQuery('element_id', sysId);
-        j.addQuery('element', 'IN', 'comments,work_notes');
+        j.addQuery('element_id', String(gr.sys_id));
+        j.addQuery('element', 'IN', els.join(','));
         j.orderByDesc('sys_created_on');
         j.setLimit(limit || 5);
         j.query();
