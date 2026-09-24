@@ -1578,8 +1578,10 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function matchExplicitWakeUp(s) {
         if (!s) return false;
+        // "wake up" is explicit whatever the recognizer made of her name in
+        // front of it ("row wake up", "nada wake up"): one word, any word
         return matchesWake(s, true) !== null ||
-            /^((hey |ok |okay )?netra[,!.\s]*)?(wake\s*up|are\s+you\s+there|come\s+back)([,\s]+netra)?[.!?\s]*$/i.test(String(s).trim());
+            /^((hey |ok |okay )?[a-z']+[,!.\s]+)?(wake\s*up|are\s+you\s+there|come\s+back)([,\s]+[a-z']+)?[.!?\s]*$/i.test(String(s).trim());
     }
 
     /* ============================================================

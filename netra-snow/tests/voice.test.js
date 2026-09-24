@@ -328,6 +328,9 @@ T.test('"Nada" and "Nadra" are names: they strip a leading name while awake but 
     T.eq(f.matchesWake('Nada, can you send me the report', true), null, 'asleep: a colleague called Nada');
     T.eq(f.matchesWake('nada más, gracias', true), null);
     T.eq(f.matchesWake('netra, what time is it', true), 'what time is it', 'asleep: her real name still wakes her');
+    // "wake up" is explicit whatever the recognizer made of her name in front of it
+    ['wake up', 'netra wake up', 'nada wake up', 'row wake up', 'hey nadra, wake up'].forEach(function (u) { T.eq(f.matchExplicitWakeUp(u), true, u); });
+    ['the server must wake up', 'wake up the scanner', 'nada, can you send me the report'].forEach(function (u) { T.eq(f.matchExplicitWakeUp(u), false, u); });
 });
 
 T.run(__filename);
