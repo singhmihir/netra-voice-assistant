@@ -108,4 +108,17 @@ T.test('batch update refuses a state code the table does not have', function () 
     T.eq(s.inc('INC0010013').state, '6');
 });
 
+T.test('undoing a plan: the user\'s permissions, each table\'s own cancel state, read back', function () {
+    var s = new S.Session();
+    g.put('change_request', { sys_id: 'chg7', number: 'CHG0030007', state: '-5', active: 'true', short_description: 'c' });
+    s.setBlob({ plan: { id: 'P9', steps: [], cursor: 2, confirmed: true, finished: true, results: [],
+                        undo: [{ kind: 'created', number: 'CHG0030007' },
+                               { kind: 'fields', table: 'incident', sys_id: 'inc13', number: 'INC0010013', before: { assignment_group: 'g_db' }, after: { assignment_group: 'g_net' } }] } });
+    g.P.ACL = function (table, op, rec) { return !(table === 'incident' && op === 'write'); };
+    var r = fns()._undoPlan();
+    T.eq(g.find('change_request', 'number', 'CHG0030007').state, '4', 'a change is cancelled with state 4');
+    T.eq(s.inc('INC0010013').assignment_group, 'g_net', 'no write the user could not make');
+    T.match(JSON.stringify(r), /you do not have permission to change INC0010013/);
+});
+
 T.run(__filename);

@@ -7446,7 +7446,7 @@
         var qVec = qRes.values;
 
         var cacheMap = _loadIncidentVectors(table);
-        var gr = new GlideRecord(table);
+        var gr = _ugr(table);
         if (opts.resolved) {
             // resolved or closed, and only the ones that actually say how
             gr.addEncodedQuery('state IN 6,7');
@@ -7655,7 +7655,7 @@
     // several tickets about one thing in a short window = an outage
     function _majorIncidentRadar(hours) {
         var win = Math.min(24, Math.max(1, parseInt(hours, 10) || 4));
-        var gr = new GlideRecord('incident');
+        var gr = _ugr('incident');
         gr.addActiveQuery();
         gr.addEncodedQuery('sys_created_on>=javascript:gs.hoursAgoStart(' + win + ')');
         gr.orderByDesc('sys_created_on');
@@ -7707,7 +7707,7 @@
     function _incidentPatterns(days) {
         var d = Math.min(90, Math.max(1, parseInt(days, 10) || 7));
         function bucket(fromDaysAgo, toDaysAgo) {
-            var gr = new GlideRecord('incident');
+            var gr = _ugr('incident');
             var q = 'sys_created_on>=javascript:gs.daysAgoStart(' + fromDaysAgo + ')';
             if (toDaysAgo !== null) q += '^sys_created_on<javascript:gs.daysAgoStart(' + toDaysAgo + ')';
             gr.addEncodedQuery(q);
@@ -8550,6 +8550,7 @@
         var b = _ctxReadBlob();
         var plan = b.plan;
         if (!plan || !plan.undo || !plan.undo.length) return { ok: false, error: 'No plan actions on record to undo.' };
+        if (!_ticketWritesEnabled()) return { ok: false, error: 'Ticket writes are switched off by the administrator, so I changed nothing.' };
         var restored = [], problems = [];
         for (var i = plan.undo.length - 1; i >= 0; i--) {
             var u = plan.undo[i];
@@ -8557,8 +8558,10 @@
                 if (u.kind === 'field' || u.kind === 'fields') {
                     var before = u.kind === 'fields' ? u.before : {};
                     if (u.kind === 'field') before[u.field] = u.before;
-                    var gr = new GlideRecord(u.table);
-                    if (!gr.get(u.sys_id)) { problems.push(u.number + ' is gone'); continue; }
+                    // the user's own permissions, like every other write
+                    var gr = _ugr(u.table);
+                    if (!gr.get(u.sys_id)) { problems.push(u.number + ' is gone, or you can not see it'); continue; }
+                    if (!gr.canWrite()) { problems.push('you do not have permission to change ' + u.number); continue; }
                     // never put back over a change made after the plan's step
                     var moved = [], movedAny = false;
                     for (var ak in (u.after || {})) {
@@ -8575,7 +8578,7 @@
                         if (!(before.hasOwnProperty('priority') && (fk === 'impact' || fk === 'urgency'))) names.push(fk.replace(/_/g, ' '));
                     }
                     gr.work_notes = 'Plan step undone via Netra: ' + names.join(', ') + ' restored.';
-                    gr.update();
+                    if (!gr.update()) { problems.push('the platform refused to restore ' + u.number); continue; }
                     // read it back - a business rule can quietly refuse the restore
                     var rb = new GlideRecord(u.table), same = rb.get(u.sys_id);
                     for (var fk2 in before) { if (before.hasOwnProperty(fk2) && same && fk2 !== 'priority' && String(rb.getValue(fk2) || '') !== String(before[fk2])) same = false; }
@@ -8584,13 +8587,18 @@
                     else problems.push(names.join(' and ') + ' on ' + u.number + ' did not stick');
                 } else if (u.kind === 'created') {
                     var tb2 = _tableForNumber(u.number);
-                    var gr2 = new GlideRecord(tb2);
-                    if (gr2.get('number', u.number)) {
-                        if (gr2.isValidField('state')) gr2.state = 8;   // canceled where the table has it
-                        gr2.work_notes = 'Created by a Netra plan, cancelled on user request.';
-                        gr2.update();
-                        restored.push(u.number + ' cancelled');
-                    }
+                    // each table has its own cancelled state; read it back
+                    var CANCEL2 = { incident: '8', change_request: '4', sc_task: '4', sc_req_item: '4', sc_request: '4' };
+                    var gr2 = tb2 ? _ugr(tb2) : null;
+                    if (!gr2 || !gr2.get('number', u.number)) { problems.push(u.number + ' is gone, or you can not see it'); continue; }
+                    if (!CANCEL2[tb2]) { problems.push(u.number + ' has no cancelled state I can set, so it is still open'); continue; }
+                    if (!gr2.canWrite()) { problems.push('you do not have permission to cancel ' + u.number); continue; }
+                    gr2.setValue('state', CANCEL2[tb2]);
+                    gr2.work_notes = 'Created by a Netra plan, cancelled on user request.';
+                    gr2.update();
+                    var ck2 = new GlideRecord(tb2);
+                    if (ck2.get('number', u.number) && String(ck2.getValue('state')) === CANCEL2[tb2]) restored.push(u.number + ' cancelled');
+                    else problems.push('cancelling ' + u.number + ' did not stick - it is still open');
                 }
             } catch (eUndo) { problems.push(u.number || u.field); }
         }
