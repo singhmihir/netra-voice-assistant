@@ -783,6 +783,8 @@
           <span class="netra-lab-chip" ng-class="{'ok': c.interim, 'bad': !c.recRunning}">{{c.interim ? 'hearing…' : (c.recRunning ? 'listening' : 'mic off')}}</span>
           <span class="netra-lab-chip bad" ng-show="c.micHealth.speechService === 'unreachable'">speech service unreachable</span>
           <span class="netra-lab-chip ok" ng-show="c.ear.on">on-device ear</span>
+          <span class="netra-lab-chip" ng-show="c.ear.status === 'standby'">ear in standby</span>
+          <span class="netra-lab-chip bad" ng-show="!c.ready">{{c.readyText}}</span>
           <span class="netra-lab-chip" ng-show="c.ear.status === 'loading'">loading ear {{c.ear.progress}}%</span>
           <span class="netra-lab-chip bad" ng-show="c.micHealth.deafStrikes && !c.ear.on">sound without words ×{{c.micHealth.deafStrikes}}</span>
         </div>

@@ -164,6 +164,17 @@ ear is listening, why, and how long the last utterance took. The model (about 40
 browser after the first load) comes from the Hugging Face hub and the
 runtime from jsDelivr, so those two hosts must be reachable once.
 
+**Quick by default (v7.3).** For a page anyone opens, the quickest of
+everything is the default: the browser's own installed voice (instant,
+offline; the neural voice is a Lab choice), the tiny on-device model,
+en-US recognition. The on-device ear loads in standby for every visitor
+the moment the page opens, so the switch from a blocked speech service
+costs nothing; the stage says **Getting ready…** (with the load progress)
+until one ear can actually hear, and **Listening** only then - nobody
+talks to a page that cannot hear them. No mic check runs at start (say
+"mic check" or use the Lab), no "still here" nudges, no "oh wait" before a
+reply.
+
 Along with that: the Lab's **HEARD (LIVE)** section shows the live
 transcript and, for every final, what became of it ("answered on the page",
 "sent to Netra", "dropped: my own echo", "asked to repeat"); the Lab's

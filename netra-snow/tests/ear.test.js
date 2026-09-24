@@ -34,7 +34,7 @@ T.test('speech on the meter with no words back is healed in steps: no grammar, p
         f._deafCheck(now + 1);
     }
     loudWindow();
-    T.eq(cl.get('_deafStrikes'), 1); T.eq(recycles, []);
+    T.eq(cl.get('_deafStrikes'), 1); T.eq(recycles, []); T.eq(ears, [], 'no ear loaded yet: the browser is healed first');
     loudWindow();
     T.eq(cl.get('_deafStrikes'), 2); T.eq(recycles, ['deaf: rebuilding without the grammar']); T.eq(cl.get('_srNoGrammar'), true);
     loudWindow();
@@ -208,6 +208,51 @@ T.test('the words so far are live text, never a command; a final records its lat
     posted.length = 0;
     for (i = 0; i < 20; i++) f._earFeed(frame(50), rate);
     T.eq(posted.length, 0, 'no partial asked for on a slow device');
+});
+
+T.test('an ear waiting in standby takes over on the first strike; readiness is what the stage says', function () {
+    var cl = page(), f = cl.fn, c = cl.c, ears = [], said = [];
+    cl.set('_earStart', function (why) { ears.push(why); c.ear.on = true; return true; });
+    cl.set('_fullMicRecycle', function () { return true; });
+    cl.set('speak', function (t) { said.push(t); });
+    c.ear.status = 'standby'; c.ready = false; c.readyText = 'Getting ready…'; c.liveStatus = 'Getting ready…';
+    var now = 1000000;
+    for (var i = 0; i < 700; i++) { now += 16; f._deafAccumulate(i < 190 ? 40 : 3, now); }
+    f._deafCheck(now + 1);
+    T.eq(ears, ['the browser returned no words for clear speech'], 'the loaded ear takes over at once');
+    // readiness: the browser recognizer counts once it answered; the ear once engaged
+    var cl2 = page(), f2 = cl2.fn, c2 = cl2.c;
+    cl2.set('$timeout', Object.assign(function (fn) { return {}; }, { cancel: function () {} }));
+    c2.state = 'idle'; c2.ready = false; c2.readyText = ''; c2.hasSR = true;
+    cl2.set('_nativeVerdict', 'unknown');
+    f2._readyUpdate();
+    T.eq(c2.ready, false); T.match(c2.liveStatus, /^Getting ready/);
+    f2._nativeSaw('blocked');
+    T.match(c2.liveStatus, /can not reach its speech service/);
+    c2.ear.status = 'loading'; c2.ear.progress = 40; f2._readyUpdate();
+    T.match(c2.liveStatus, /loading my on-device ear 40%/);
+    c2.ear.on = true; c2.ear.status = 'on'; f2._readyUpdate();
+    T.eq(c2.ready, true); T.eq(c2.liveStatus, 'Listening');
+});
+
+T.test('no mic check at start, no nudges, the quickest defaults', function () {
+    var cl = page(), f = cl.fn, c = cl.c, said = [], calib = [];
+    cl.set('speak', function (t) { said.push(t); });
+    cl.set('startCalibration', function () { calib.push(1); });
+    cl.set('_firstRunPending', function () { return true; });
+    cl.set('_blobRafId', 1); c.micStreamActive = true;
+    global.document = global.document || { querySelector: function () { return null; } };
+    f._firstRunCheck();
+    T.eq(calib, [], 'the mic check never runs at start');
+    T.eq(said, [], 'nothing is announced');
+    T.ok(/idle|saved/.test(c.labCalib.stage));
+    var timers = [];
+    cl.set('$timeout', Object.assign(function (fn, ms) { timers.push(ms); return {}; }, { cancel: function () {} }));
+    cl.set('_repromptTimer', null); cl.set('_repromptArmed', false);
+    f._armReprompt('Shall I read the rest?');
+    T.eq(timers, [], 'a question does not arm a "still here" nudge');
+    T.eq(cl.get('REMOTE_TTS_DEFAULT'), false, 'the browser voice by default');
+    T.eq(cl.get('EAR_MODEL'), 'onnx-community/whisper-tiny.en');
 });
 
 T.run(__filename);
