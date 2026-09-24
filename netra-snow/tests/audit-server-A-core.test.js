@@ -260,7 +260,7 @@ T.test('a longish spoken command stays on the fast model despite the voice-deliv
     var d = N.request({ action: 'chat', message: 'add a work note to incident 10013 saying the user rebooted and it works now please',
                         history: [], live_mode: true, prosody: { wpm: 150, level: 42, variance: 'medium' } });
     T.eq(d.response.route_reason, 'fast');
-    T.eq(s.gemini.models[0], 'gemini-2.5-flash-lite');
+    T.eq(s.gemini.models[0], 'gemma-4-26b-a4b-it', 'the fast model is the chain\'s first (R21: Gemma, lean request)');
 });
 
 T.run(__filename);

@@ -465,6 +465,7 @@ var gs = {
     setProperty: function (k, v) { P.PROPS[k] = v; },
     getUserID: function () { return P.user.sys_id; },
     getUserName: function () { return P.user.user_name; },
+    isLoggedIn: function () { return P.user.user_name !== 'guest'; },   // the public page's visitor is user 'guest'
     getUserDisplayName: function () { return P.user.name; },
     hasRole: function (r) { return !P.ROLES || !!P.ROLES[r] || !!P.ROLES.admin; },
     info: function (m) { P.LOG.push('info ' + m); },

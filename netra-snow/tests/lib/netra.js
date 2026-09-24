@@ -84,6 +84,8 @@ function loadClient() {
     // a test exercises the same thresholds the page does
     // controller state assigned below the hook that every input path reads
     if (!out.c.ear) out.c.ear = { mode: 'auto', on: false, status: 'off', progress: 0, model: '', device: 'wasm', error: '', heard: 0, why: '' };
+    // the loading screen, finished: most tests drive a page that is ready (ear.test.js drives the gate itself)
+    if (!out.c.gate) { out.c.gate = { open: true, everOpen: true, hearing: true, voice: true, brain: true, hearingText: '', voiceText: '', brainText: '' }; out.c.ready = true; }
     var constRe = /^    var ([A-Z][A-Z0-9_]*)\s*=\s*(\/(?:[^\/\\\n]|\\.)+\/[gimuy]*|-?\d+(?:\.\d+)?|'[^'\n]*'|\[[^\]]*\]|true|false);/gm, cm;
     while ((cm = constRe.exec(src))) {
         try { if (out.get(cm[1]) === undefined) out.set(cm[1], vm.runInThisContext('(' + cm[2] + ')')); } catch (e) {}

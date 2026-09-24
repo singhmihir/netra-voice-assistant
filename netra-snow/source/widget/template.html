@@ -647,6 +647,16 @@
           <path class="netra-stage-blob-inner"/>
         </svg>
       </button>
+      <!-- R21 - the loading screen: nothing is accepted until Netra can hear, speak and answer -->
+      <div class="netra-gate" ng-if="c.gate && !c.gate.open" role="alertdialog" aria-live="assertive" aria-label="Netra is getting ready">
+        <div class="netra-gate-card">
+          <div class="netra-gate-title">{{c.gate.everOpen ? 'One moment - Netra is catching up' : 'Netra is getting ready'}}</div>
+          <div class="netra-gate-sub">Please wait - she can not take questions until all three are ready.</div>
+          <div class="netra-gate-row" ng-class="{'ok': c.gate.hearing}"><span class="dot"></span><b>Hearing</b><em>{{c.gate.hearingText}}</em></div>
+          <div class="netra-gate-row" ng-class="{'ok': c.gate.voice}"><span class="dot"></span><b>Voice</b><em>{{c.gate.voiceText}}</em></div>
+          <div class="netra-gate-row" ng-class="{'ok': c.gate.brain}"><span class="dot"></span><b>Answers</b><em>{{c.gate.brainText}}</em></div>
+        </div>
+      </div>
       <div class="netra-stage-status" role="status" aria-live="polite">{{c.liveStatus}}</div>
       <!-- R8.1 - live captions: her own words while speaking, yours while listening -->
       <div class="netra-stage-caption netra-stage-caption-netra"
@@ -785,6 +795,7 @@
           <span class="netra-lab-chip ok" ng-show="c.ear.on">on-device ear</span>
           <span class="netra-lab-chip" ng-show="c.ear.status === 'standby'">ear in standby</span>
           <span class="netra-lab-chip bad" ng-show="!c.ready">{{c.readyText}}</span>
+          <span class="netra-lab-chip bad" ng-show="c.gate && !c.gate.open">not ready: {{!c.gate.brain ? 'answers - ' + c.gate.brainText : (!c.gate.hearing ? 'hearing' : 'voice')}}</span>
           <span class="netra-lab-chip" ng-show="c.ear.status === 'loading'">loading ear {{c.ear.progress}}%</span>
           <span class="netra-lab-chip bad" ng-show="c.micHealth.deafStrikes && !c.ear.on">sound without words ×{{c.micHealth.deafStrikes}}</span>
         </div>

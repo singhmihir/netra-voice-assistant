@@ -174,14 +174,18 @@ T.test('"quiet" holds notifications, nudges and the auto briefing until the user
     T.eq(p.rec.spoken[p.rec.spoken.length - 1], 'SLA breach coming on INC0010013.');
 });
 
-T.test('no Gemini key: the page boots into basic mode instead of refusing', function () {
+T.test('no Gemini key: the page boots, says nothing it can not stand behind, and the loading screen says why', function () {
     var p = page();
     p.c.hasSR = true;
     p.c.data = { has_api_key: false, user_name: 'Beth Anglin' };
+    p.c.gate = { open: false, everOpen: false, hearing: false, voice: false, brain: false, hearingText: '', voiceText: '', brainText: '' };
+    p.c.server = { get: function () { return { then: function (ok) { ok({ data: { ready: { ready: false, reason: 'no_key', say: 'My Gemini key is not set up yet.', wait_ms: 60000 } } }); } }; },
+                   update: function () { return { then: function () {} }; } };
     p.f.tryBoot(true);
     T.ok(p.get('booted'), 'the mic starts');
-    T.notMatch(p.rec.spoken.join(' '), /has not been configured/);
-    T.match(p.rec.spoken.join(' '), /basic mode - I can still read tickets/);
+    T.notMatch(p.rec.spoken.join(' '), /has not been configured|basic mode/, 'no basic-mode speech');
+    T.eq(p.c.gate.open, false, 'nothing is accepted without a brain');
+    T.eq(p.c.gate.brainText, 'My Gemini key is not set up yet.', 'the loading screen says why');
 
     var k = page();
     k.c.hasSR = true;

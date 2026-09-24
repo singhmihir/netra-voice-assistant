@@ -343,6 +343,8 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function _maybeAutoBrief(tries) {
         if (!c.liveMode || !c.prefBrief) return;
+        if (c.data && c.data.is_guest) return;   // R21 - a Guest has no queue to brief
+        if (c.gate && !c.gate.open) { if (tries < 12) $timeout(function () { _maybeAutoBrief(tries + 1); }, 12000); return; }
         var last = '';
         try { last = localStorage.getItem('netra_brief_last') || ''; } catch (eB2) {}
         if (last === _todayKey()) return;   // already briefed today
@@ -366,6 +368,8 @@ api.controller = function ($scope, $timeout, $window) {
     // gated on the server's away_pending count instead of the calendar.
     function _maybeAwayDebrief(tries) {
         if (!c.liveMode || !(c.data && c.data.away_pending > 0)) return;
+        if (c.data.is_guest) return;
+        if (c.gate && !c.gate.open) { if (tries < 12) $timeout(function () { _maybeAwayDebrief(tries + 1); }, 12000); return; }
         var calibBusy = c.labCalib && (c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt');
         var awaitingAnswer = _stillAwaiting();
         if (calibBusy || awaitingAnswer || _chatInFlight || _queuedUtterance || !c.alert || c._hushed || c.state === 'speaking' || c.state === 'thinking') {
@@ -1657,6 +1661,9 @@ api.controller = function ($scope, $timeout, $window) {
             return { intent: 'identity', reply: 'I am Netra, your voice assistant for ServiceNow. I can investigate tickets, raise and update them, chase approvals, watch things while you are away, and tell you what I did - all by voice.' };
         }
         // capabilities / help
+        if (/^(help|help me|what can you do|what are your capabilities|your capabilities|commands|what do you do|how do i use you|how can i use you|how to use you)$/.test(bare) && c.data && c.data.is_guest) {
+            return { intent: 'help', reply: 'As a guest I can answer general questions and look things up on the web, tell you the time or the date, or tell a joke. Sign in to ServiceNow and reload this page, and I can work on your tickets, approvals and knowledge articles too.' };
+        }
         if (/^(help|help me|what can you do|what are your capabilities|your capabilities|commands|what do you do|how do i use you|how can i use you|how to use you)$/.test(bare)) {
             return { intent: 'help', reply: 'You can ask me things like: what is the status of I N C zero zero one zero zero one three, list my tickets, what are my approvals, investigate that incident, watch it and nudge the assignee if nothing moves, what did you do while I was away, or what are you working on. Just speak naturally.' };
         }
@@ -2628,6 +2635,8 @@ api.controller = function ($scope, $timeout, $window) {
             startContinuous();
             _earLoad();                 // R20: the on-device ear warms up in standby for every visitor
             _readyUpdate();
+            _brainProbe('boot');        // R21: the loading screen waits for a real answer from the brain
+            $timeout(_gateUpdate, 4200);   // the no-voice case resolves after 4 s
             startListeningWatchdog();   // R1: aggressive mic-health watchdog
             startVisibilityRecovery();  // R1: tab-visibility recovery
             booted     = true;
@@ -2650,10 +2659,10 @@ api.controller = function ($scope, $timeout, $window) {
                 // (user preference). First-ever boot gets the long intro;
                 // later boots get a quick "mic check" pass. Say "skip" or
                 // tap Skip on the stage card to jump straight in.
-                speak(todGreet + ', ' + firstName + '. I am Netra.' +
-                      (noKey ? ' My Gemini key is not set up yet, so I am in basic mode - I can still read tickets, list your work, raise a ticket and give you the debrief.' : ''), function () {
-                    _firstRunCheck();
-                });
+                // R21 - the greeting is the loading screen's "ready" signal now:
+                // nothing is said until Netra can hear, speak and answer
+                void todGreet; void firstName; void noKey;
+                _firstRunCheck();
                 // Once per session, auto-offer a daily briefing 4 seconds after greeting
                 $timeout(function () {
                     if (c.alert && c.conversationOpen && !c.briefingOffered) {
@@ -2721,24 +2730,137 @@ api.controller = function ($scope, $timeout, $window) {
     if (c.ear.mode !== 'on' && c.ear.mode !== 'off') c.ear.mode = 'auto';
     if (c.ear.size !== 'tiny' && c.ear.size !== 'base') c.ear.size = 'auto';   // auto = base on a GPU, tiny elsewhere
     var _earWorker = null, _earBusy = false, _earQueue = [], _earNativeSeen = 0, _earSaid = false, _earEngageOnLoad = false;
+    /* ============================================================
+     *  R21 - THE LOADING SCREEN
+     *
+     *  Nothing is accepted until Netra can do all three: HEAR (the browser
+     *  recognizer confirmed, or the on-device ear engaged), SPEAK (a voice
+     *  is loaded), and ANSWER (the server's ready_check got a real reply
+     *  from a model, or one answered in the last minute). Until then the
+     *  stage shows the three checks and anything said is ignored with a
+     *  spoken "still getting ready". When the brain drops out mid-visit the
+     *  question is held, the screen comes back, and the question is asked
+     *  again the moment the brain answers - no basic-mode stand-in.
+     * ============================================================ */
+    c.gate = { open: false, everOpen: false, hearing: false, voice: false, brain: false,
+               hearingText: 'checking…', voiceText: 'checking…', brainText: 'checking…' };
+    var _gateHeld = null, _gateReasked = null, _brainProbeTimer = null, _brainProbeBusy = false, _gateNudgedAt = 0, _voiceCheckStart = Date.now();
+    function _voiceReady() {
+        var eng = c.ttsEngine || 'browser';
+        if (eng === 'edge' && _edgeVoiceAvailable() && !_edgeCircuitOpen()) { c.gate.voiceText = 'neural voice'; return true; }
+        // no speech synthesis at all: there will never be voices to wait for
+        if (!c.hasTTS) { c.gate.voiceText = 'captions only (this browser can not speak)'; return true; }
+        if (!_voiceCheckStart) _voiceCheckStart = Date.now();
+        var n = 0;
+        try { n = (c.hasTTS && TTS && TTS.getVoices) ? (TTS.getVoices() || []).length : 0; } catch (eV) {}
+        if (n) { c.gate.voiceText = (c.voiceName && c.voiceName !== '(picking...)') ? c.voiceName : n + ' voices'; return true; }
+        // a browser with no voices at all still shows every word on screen
+        if (Date.now() - _voiceCheckStart > 4000) { c.gate.voiceText = 'captions only (no voice installed)'; return true; }
+        c.gate.voiceText = 'loading voices…';
+        return false;
+    }
+    function _gateUpdate() {
+        var g = c.gate;
+        if (!g) return;
+        g.hearing = !!c.ready;
+        g.hearingText = c.ready ? (c.ear.on ? 'on-device ear' : 'browser recognizer')
+                                : String(c.readyText || 'checking…').replace(/^Getting ready( — )?/, '').replace(/…$/, '') || 'checking';
+        g.voice = _voiceReady();
+        var was = g.open;
+        g.open = g.hearing && g.voice && g.brain;
+        if (g.open && !was) _gateOpened();
+        else if (!g.open && was) logEvent('gate', 'closed - ' + (!g.brain ? 'brain: ' + g.brainText : !g.hearing ? 'hearing: ' + g.hearingText : 'voice'));
+        if (c.state === 'idle' || c.state === 'awaiting') c.liveStatus = g.open ? 'Listening' : 'Getting ready…';
+        $scope.$applyAsync();
+    }
+    function _gateOpened() {
+        var g = c.gate, first = !g.everOpen;
+        g.everOpen = true;
+        logEvent('gate', 'open - hearing: ' + g.hearingText + ', voice: ' + g.voiceText + ', brain: ' + g.brainText);
+        cue('wake');
+        var held = _gateHeld;
+        _gateHeld = null;
+        if (first) {
+            var guest = !!(c.data && c.data.is_guest);
+            var nm = String((c.data && c.data.user_name) || '').split(' ')[0];
+            if (guest || /^(system|guest)$/i.test(nm)) nm = '';
+            var h = new Date().getHours();
+            var tod = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
+            speak(tod + (nm ? ', ' + nm : '') + '. I am Netra, and I am ready - just speak.', function () { if (c.alert) setState('idle'); });
+            return;
+        }
+        if (held && Date.now() - held.at < 3 * 60000) {
+            logEvent('gate', 'brain is back - asking the held question again: "' + held.text + '"');
+            // asked again ONCE: a second "busy" gives up instead of looping
+            _gateReasked = { text: held.text, at: Date.now() };
+            speak('I am back. Here is your answer.', function () { handleHeard(held.text); });
+            return;
+        }
+        speak('I am ready again - just speak.', function () { if (c.alert) setState('idle'); });
+    }
+    // said while the gate is shut: never silently lost
+    function _gateRefuse(text, conf) {
+        _heardLog(text, conf, 'ignored: still getting ready');
+        logEvent('gate', 'not ready - ignored "' + String(text).substring(0, 60) + '"');
+        if (!_gateNudgedAt || Date.now() - _gateNudgedAt > 12000) {
+            _gateNudgedAt = Date.now();
+            var g = c.gate;
+            var why = !g.brain ? 'my answers are not ready yet' + (g.brainText && g.brainText !== 'checking…' ? ' - ' + g.brainText : '')
+                    : !g.hearing ? 'I can not hear properly yet' : 'my voice is loading';
+            speak('One moment - I am still getting ready, ' + why + '. I will tell you as soon as I can answer.');
+        } else {
+            cue('error');
+        }
+    }
+    function _brainProbe(why) {
+        if (_brainProbeBusy || _ctrlDestroyed) return;
+        if (_brainProbeTimer) { $timeout.cancel(_brainProbeTimer); _brainProbeTimer = null; }
+        _brainProbeBusy = true;
+        var t0 = Date.now();
+        var done = function (d) {
+            d = d || { ready: false, say: 'no answer from the server', wait_ms: 8000 };
+            if (!c.gate) { _brainProbeBusy = false; return; }
+            c.gate.brain = !!d.ready;
+            c.gate.brainText = d.ready ? ('ready' + (d.model ? ' (' + d.model + ')' : '')) : String(d.say || 'not answering yet');
+            logEvent('gate', 'brain ' + (d.ready ? 'ready' : 'not ready (' + (d.reason || '?') + ')') + ' in ' + (Date.now() - t0) + ' ms' + (why ? ' - ' + why : ''));
+            if (!d.ready && !_ctrlDestroyed) {
+                _brainProbeTimer = $timeout(function () { _brainProbe('retry'); }, Math.max(5000, Math.min(d.wait_ms || 10000, 30000)));
+            }
+            // busy until the retry is scheduled: a timer that fires at once
+            // can not recurse into a second probe
+            _brainProbeBusy = false;
+            _gateUpdate();
+        };
+        if (!c.server || typeof c.server.get !== 'function') { done({ ready: true, model: '' }); return; }
+        if (c.gate) c.gate.brainText = 'checking…';
+        try {
+            c.server.get({ action: 'ready_check' }).then(function (resp) { done(resp && resp.data && resp.data.ready); },
+                function () { done({ ready: false, say: 'I can not reach the server', wait_ms: 8000 }); });
+        } catch (eP) { done({ ready: false, say: 'I can not reach the server', wait_ms: 8000 }); }
+    }
+
     // R20 - readiness: the stage says "getting ready" until an ear can hear.
     // The browser's recognizer counts as able once it started and three
     // seconds passed without a network error, or once it returned words;
     // the on-device ear counts once it is engaged.
-    var _nativeVerdict = 'unknown', _nativeVerdictTimer = null;
+    var _nativeVerdict = 'unknown', _nativeVerdictTimer = null, _nativeHeardWords = false;
     c.ready = false; c.readyText = 'Getting ready…';
     function _readyUpdate() {
         var was = c.ready;
-        c.ready = _nativeVerdict === 'ok' || c.ear.on;
+        // R21 - a recognizer that merely STARTED proves nothing: some fail
+        // silently (no error, no words). Hearing is the ear engaged, or the
+        // browser recognizer having returned words; its clean start counts
+        // only when the on-device ear can not be used at all.
+        var earUsable = c.ear.mode !== 'off' && c.ear.status !== 'error' && typeof Worker !== 'undefined';
+        c.ready = c.ear.on || _nativeHeardWords || (_nativeVerdict === 'ok' && !earUsable);
         if (!c.ready) {
             if (c.ear.status === 'loading') c.readyText = 'Getting ready — loading my on-device ear' + (c.ear.progress ? ' ' + c.ear.progress + '%' : '') + '…';
             else if (_nativeVerdict === 'blocked') c.readyText = 'Getting ready — the browser can not reach its speech service, switching to my own ear…';
             else if (!c.hasSR) c.readyText = 'Getting ready…';
             else c.readyText = 'Getting ready — checking the browser can hear…';
         }
-        if (c.state === 'idle' || c.state === 'awaiting') c.liveStatus = c.ready ? 'Listening' : c.readyText;
-        if (c.ready && !was) { logEvent('rec', 'ready to hear (' + (c.ear.on ? 'on-device ear' : 'browser recognizer') + ')'); cue('wake'); }
-        $scope.$applyAsync();
+        if (c.ready && !was) logEvent('rec', 'ready to hear (' + (c.ear.on ? 'on-device ear' : 'browser recognizer') + ')');
+        _gateUpdate();   // R21 - the loading screen owns the status line and the ready signal
     }
     function _nativeSaw(verdict) {
         if (_nativeVerdictTimer) { $timeout.cancel(_nativeVerdictTimer); _nativeVerdictTimer = null; }
@@ -2864,8 +2986,8 @@ api.controller = function ($scope, $timeout, $window) {
         c.ear.on = true; c.ear.status = 'on'; c.ear.progress = 100; _earEngageOnLoad = false;
         _earTapAttach();
         logEvent('rec', 'on-device ear listening (' + c.ear.model + ' on ' + c.ear.device + ')');
-        _readyUpdate();
-        if (!was && c.alert && !_speakingNow) speak('Ready - just speak.');
+        _readyUpdate();   // R21 - the loading screen says "ready" once everything is
+        void was;
         $scope.$applyAsync();
     }
     function _earFail(msg) {
@@ -2889,8 +3011,15 @@ api.controller = function ($scope, $timeout, $window) {
         if (d.progress !== undefined) { c.ear.progress = d.progress; _readyUpdate(); return; }
         if (d.loaded) {
             if (d.warmMs) logEvent('rec', 'on-device ear warmed up in ' + d.warmMs + ' ms');
-            if (_earEngageOnLoad || c.ear.mode === 'on' || !c.hasSR) { _earEngageOnLoad = false; _earReady(); }
-            else { c.ear.status = 'standby'; c.ear.progress = 100; logEvent('rec', 'on-device ear ready in standby'); _readyUpdate(); }
+            // R21 - the on-device ear is the default ear until the browser's
+            // recognizer has returned words: a recognizer that starts and then
+            // hears nothing (no error at all) is otherwise indistinguishable
+            // from one that works, and the user would talk into nothing
+            if (_earEngageOnLoad || c.ear.mode === 'on' || !c.hasSR || !_nativeHeardWords) {
+                if (!c.ear.why) c.ear.why = !c.hasSR ? 'this browser has no speech recognizer' : (c.ear.mode === 'on' ? 'switched on in the Lab' : 'until the browser recognizer proves it can hear');
+                _earEngageOnLoad = false; _earReady();
+            }
+            else { c.ear.status = 'standby'; c.ear.progress = 100; logEvent('rec', 'on-device ear ready in standby - the browser recognizer is hearing'); _readyUpdate(); }
             return;
         }
         if (d.error) {
@@ -2917,6 +3046,10 @@ api.controller = function ($scope, $timeout, $window) {
             if (EAR_HALLUCINATION_RE.test(text)) {
                 logEvent('rec.f', 'on-device: nothing said (' + JSON.stringify(text) + ', ' + d.ms + ' ms)');
                 if (c.interim && /on-device/.test(c.interim)) { c.interim = ''; $scope.$applyAsync(); }
+            } else if (!c.ear.on) {
+                // R21 - handed back to the browser recognizer (or switched off)
+                // while this was in the worker: that ear has these words too
+                logEvent('rec.f', 'on-device: "' + text + '" dropped - the browser recognizer has the floor now');
             } else {
                 c.ear.heard++;
                 logEvent('rec.f', 'on-device: "' + text + '" (' + d.ms + ' ms)');
@@ -3120,6 +3253,11 @@ api.controller = function ($scope, $timeout, $window) {
             _notAllowedStrikes = 0;           // R8.1 - real results = mic healthy
             if (_netErrStreak) { _netErrStreak = 0; c.micHealth.speechService = 'ok'; }
             if (_deafStrikes && !c.ear.on) _deafStrikes = 0;
+            if (!_nativeHeardWords) {
+                for (var hw = ev.resultIndex; hw < ev.results.length; hw++) {
+                    if (ev.results[hw] && ev.results[hw][0] && String(ev.results[hw][0].transcript || '').trim()) { _nativeHeardWords = true; logEvent('rec', 'the browser recognizer returned words - it can hear'); break; }
+                }
+            }
             if (_nativeVerdict !== 'ok') _nativeSaw('ok');
             for (var i = ev.resultIndex; i < ev.results.length; i++) {
                 var res = ev.results[i];
@@ -3814,6 +3952,8 @@ api.controller = function ($scope, $timeout, $window) {
         if (!clean) return;
         // R8.1 - calibration read-back has priority over command routing
         if (_calibConsume(clean)) { _heardLog(clean, conf, 'mic check read-back'); return; }
+        // R21 - nothing is accepted before Netra can hear, speak AND answer
+        if (c.gate && !c.gate.open) { _gateRefuse(clean, conf); return; }
         var lower = clean.toLowerCase();
         c._hushed = false;   // "quiet" lasts until the user speaks again
         c.prevHeard  = c.lastHeard;   // what "I said X" / "no, I meant X" corrects
@@ -4163,11 +4303,18 @@ api.controller = function ($scope, $timeout, $window) {
         // R3.7 - start the filler chain in parallel with the server call so
         // the conversation does not have dead air. The chain self-terminates
         // when deliverServerReply or stopFillerChain is invoked below.
-        startFillerChain();
+        // R21 - only after a real wait: most answers arrive in ~1-2 s, and
+        // a filler that has started is one more thing to talk over
+        if (_fillerStartTimer) $timeout.cancel(_fillerStartTimer);
+        _fillerStartTimer = $timeout(function () {
+            _fillerStartTimer = null;
+            if (_chatInFlight && myEpoch === _turnEpoch) startFillerChain();
+        }, FILLER_DELAY_MS);
 
         c.server.update().then(
             function () {
                 $timeout.cancel(hung);
+                if (_fillerStartTimer) { $timeout.cancel(_fillerStartTimer); _fillerStartTimer = null; }
                 _chatInFlight = false;
                 _repliesPending = Math.max(0, _repliesPending - 1);
                 // R6 - a barge-in after this call went out makes the reply
@@ -4320,6 +4467,35 @@ api.controller = function ($scope, $timeout, $window) {
                     _drainQueuedUtterance();
                     return;
                 }
+                // R21 - the brain was busy for this turn: hold the question, show
+                // the loading screen, ask again the moment the brain is back
+                if (r.brain_down) {
+                    stopFillerChain();
+                    var again = !!(_gateReasked && _gateReasked.text === transcript && Date.now() - _gateReasked.at < 2 * 60000);
+                    _gateReasked = null;
+                    // a question already asked again once is not held a second
+                    // time: the brain passed its ping but not the real question
+                    _gateHeld = again ? null : { text: transcript, at: Date.now() };
+                    if (c.gate) {
+                        c.gate.brain = false;
+                        c.gate.brainText = again ? 'still too busy - try again in a minute' : 'busy - I will answer as soon as it is back';
+                    }
+                    logEvent('gate', again ? 'brain still busy after asking again - giving up on "' + String(transcript).substring(0, 60) + '"'
+                                           : 'brain busy - holding "' + String(transcript).substring(0, 60) + '"');
+                    _gateUpdate();
+                    speak(again ? 'Sorry, my reasoning is still too busy to answer that. Please ask me again in a minute.'
+                                : (r.message || 'My reasoning is busy right now. I will answer that as soon as it is back.'), function () {
+                        if (c.alert) setState('idle');
+                        _drainQueuedUtterance();
+                    });
+                    if (again) {
+                        if (_brainProbeTimer) $timeout.cancel(_brainProbeTimer);
+                        _brainProbeTimer = $timeout(function () { _brainProbe('retry after a second busy'); }, 30000);
+                    } else {
+                        _brainProbe('brain busy mid-visit');
+                    }
+                    return;
+                }
                 c._awaitingConfirm = !!r.awaiting_confirm;
                 c._awaitingConfirmAt = Date.now();
                 if (r.ok) {
@@ -4355,6 +4531,7 @@ api.controller = function ($scope, $timeout, $window) {
             },
             function (err) {
                 $timeout.cancel(hung);
+                if (_fillerStartTimer) { $timeout.cancel(_fillerStartTimer); _fillerStartTimer = null; }
                 _chatInFlight = false;
                 _repliesPending = Math.max(0, _repliesPending - 1);
                 _labNlpCapture('(transport error)', [], null);
@@ -4802,6 +4979,7 @@ api.controller = function ($scope, $timeout, $window) {
     var backchannelCache = [];   // [{url, text}]
     function preloadBackchannels() {
         if (typeof WebSocket === 'undefined') return;
+        if ((c.ttsEngine || 'browser') !== 'edge' || !_edgeVoiceAvailable()) return;   // R21 - same voice as the replies or none
         if (_edgeCircuitOpen()) return;
         BACKCHANNEL_PHRASES.forEach(function (p) {
             _edgeBlob(p, c.edgeVoice, function (blob) {
@@ -5802,7 +5980,7 @@ api.controller = function ($scope, $timeout, $window) {
     // a genuinely-broken build (e.g. the pre-GEC Edge 403 storm) stayed
     // open in localStorage across every future session, permanently
     // pinning Netra to the robotic fallback even after the fix shipped.
-    var NETRA_BUILD = 'v7.3-fast';   // bumped: reopens Edge TTS for everyone whose breaker tripped on an old build
+    var NETRA_BUILD = 'v7.4-ready';   // bumped: reopens Edge TTS for everyone whose breaker tripped on an old build
     try {
         if (_store && _store.getItem('netra_build') !== NETRA_BUILD) {
             _store.removeItem('netra_edgeFails');
@@ -6022,7 +6200,7 @@ api.controller = function ($scope, $timeout, $window) {
         'Let me pull that up.',
         'Hold on, fetching it.',
         'Right, looking into it.',
-        'Give me a moment, Mihir.',
+        'Give me a moment.',
         'One second, please.',
         'Pulling that up for you.',
         // MEDIUM (~2s)
@@ -6034,13 +6212,13 @@ api.controller = function ($scope, $timeout, $window) {
         'Got it, checking the system now.',
         'Let me see what I can find.',
         'Hang on a second, almost there.',
-        'Alright Mihir, looking that up now.',
+        'Alright, looking that up now.',
         'Just checking the records, one moment.',
         // LONG (~3s)
         'Give me a moment, I am pulling that information from the system now.',
         'Bear with me for a second, I am just looking into the details.',
         'One moment please, I am checking that on my end for you.',
-        'Hold on Mihir, I am fetching the latest information for you right now.',
+        'Hold on, I am fetching the latest information for you right now.',
         'Let me check on that quickly, should only take a moment.',
         'Just a moment please, I am getting that sorted out for you.',
         'Hang on for a second, I am cross-checking the details right now.',
@@ -6069,6 +6247,8 @@ api.controller = function ($scope, $timeout, $window) {
     // is the estimated total ms of the currently-playing filler audio.
     var _fillerChainActive = false;
     var _pendingReply       = null;   // {text, done, queuedAt}
+    var _fillerStartTimer   = null;   // R21 - fillers only after a real wait
+    var FILLER_DELAY_MS     = 1500;
     var _currentFillerStart = 0;
     var _currentFillerEst   = 0;
 
@@ -6123,6 +6303,13 @@ api.controller = function ($scope, $timeout, $window) {
 
     function preloadFillers() {
         if (typeof WebSocket === 'undefined') return;
+        // R21 - pre-rendered fillers are neural-voice audio: in any other
+        // voice they would not match the replies (and in Chrome every one
+        // of them is a refused connection). The live voice says them instead.
+        if ((c.ttsEngine || 'browser') !== 'edge' || !_edgeVoiceAvailable()) {
+            logEvent('tts', 'fillers will use the live voice (' + (c.ttsEngine || 'browser') + ')');
+            return;
+        }
         // R4.3 - respect the persisted circuit breaker. If Edge has already
         // failed >=REMOTE_FAIL_LIMIT times across previous sessions, don't
         // spam 27 more failed WSS connections at boot - they all fail
@@ -6332,17 +6519,13 @@ api.controller = function ($scope, $timeout, $window) {
         }
         var ratio = realMs > 0 ? elapsed / realMs : 1;
         if (currentFillerAudio || currentFillerUtter) {
-            if (ratio < 0.5) {
-                logEvent('tts', 'reply interrupts filler at ' + Math.round(ratio*100) + '%');
-                if (currentFillerAudio) { try { currentFillerAudio.pause(); } catch (e) {} currentFillerAudio = null; }
-                if (currentFillerUtter && typeof speechSynthesis !== 'undefined') { try { speechSynthesis.cancel(); } catch (e) {} currentFillerUtter = null; }
-                _fillerChainActive = false;
-                _pendingReply = null;
-                speak(text, done);
-            } else {
-                logEvent('tts', 'reply queued behind filler at ' + Math.round(ratio*100) + '%');
-                _pendingReply = { text: text, done: done, queuedAt: Date.now() };
-            }
+            // R21 - the answer never waits for a filler to finish
+            logEvent('tts', 'reply cuts the filler at ' + Math.round(ratio*100) + '%');
+            if (currentFillerAudio) { try { currentFillerAudio.pause(); } catch (e) {} currentFillerAudio = null; }
+            if (currentFillerUtter && typeof speechSynthesis !== 'undefined') { try { speechSynthesis.cancel(); } catch (e) {} currentFillerUtter = null; }
+            _fillerChainActive = false;
+            _pendingReply = null;
+            speak(text, done);
         } else {
             // Chain active but between fillers - just speak immediately
             _fillerChainActive = false;
@@ -6583,6 +6766,7 @@ api.controller = function ($scope, $timeout, $window) {
         var vs = TTS.getVoices() || [];
         c.voices = vs.map(function (v) { return { name: v.name, lang: v.lang }; });
         if (vs.length && c.voiceName === '(picking...)') pickFemaleVoice();
+        if (c.gate && !c.gate.voice) _gateUpdate();   // R21
         $scope.$applyAsync();
     }
 
@@ -6729,6 +6913,7 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     function startNotificationPolling() {
+        if (c.data && c.data.is_guest) { logEvent('boot', 'guest - no notifications to poll'); return; }   // R21
         var POLL_MS_ACTIVE  = 9000;
         var POLL_MS_DORMANT = 30000;   // R4.7 - back off when paused/dormant
         var tick = function () {
@@ -6782,6 +6967,7 @@ api.controller = function ($scope, $timeout, $window) {
     c.devSendText = function () {
         var t = (c.devText || '').trim();
         if (!t) return;
+        if (c.gate && !c.gate.open) { logEvent('gate', 'not ready - typed text kept in the box'); _gateRefuse(t, 1); return; }
         c.devText = '';
         logEvent('dev', 'manual send: "' + t + '"');
         unlockAudio();
@@ -7000,7 +7186,7 @@ api.controller = function ($scope, $timeout, $window) {
         window.__netraState = s;   // R10 - 3D stage reads this per frame
         c.stateLabel = STATE_LABEL[s] || s;
         c.liveStatus = LIVE_STATUS[s] || 'Listening';
-        if ((s === 'idle' || s === 'awaiting') && !c.ready) c.liveStatus = c.readyText;
+        if ((s === 'idle' || s === 'awaiting') && c.gate && !c.gate.open) c.liveStatus = 'Getting ready…';
         $scope.$applyAsync();
         // R3.7 - filler chain is now started explicitly from handleHeard()
         // when the server call is dispatched. setState no longer triggers

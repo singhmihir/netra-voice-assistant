@@ -114,7 +114,7 @@ NetraSelfCheck.prototype = {
 
     _brain: function () {
         var brain = new NetraBrain();
-        var chain = String(gs.getProperty(this.SCOPE + '.model_chain', 'gemini-2.5-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3-flash-preview')).split(',');
+        var chain = String(gs.getProperty(this.SCOPE + '.model_chain', 'gemma-4-26b-a4b-it,gemini-2.5-flash-lite,gemini-3.1-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-3.5-flash,gemini-3-flash-preview')).split(',');
         for (var c = 0; c < chain.length; c++) chain[c] = chain[c].replace(/^\s+|\s+$/g, '');
         var pick = brain.pickChain(chain, this.now);
         if (!pick.tryList.length) {

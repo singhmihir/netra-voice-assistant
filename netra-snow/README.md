@@ -164,6 +164,37 @@ ear is listening, why, and how long the last utterance took. The model (about 40
 browser after the first load) comes from the Hugging Face hub and the
 runtime from jsDelivr, so those two hosts must be reachable once.
 
+**Ready before it listens (v7.4).** On the public page every question
+used to end in "I can not work that one out without my reasoning models":
+all four Gemini models were out of their 20-a-day free quota or answering
+503 "high demand", and every request carried ~20k tokens (a 34 KB prompt
+and all 110 tool definitions), which also shut out Gemma 4 - its free tier
+allows 16k input tokens per model per minute, with a far larger daily
+allowance. Now:
+
+- **A lean request**: a short prompt plus only the tools the utterance can
+  need (a core set, the groups its words point at, every tool already in the
+  conversation) - about 2k tokens. Always for a Guest and for Gemma; the
+  `lean_prompt` property (`auto` / `always` / `never`) sets it for the rest.
+- **Gemma 4 first** (`gemma-4-26b-a4b-it`, ~1.2-1.9 s measured live), then
+  every Gemini flash model the key can reach, each with its own allowance;
+  a request too big for Gemma's per-minute allowance skips it for free.
+- A web question or a ticket status takes **one** model call, not two;
+  Gemma's private "thought" parts are never spoken or echoed back.
+- **The loading screen**: the page accepts nothing until it can *hear* (the
+  on-device ear engaged, or the browser recognizer having returned words),
+  *speak* (a voice loaded, or captions only) and *answer* (`ready_check`: a
+  model answered in the last minute, or a tiny ping just did). A blind user
+  hears "I am Netra, and I am ready - just speak" when it opens, and "still
+  getting ready" if they speak before. If the brain drops out mid-visit, the
+  question is held, the screen comes back, and the question is asked again
+  (once) as soon as the brain answers - never a basic-mode stand-in.
+- **The on-device ear is the default ear** until the browser recognizer has
+  proven itself by returning words: some recognizers start and then hear
+  nothing, without any error.
+- **Guests are told the truth**: ticket questions get "sign in to ServiceNow";
+  no automatic briefing, no notification polling, a Guest's own help text.
+
 **Quick by default (v7.3).** For a page anyone opens, the quickest of
 everything is the default: the browser's own installed voice (instant,
 offline; the neural voice is a Lab choice), the tiny on-device model,

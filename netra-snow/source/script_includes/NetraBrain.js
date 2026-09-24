@@ -174,6 +174,18 @@ NetraBrain.prototype = {
         return out;
     },
 
+    /** R21 - a model in the chain that answered within withinMs and is not
+     *  resting now: the readiness probe needs no call at all then */
+    freshOk: function (chain, nowMs, withinMs) {
+        for (var i = 0; i < chain.length; i++) {
+            var info = this.restingInfo(chain[i], nowMs);
+            if (info.resting) continue;
+            var r = this._row(chain[i], nowMs);
+            if (r.last_ok_ms && nowMs - r.last_ok_ms <= withinMs) return chain[i];
+        }
+        return '';
+    },
+
     recordOk: function (key, ms, nowMs) {
         var r = this._row(key, nowMs);
         r.used_today++;

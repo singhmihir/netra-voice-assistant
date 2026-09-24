@@ -221,18 +221,22 @@ T.test('an ear waiting in standby takes over on the first strike; readiness is w
     f._deafCheck(now + 1);
     T.eq(ears, ['the browser returned no words for clear speech'], 'the loaded ear takes over at once');
     // readiness: the browser recognizer counts once it answered; the ear once engaged
-    var cl2 = page(), f2 = cl2.fn, c2 = cl2.c;
+    var cl2 = page(), f2 = cl2.fn, c2 = cl2.c, said2 = [];
     cl2.set('$timeout', Object.assign(function (fn) { return {}; }, { cancel: function () {} }));
-    c2.state = 'idle'; c2.ready = false; c2.readyText = ''; c2.hasSR = true;
+    cl2.set('speak', function (t) { said2.push(t); });
+    c2.state = 'idle'; c2.ready = false; c2.readyText = ''; c2.hasSR = true; c2.hasTTS = false;
+    c2.gate = { open: false, everOpen: false, hearing: false, voice: false, brain: true, hearingText: '', voiceText: '', brainText: 'ready' };
     cl2.set('_nativeVerdict', 'unknown');
     f2._readyUpdate();
-    T.eq(c2.ready, false); T.match(c2.liveStatus, /^Getting ready/);
+    T.eq(c2.ready, false); T.eq(c2.liveStatus, 'Getting ready…'); T.match(c2.gate.hearingText, /checking the browser can hear/);
     f2._nativeSaw('blocked');
-    T.match(c2.liveStatus, /can not reach its speech service/);
+    T.match(c2.gate.hearingText, /can not reach its speech service/);
     c2.ear.status = 'loading'; c2.ear.progress = 40; f2._readyUpdate();
-    T.match(c2.liveStatus, /loading my on-device ear 40%/);
+    T.match(c2.gate.hearingText, /loading my on-device ear 40%/);
+    T.eq(c2.gate.open, false);
     c2.ear.on = true; c2.ear.status = 'on'; f2._readyUpdate();
-    T.eq(c2.ready, true); T.eq(c2.liveStatus, 'Listening');
+    T.eq(c2.ready, true); T.eq(c2.gate.open, true, 'hearing + voice + brain: open'); T.eq(c2.liveStatus, 'Listening');
+    T.match(said2[0] || '', /I am Netra, and I am ready - just speak/, 'the ready signal a blind user hears');
 });
 
 T.test('no mic check at start, no nudges, the quickest defaults', function () {
@@ -253,6 +257,63 @@ T.test('no mic check at start, no nudges, the quickest defaults', function () {
     T.eq(timers, [], 'a question does not arm a "still here" nudge');
     T.eq(cl.get('REMOTE_TTS_DEFAULT'), false, 'the browser voice by default');
     T.eq(cl.get('EAR_MODEL'), 'onnx-community/whisper-tiny.en');
+});
+
+T.test('the loading screen: nothing is accepted until Netra can hear, speak and answer', function () {
+    var cl = page(), f = cl.fn, c = cl.c, said = [], sent = [];
+    cl.set('speak', function (t, done) { said.push(t); if (done) done(); });
+    cl.set('handleHeard', function (t) { sent.push(t); });
+    cl.set('$timeout', Object.assign(function (fn) { return {}; }, { cancel: function () {} }));
+    ['cue', 'setState', '_calibConsume', 'learnFromTranscript', '_pushConfidence'].forEach(function (n) { cl.set(n, function () { return false; }); });
+    c.alert = true; c.conversationOpen = true; c.hasTTS = false; c.ready = true; c.data = { user_name: 'Guest', is_guest: true };
+    c.gate = { open: false, everOpen: false, hearing: true, voice: true, brain: false, hearingText: '', voiceText: '', brainText: 'checking…' };
+    f.processFinalTranscript('what time is it', 0.9);
+    T.eq(sent, []); T.match(c.heard[0].fate, /still getting ready/);
+    T.match(said[0], /still getting ready, my answers are not ready yet/, 'a blind user hears why');
+    f.processFinalTranscript('hello', 0.9);
+    T.eq(said.length, 1, 'the explanation is not repeated on every word');
+    // the brain answers its readiness probe: the gate opens with a greeting, no name for a guest
+    cl.set('c', c);
+    c.server = { get: function () { return { then: function (ok) { ok({ data: { ready: { ready: true, model: 'gemma-4-26b-a4b-it' } } }); } }; } };
+    f._brainProbe('test');
+    T.eq(c.gate.open, true);
+    T.match(said[said.length - 1], /^Good (morning|afternoon|evening)\. I am Netra, and I am ready - just speak\.$/, 'no "Guest" in the greeting');
+});
+
+T.test('the brain busy mid-visit: the question is held, asked again once when it is back, and never loops', function () {
+    var cl = page(), f = cl.fn, c = cl.c, said = [], sent = [], probes = [];
+    cl.set('speak', function (t, done) { said.push(t); if (done) done(); });
+    cl.set('handleHeard', function (t) { sent.push(t); });
+    cl.set('$timeout', Object.assign(function (fn, ms) { probes.push(ms); return {}; }, { cancel: function () {} }));
+    ['cue', 'setState', 'stopFillerChain', '_drainQueuedUtterance'].forEach(function (n) { cl.set(n, function () {}); });
+    c.alert = true; c.hasTTS = false; c.ready = true; c.data = {};
+    c.gate = { open: true, everOpen: true, hearing: true, voice: true, brain: true, hearingText: '', voiceText: '', brainText: '' };
+    var answers = [{ ready: false, say: 'busy', wait_ms: 10000 }];
+    c.server = { get: function () { var a = answers.shift() || { ready: true }; return { then: function (ok) { ok({ data: { ready: a } }); } }; } };
+    // the page's own brain-down branch, as the chat reply handler runs it
+    cl.set('_gateHeld', { text: 'who founded servicenow', at: Date.now() });
+    c.gate.brain = false; f._gateUpdate();
+    T.eq(c.gate.open, false, 'the loading screen is back');
+    f._brainProbe('busy');          // still busy: a retry is scheduled, nothing re-asked
+    T.eq(sent, []); T.ok(probes.length >= 1);
+    f._brainProbe('retry');         // back
+    T.eq(c.gate.open, true);
+    T.match(said[said.length - 1], /I am back/);
+    T.eq(sent, ['who founded servicenow'], 'asked again, once');
+    T.eq(cl.get('_gateReasked').text, 'who founded servicenow');
+});
+
+T.test('after the ear hands back to the browser recognizer, words still in its worker are dropped - never said twice', function () {
+    var cl = page(), f = cl.fn, c = cl.c, queued = [];
+    cl.set('_enqueueFinalTranscript', function (t) { queued.push(t); });
+    cl.set('applyAliases', function (t) { return t; });
+    cl.set('_earQueue', []); cl.set('_earBusy', true);
+    c.ear.on = false; c.ear.status = 'standby';
+    f._earOnMessage({ data: { text: ' My tickets! ', ms: 2100 } });
+    T.eq(queued, [], 'the browser recognizer delivers these words itself');
+    c.ear.on = true; c.ear.status = 'on';
+    f._earOnMessage({ data: { text: ' My tickets! ', ms: 2100 } });
+    T.eq(queued, ['My tickets!']);
 });
 
 T.run(__filename);

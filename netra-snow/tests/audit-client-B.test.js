@@ -274,7 +274,8 @@ T.test('a bare "OK" is an answer too', function () {
 
 T.test('"no, I meant X" is sent on as a command, never answered "Noted" on the page', function () {
     var p = new Page();
-    p.model(gem.text('Which ticket should go to Database?'), gem.text('Okay.'));
+    // (the later turns need replies too: a failed brain is no longer answered in basic mode)
+    p.model(gem.text('Which ticket should go to Database?'), gem.text('Okay.'), gem.text('Okay.'), gem.text('Okay.'));
     p.turn('assign INC0010013 to the network group please');
     p.hear('no, I meant the Database group'); p.flush(100);
     T.eq(p.messages().slice(-1), ['no, I meant the Database group'], 'the correction reached the server');

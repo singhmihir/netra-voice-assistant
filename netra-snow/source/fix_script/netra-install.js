@@ -478,7 +478,8 @@
     upsertProp('gemini_api_key', '', 'Google AI Studio API key for Gemini. REQUIRED for the conversational brain and TTS. Get a free key at https://aistudio.google.com/apikey');
     // R18 - no gemini_model pin any more: pinning disabled auto-routing and the
     // old value was a -latest alias that moved between model generations
-    upsertProp('model_chain', 'gemini-2.5-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3-flash-preview', 'Ordered model chain. Each free-tier model has its own daily pool; the quota governor skips resting ones for free.');
+    upsertProp('model_chain', 'gemma-4-26b-a4b-it,gemini-2.5-flash-lite,gemini-3.1-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-3.5-flash,gemini-3-flash-preview', 'Ordered model chain. Each free-tier model has its own allowance; the quota governor skips resting ones for free. Gemma 4 comes first: ~1.2 s on the lean request and a far larger daily allowance than the Gemini models.');
+    upsertProp('lean_prompt', 'auto', 'auto: the short prompt and routed tools for Guests and for Gemma models; always: for every call (fastest); never: the full prompt except where a model needs the lean one.');
     upsertProp('turn_call_budget', '5', 'Hard cap on generate calls per chat turn. When hit, Netra answers from what she already found instead of spending more.');
     upsertProp('fast_lane', 'true', 'Answer frequent unambiguous requests (status, my tickets, approvals, debrief, confirmations) with zero model calls.');
     upsertProp('brain_offline', 'false', 'Test switch: force basic (no-LLM) mode.');

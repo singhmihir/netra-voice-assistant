@@ -1894,6 +1894,18 @@
    tag (calc*var drop-shadow and grayscale(number) break the SCSS fork) */
 .nsg-0, .nsg-1, .nsg-2, .nsg-3 { transition: stop-color 0.2s linear; }
 
+/* R21 - the loading screen */
+.netra-gate { position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(12, 6, 30, .62); backdrop-filter: blur(3px); }
+.netra-gate-card { max-width: 420px; width: calc(100% - 32px); padding: 22px 24px; border-radius: 18px; background: rgba(25, 14, 52, .92); color: #fff; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+.netra-gate-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.netra-gate-sub { font-size: 13px; opacity: .8; margin-bottom: 14px; }
+.netra-gate-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.08); font-size: 14px; }
+.netra-gate-row b { min-width: 72px; }
+.netra-gate-row em { font-style: normal; opacity: .85; overflow-wrap: anywhere; }
+.netra-gate-row .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 10px; background: #f5b83d; animation: netra-gate-pulse 1s ease-in-out infinite alternate; }
+.netra-gate-row.ok .dot { background: #3ddc84; animation: none; }
+@keyframes netra-gate-pulse { from { opacity: .35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .netra-gate-row .dot { animation: none; } }
 .netra-stage-status {
     font-size: 17px;
     font-weight: 500;
