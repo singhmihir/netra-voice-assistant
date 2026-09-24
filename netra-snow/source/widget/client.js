@@ -1490,37 +1490,42 @@ api.controller = function ($scope, $timeout, $window) {
         return false;
     }
 
-    function matchesWake(text) {
+    // Wake-list entries that are everyday words or common names: they may
+    // strip a leading "Netra" while awake, but never wake her from sleep.
+    function _isSleepWakeWord(w) {
+        var lw = String(w || '').toLowerCase();
+        return WAKE_WORDS.indexOf(lw) >= 0 &&
+            !/^(near|knee|intra|centra|mantra|matra|mitra|meera|mehra|nehra|nair|neha|nira|neeraj|natraj|neeti|niti|neta|neeta|natta|natha|meetha|nidra)$/.test(lw);
+    }
+
+    // Only a LEADING "Netra" (or "hey/ok Netra") addresses her: returns the
+    // rest of the ORIGINAL text, or null. A name mid-sentence ("assign it to
+    // Neha Sharma") is part of the command and is never cut at.
+    function matchesWake(text, asleep) {
         if (!text) return null;
-        var words = text.toLowerCase().split(/[\s,\.!?;:\-]+/).filter(Boolean);
-        for (var i = 0; i < words.length; i++) {
-            var w = words[i];
-            // direct hit
-            if (isWakeWord(w)) {
-                // skip a leading salutation if it appeared just before
-                return words.slice(i + 1).join(' ').trim();
-            }
-            // "hey netra" / "ok netra" - check pairs
-            if (SALUTATION_PREFIXES.indexOf(w) >= 0 && i + 1 < words.length && isWakeWord(words[i + 1])) {
-                return words.slice(i + 2).join(' ').trim();
-            }
-        }
-        return null;
+        var words = String(text).toLowerCase().split(/[\s,\.!?;:\-]+/).filter(Boolean);
+        var isWake = asleep ? _isSleepWakeWord : isWakeWord;
+        var lead = 0;
+        if (words.length && isWake(words[0])) lead = 1;
+        else if (words.length > 1 && SALUTATION_PREFIXES.indexOf(words[0]) >= 0 && isWake(words[1])) lead = 2;
+        if (!lead) return null;
+        return String(text).replace(new RegExp('^[\\s,.!?;:\\-]*(?:[^\\s,.!?;:\\-]+[\\s,.!?;:\\-]*){' + lead + '}'), '').trim();
     }
 
     /* ============================================================
      *  VOICE COMMANDS (sleep / wake)
      * ============================================================ */
+    // the WHOLE utterance - "the error does not go away" is dictation, not sleep
     function matchSleep(s) {
         if (!s) return false;
-        return /\b(stop listening|go to sleep|sleep mode|sleep now|pause listening|be quiet|stop now|that['s ]?s all|go away|goodbye|good night)\b/i.test(s)
-            || /^stop$/i.test(s.trim());
+        var t = String(s).trim();
+        return /^((ok|okay|alright|thanks|thank you)[,.!]*\s+)?((hey |ok |okay )?netra[,!.]*\s*)?(stop listening|go to sleep|sleep mode|sleep now|pause listening|be quiet|stop now|that'?s all|that is all|go away|goodbye|good ?night)([,\s]+netra)?[.!,?\s]*$/i.test(t)
+            || /^stop$/i.test(t);
     }
     function matchExplicitWakeUp(s) {
         if (!s) return false;
-        // Used in dormant mode. Even a bare "Netra" should wake.
-        // We rely on matchesWake which is already permissive.
-        return matchesWake(s) !== null;
+        return matchesWake(s, true) !== null ||
+            /^((hey |ok |okay )?netra[,!.\s]*)?(wake\s*up|are\s+you\s+there|come\s+back)([,\s]+netra)?[.!?\s]*$/i.test(String(s).trim());
     }
 
     /* ============================================================
@@ -1531,12 +1536,16 @@ api.controller = function ($scope, $timeout, $window) {
         var lc = s.toLowerCase().trim();
 
         // R2.2 - voice-correction: "no, I meant X" / "I said X" / "the word is X"
-        // Auto-learn an alias from the previously-heard transcript to X.
+        // Learns an alias from the utterance BEFORE this one, only for a
+        // short word swap - and never answers locally: the correction is a
+        // command ("no, I meant the database group"), so it goes on to the
+        // server, which can fix the write and drops a read-back it declines.
         var corrMatch = lc.match(/^(?:no,?\s+)?(?:i\s+(?:said|meant)|the\s+word\s+is)\s+(.+)$/i);
         if (corrMatch) {
             var intended = corrMatch[1].trim();
-            var misheard = (c.lastHeard || '').toLowerCase().trim();
-            if (misheard && intended && misheard !== intended.toLowerCase()) {
+            var misheard = (c.prevHeard || '').toLowerCase().replace(/[.!?,]+$/, '').trim();
+            if (misheard && intended && misheard !== intended.toLowerCase() &&
+                misheard.split(/\s+/).length <= 4 && intended.split(/\s+/).length <= 4) {
                 c.aliases[misheard] = intended;
                 intended.toLowerCase().split(/\s+/).forEach(function (tk) {
                     if (tk.length < 2) return;
@@ -1546,9 +1555,9 @@ api.controller = function ($scope, $timeout, $window) {
                 });
                 saveTrainingData();
                 if (contRec) attachGrammar(contRec);
-                return { intent: 'correction',
-                         reply: 'Noted — I will hear "' + intended + '" from now on.' };
+                logEvent('train', 'alias learned: "' + misheard + '" -> "' + intended + '"');
             }
+            return null;
         }
 
         // R18 - every shortcut below matches the WHOLE utterance. The old
@@ -1700,16 +1709,19 @@ api.controller = function ($scope, $timeout, $window) {
         //   "request 8001"    -> "REQ0008001"
         //   "task 8001"       -> "TASK0008001"
         //   "knowledge 8001"  -> "KB0008001"
-        out = out.replace(/\bincident\s+(\d+)\b/gi, function(_,d){return 'INC' + d;});
-        out = out.replace(/\bchange\s+(?:request\s+)?(\d+)\b/gi, function(_,d){return 'CHG' + d;});
-        out = out.replace(/\bproblem\s+(\d+)\b/gi, function(_,d){return 'PRB' + d;});
-        out = out.replace(/\brequest\s+(\d+)\b/gi, function(_,d){return 'REQ' + d;});
-        out = out.replace(/\b(?:knowledge|article|kbase)\s+(\d+)\b/gi, function(_,d){return 'KB' + d;});
+        // Only a 4+ digit number is a ticket: "request 2 laptops" and "a
+        // problem 1 of my users has" are counts, not REQ0000002 / PRB0000001.
+        out = out.replace(/\bincident\s+(\d{4,})\b/gi, function(_,d){return 'INC' + d;});
+        out = out.replace(/\bchange\s+(?:request\s+)?(\d{4,})\b/gi, function(_,d){return 'CHG' + d;});
+        out = out.replace(/\bproblem\s+(\d{4,})\b/gi, function(_,d){return 'PRB' + d;});
+        out = out.replace(/\brequest\s+(\d{4,})\b/gi, function(_,d){return 'REQ' + d;});
+        out = out.replace(/\b(?:knowledge|article|kbase)\s+(\d{4,})\b/gi, function(_,d){return 'KB' + d;});
         // R5 - "vulnerable item 2345" / "vit 2345" -> VIT0002345
-        out = out.replace(/\b(?:vulnerable\s+item|vulnerability\s+item|vit)\s+(\d+)\b/gi, function(_,d){return 'VIT' + d;});
+        out = out.replace(/\b(?:vulnerable\s+item|vulnerability\s+item|vit)\s+(\d{4,})\b/gi, function(_,d){return 'VIT' + d;});
 
-        // coalesce PREFIX + digits possibly separated by spaces
-        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK|VIT)\s*([\d\s]+)/g, function (_, prefix, digits) {
+        // coalesce PREFIX + digits possibly separated by spaces - the space
+        // after the last digit stays, so the next word is not glued on
+        out = out.replace(/\b(INC|CHG|RITM|SCTASK|PRB|KB|REQ|TASK|VIT)\s*(\d(?:\s*\d)*)/g, function (_, prefix, digits) {
             var cleaned = digits.replace(/\s+/g,'');
             // pad to 7 digits for ticket-like prefixes
             if (cleaned.length > 0 && cleaned.length < 7 && /^(INC|CHG|RITM|SCTASK|PRB|REQ|TASK|VIT)$/.test(prefix)) {
@@ -2129,8 +2141,9 @@ api.controller = function ($scope, $timeout, $window) {
         var sub = norm(labelSub);
         var none = { el: null, say: 'I could not find a "' + String(labelSub || '') + '" button on this page, so I pressed nothing.' };
         if (!sub) return none;
-        // Scope to the page itself, NOT including our own widget (no clicking our own dev panel)
-        var scope = document.querySelector('main, .sp-page-root, body');
+        // Scope to the page itself, NOT including our own widget (no clicking our own dev panel).
+        // One selector list would return <body> first (document order), so each is tried in turn.
+        var scope = document.querySelector('main') || document.querySelector('.sp-page-root') || document.querySelector('body');
         if (!scope) return none;
         var candidates = scope.querySelectorAll('button, [role="button"], a.btn, input[type="button"], input[type="submit"], [ng-click]');
         var word = new RegExp('(^|[^a-z0-9])' + sub.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '($|[^a-z0-9])');
@@ -2159,6 +2172,14 @@ api.controller = function ($scope, $timeout, $window) {
             var said = [];
             for (var s = 0; s < hits.length && said.length < 3; s++) if (said.indexOf(hits[s].name) < 0) said.push(hits[s].name);
             return { el: null, say: 'I found more than one button like "' + labelSub + '": ' + said.join(', ') + (names.length > 3 ? ' and more' : '') + '. I pressed nothing - which one?' };
+        }
+        // ...but same-named buttons that do different things, or a row of
+        // them (a Delete per attachment or list row), are never guessed at
+        if (hits.length > 1) {
+            var act = function (el) { return String(el.getAttribute('ng-click') || el.getAttribute('onclick') || el.getAttribute('name') || ''); };
+            if (hits.length > 2 || act(hits[0].el) !== act(hits[1].el)) {
+                return { el: null, say: 'I found ' + hits.length + ' "' + hits[0].name + '" buttons on this page and can not tell which one you mean, so I pressed nothing.' };
+            }
         }
         return { el: hits[0].el, name: hits[0].name, say: 'Pressing "' + hits[0].name + '".' };
     }
@@ -2244,6 +2265,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (orbDragJustMoved) { orbDragJustMoved = false; return; }
         // toggle sleep/wake by tap as a convenience for sighted helpers
         if (c.alert) {
+            _cancelPlanContinue();
             c.alert = false;
             setState('dormant');
             speak('Going to sleep. Say Netra to wake me.');
@@ -3202,6 +3224,7 @@ api.controller = function ($scope, $timeout, $window) {
         // R8.1 - calibration read-back has priority over command routing
         if (_calibConsume(clean)) return;
         var lower = clean.toLowerCase();
+        c.prevHeard  = c.lastHeard;   // what "no, I meant X" corrects
         c.lastHeard  = clean;
         c.confidence = conf ? conf.toFixed(2) : '-';
         if (typeof conf === 'number') _pushConfidence(conf);   // R1 chart
@@ -3212,8 +3235,16 @@ api.controller = function ($scope, $timeout, $window) {
         if (conf >= MIN_CONFIDENCE) learnFromTranscript(clean);
         $scope.$applyAsync();
 
+        // ---- 0. "no" / "stop" to a running plan or a waiting read-back is
+        // the server's answer - not sleep, and never too short to count ----
+        if (c.alert && c.conversationOpen && _isNoAnswer(clean)) {
+            _answerNo(clean);
+            return;
+        }
+
         // ---- 1. Sleep command works in any mode ----
         if (matchSleep(lower)) {
+            _cancelPlanContinue();
             commandMode = false;
             if (commandTimer) $timeout.cancel(commandTimer);
             closeConversation();
@@ -3227,16 +3258,17 @@ api.controller = function ($scope, $timeout, $window) {
 
         // ---- 2. Dormant mode: only wake commands resume ----
         if (!c.alert) {
-            // Accept: any wake-word variant, or phrases like "wake up", "are you there", "hey"
-            var wakePhrase = matchExplicitWakeUp(lower) ||
-                /\b(wake\s*up|are\s+you\s+there|hey|listen|come\s+back|hello)\b/i.test(lower);
+            // Accept: "Netra ..." leading the utterance, or a whole "wake up" /
+            // "are you there" / "come back" - heard clearly. A "hello" on the
+            // phone or a colleague named Neha is not the user asking for her.
+            var wakePhrase = !(conf > 0 && conf < MIN_CONFIDENCE) && matchExplicitWakeUp(clean);
             if (wakePhrase) {
                 c.alert = true;
                 setState('idle');
                 cue('resume');
                 openConversation('woke from dormant');
-                var restW = matchesWake(lower);
-                if (restW && restW.length > 2 && !/^(listen|wake\s*up|wake|are\s+you\s+there|hello)$/i.test(restW)) {
+                var restW = matchesWake(clean, true);
+                if (restW && restW.length > 2 && !/^(listen|wake\s*up|wake|are\s+you\s+there|come\s+back|hello)$/i.test(restW.replace(/[.!?,\s]+$/, ''))) {
                     speak('Yes, I am back.', function () {
                         $timeout(function () { processCommand(restW, conf); }, 200);
                     });
@@ -3254,7 +3286,7 @@ api.controller = function ($scope, $timeout, $window) {
         // to say it. Filter very short utterances and low-confidence
         // chatter so background noise does not become a command.
         if (c.conversationOpen) {
-            var stripped = matchesWake(lower);
+            var stripped = matchesWake(clean);
             var input = (stripped !== null) ? stripped : clean;
 
             // Bare "Netra" / "Netra-only" - just acknowledge with a chirp
@@ -3263,8 +3295,8 @@ api.controller = function ($scope, $timeout, $window) {
                 logEvent('conv', 'name only heard (still listening)');
                 return;
             }
-            // Filter chatter
-            if (input.length < MIN_LENGTH) {
+            // Filter chatter - but "no" and "ok" are whole answers
+            if (input.length < MIN_LENGTH && !/^(no|ok)$/i.test(input)) {
                 logEvent('rec', 'ignored (too short: "' + input + '")');
                 return;
             }
@@ -3286,7 +3318,7 @@ api.controller = function ($scope, $timeout, $window) {
         }
 
         // ---- 4. Wake match (alert + no conversation open) ----
-        var afterWake = matchesWake(lower);
+        var afterWake = matchesWake(clean);
         if (afterWake !== null) {
             cue('wake');
             if (afterWake.length > 2) {
@@ -3324,6 +3356,7 @@ api.controller = function ($scope, $timeout, $window) {
 
         // Re-check sleep / wake locally
         if (matchSleep(lower)) {
+            _cancelPlanContinue();
             c.alert = false;
             setState('dormant');
             cue('pause');
@@ -3397,6 +3430,8 @@ api.controller = function ($scope, $timeout, $window) {
             return;
         }
         _chatInFlight = true;
+        if (transcript !== '[continue plan]') _cancelPlanContinue();
+        if (_bargedReply) { logEvent('barge', 'interrupted reply superseded by a new request - not said'); _bargedReply = null; }
         var myEpoch = ++_turnEpoch;
         // a reply released by the hung timer is still on its way: this turn
         // makes it stale, so it will never be heard
@@ -3473,6 +3508,10 @@ api.controller = function ($scope, $timeout, $window) {
                 // stale: keep its history + stats, but never speak it over
                 // the user's newer request.
                 var stale = (myEpoch !== _turnEpoch);
+                // a barge that sent nothing newer (a local reply, noise, a
+                // reflex "wait") only interrupted this reply - it is still owed
+                var superseded = stale && (mySeq !== _chatSeq || !!_queuedUtterance);
+                var planNext = false;
                 // R1 - record latency + model + tools used
                 var elapsed = Date.now() - startedAt;
                 c.stats.lastLatencyMs = elapsed;
@@ -3509,11 +3548,13 @@ api.controller = function ($scope, $timeout, $window) {
                     // has steps left: bring the brain back automatically so
                     // long plans span turns without the user re-prompting.
                     // Guarded by stale (barge-in wins) and a soft local cap.
+                    // The next hop goes only after this progress was heard,
+                    // and any stop, barge, sleep or new request cancels it.
                     if (r.continue_plan && !stale) {
                         c._planHops = (c._planHops || 0) + 1;
                         if (c._planHops <= 6) {
-                            logEvent('brain', 'plan continues - auto-resubmitting (hop ' + c._planHops + ')');
-                            $timeout(function () { processCommand('[continue plan]', 1.0); }, 1200);
+                            logEvent('brain', 'plan continues - resubmitting once this progress is said (hop ' + c._planHops + ')');
+                            planNext = true;
                         }
                     } else if (!r.continue_plan) {
                         c._planHops = 0;
@@ -3540,6 +3581,7 @@ api.controller = function ($scope, $timeout, $window) {
                         if (c.liveMode && (r.directives.navigate_url || r.directives.open_url || r.directives.click_button_label)) {
                             logEvent('nav', 'live stage - navigation/click directive suppressed');
                             if (r.directives.click_button_label) r.message = String(r.message || '') + ' I can not press buttons from this page, so I pressed nothing.';
+                            if (r.directives.open_url) r.message = String(r.message || '') + ' I can not open tabs from this page, so nothing opened.';
                         } else {
                         if (r.directives.navigate_url) {
                             logEvent('nav', 'navigating to ' + r.directives.navigate_url);
@@ -3551,23 +3593,14 @@ api.controller = function ($scope, $timeout, $window) {
                         }
                         // R2.4 - open external URL. window.open may be blocked
                         // by Chrome's popup blocker (no user-gesture context).
-                        // Show a clickable link in the spoken-response card as
-                        // a fallback so the sighted helper can complete the
-                        // open with one click - this counts as a user gesture.
+                        // Tried now, so the reply says what really happened;
+                        // when blocked, the fallback link takes focus and the
+                        // user is told Enter opens it (a key press is a gesture).
                         if (r.directives.open_url) {
                             logEvent('nav', 'opening: ' + r.directives.open_url);
-                            $timeout(function () {
-                                var win = null;
-                                try { win = $window.open(r.directives.open_url, '_blank', 'noopener,noreferrer'); }
-                                catch (e) { logEvent('err', 'window.open threw: ' + e.message); }
-                                if (!win) {
-                                    // Blocked - put a clickable link in c.pendingOpenUrl
-                                    // (rendered in the response card)
-                                    c.pendingOpenUrl = r.directives.open_url;
-                                    logEvent('warn', 'popup blocked - showing clickable link in card');
-                                    $scope.$applyAsync();
-                                }
-                            }, 1500);
+                            if (!_openTab(r.directives.open_url)) {
+                                r.message = String(r.message || '') + ' Your browser blocked the new tab, so nothing opened yet - press Enter to open it.';
+                            }
                         }
                         if (r.directives.click_button_label) {
                             // decide now, so the reply says what really happens
@@ -3606,13 +3639,18 @@ api.controller = function ($scope, $timeout, $window) {
                     }
                 }
                 if (stale) {
-                    logEvent('barge', 'reply arrived after barge-in - kept in history, not spoken');
                     lastReply = r.message || lastReply;
                     // a reply the user never heard must not be answerable:
                     // tell the server on the next turn so it drops its draft
                     // (a newer turn already sent was told when it went out)
                     c._awaitingConfirm = false;
                     if (mySeq === _chatSeq) c._lastReplyUnheard = true;
+                    if (!superseded && c.alert) {
+                        logEvent('barge', 'reply arrived after a barge-in that asked nothing new - saying it once the floor is free');
+                        _sayBargedReply({ r: r }, 0);
+                    } else {
+                        logEvent('barge', 'reply arrived after barge-in - kept in history, not spoken');
+                    }
                     _drainQueuedUtterance();
                     return;
                 }
@@ -3632,6 +3670,7 @@ api.controller = function ($scope, $timeout, $window) {
                         }
                         // R6 - if she asked a question, wait then nudge once
                         _armReprompt(r.message);
+                        if (planNext && myEpoch === _turnEpoch && !_queuedUtterance) _planContinueLater(myEpoch);
                         _drainQueuedUtterance();
                     });
                 } else {
@@ -3677,6 +3716,106 @@ api.controller = function ($scope, $timeout, $window) {
         $timeout(function () { handleHeard(q); }, 80);
     }
 
+    // R17 - the next plan hop, a moment after the last one's progress was
+    // said. Anything since (a stop, a barge, sleep, a new request) wins.
+    function _planContinueLater(epoch) {
+        _cancelPlanContinue();
+        _planContinueTimer = $timeout(function () {
+            _planContinueTimer = null;
+            if (epoch !== _turnEpoch || !c.alert || _chatInFlight || _queuedUtterance) {
+                logEvent('brain', 'plan not continued - something came up after its progress line');
+                return;
+            }
+            processCommand('[continue plan]', 1.0);
+        }, 1200);
+    }
+    function _cancelPlanContinue() {
+        if (!_planContinueTimer) return;
+        $timeout.cancel(_planContinueTimer);
+        _planContinueTimer = null;
+        logEvent('brain', 'plan continue cancelled');
+    }
+    function _planRunning() { return (c._planHops || 0) > 0; }
+
+    // what the server takes as "no": it declines a parked read-back and
+    // stops a running plan
+    function _isDecline(t) {
+        return /^(netra[,!.\s]*)?(no|nope|no no|no thanks|no stop|stop|stop it|stop the plan|cancel|cancel that|cancel it|don'?t|do not|not now|hold off|leave it|forget it|never ?mind)[.!,?\s]*$/i.test(String(t || '').trim());
+    }
+    // must the server hear this as "no"? Any stop word while a plan runs; a
+    // decline while a read-back waits. Silencing her voice, sleeping, or
+    // dropping it as too short left the plan writing and the read-back
+    // confirmable by a later "okay".
+    function _isNoAnswer(t) {
+        var s = String(t || '').trim();
+        if (_planRunning()) return _isDecline(s) || HARD_INTERRUPT_RE.test(s);
+        return !!c._awaitingConfirm && Date.now() - (c._awaitingConfirmAt || 0) < 10 * 60000 && _isDecline(s);
+    }
+    function _answerNo(heard) {
+        _cancelPlanContinue();
+        logEvent('conv', '"' + heard + '" is a no - telling the server');
+        handleHeard('no');
+    }
+
+    // R6 - a reply a barge interrupted when nothing newer was asked (a local
+    // reply, noise, a reflex "wait"): said once the user is done and she is
+    // free, so a write is never done unannounced. An interrupted plan hop is
+    // stopped instead, and the server says how far it got. A new request
+    // drops it (handleHeard).
+    function _sayBargedReply(p, tries) {
+        _bargedReply = p;
+        $timeout(function () {
+            if (_bargedReply !== p) return;
+            if (!c.alert) { _bargedReply = null; return; }
+            var userTalking = _finalBuffer.length > 0 || !!_finalTimer || (_lastInterimAt > 0 && Date.now() - _lastInterimAt < 1500);
+            if (userTalking || _speakingNow || _chatInFlight || c.state === 'speaking' || c.state === 'thinking') {
+                if (tries < 40) _sayBargedReply(p, tries + 1);
+                else { _bargedReply = null; logEvent('barge', 'interrupted reply dropped - the floor never came free'); }
+                return;
+            }
+            _bargedReply = null;
+            var r = p.r;
+            if (r.continue_plan) { _answerNo('(plan interrupted)'); return; }
+            var text = String(r.message || (r.ok ? '' : 'Sorry, something went wrong.'));
+            if (!text) return;
+            if (r.directives && (r.directives.navigate_url || r.directives.open_url || r.directives.click_button_label)) {
+                text += ' I did not open or press anything, because you spoke over me.';
+            }
+            // heard now, so it can be answered
+            c._lastReplyUnheard = false;
+            c._awaitingConfirm = !!r.awaiting_confirm;
+            c._awaitingConfirmAt = Date.now();
+            c.lastAnswer = text.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*_`#>]/g, '').trim();
+            c.lastAnswerAt = Date.now();
+            _convoPush('netra', text);
+            setState('speaking');
+            speak('About your earlier request: ' + text, function () {
+                if (c.alert) setState('idle');
+                _armReprompt(text);
+            });
+        }, 700);
+    }
+
+    // R2.4 - a new tab, tried at once so the reply can say whether it opened.
+    // No "noopener" in the features: with it window.open always returns
+    // null, so a blocked tab and an opened one looked the same.
+    function _openTab(url) {
+        var win = null;
+        try { win = $window.open(url, '_blank'); }
+        catch (e) { logEvent('err', 'window.open threw: ' + e.message); }
+        if (win) {
+            try { win.opener = null; } catch (eO) {}
+            return true;
+        }
+        c.pendingOpenUrl = url;
+        logEvent('warn', 'popup blocked - the link takes focus, Enter opens it');
+        $scope.$applyAsync();
+        $timeout(function () {
+            try { var a = document.querySelector('.netra-card-link'); if (a) a.focus(); } catch (eF) {}
+        }, 60);
+        return false;
+    }
+
     /* ============================================================
      *  R6 - HUMAN TURN-TAKING ENGINE
      *
@@ -3715,6 +3854,8 @@ api.controller = function ($scope, $timeout, $window) {
     var _repliesPending = 0;       // chats sent whose reply has not landed (the hung timer releases the turn early)
     var _chatSeq        = 0;       // bumped per chat sent
     var _queuedUtterance = null;   // barge-in that arrived while a chat was in flight
+    var _bargedReply    = null;    // a reply a barge interrupted, said once the floor is free
+    var _planContinueTimer = null; // the pending [continue plan] resubmit
     var _speakSessionId = 0;       // aborts the pipelined-TTS queue on stop
     var _duckedForBarge = false;
     var _duckRestoreTimer = null;
@@ -3769,6 +3910,7 @@ api.controller = function ($scope, $timeout, $window) {
     function stopSpeaking(reason) {
         _speakSessionId++;                      // aborts pipelined sentence queue
         _turnEpoch++;                           // any in-flight reply is now stale
+        _cancelPlanContinue();                  // and no plan hop goes out behind it
         stopFillerChain();
         // R7 - kill the live synthesis socket so streamed audio stops
         // being produced, not just played.
@@ -3848,6 +3990,14 @@ api.controller = function ($scope, $timeout, $window) {
         if (_looksLikeEcho(trimmed)) {
             logEvent('rec.echo', '"' + trimmed + '" (my own voice, overlap-matched)');
             _restoreDuck();
+            return true;
+        }
+        // "no" / "stop" to a running plan or a waiting read-back: she stops
+        // AND the server hears it, even when it is one short word
+        if (_isNoAnswer(trimmed)) {
+            stopSpeaking('answer "' + trimmed + '"');
+            _dropFinalBuffer('answered no');
+            _answerNo(trimmed);
             return true;
         }
         if (HARD_INTERRUPT_RE.test(trimmed)) {
