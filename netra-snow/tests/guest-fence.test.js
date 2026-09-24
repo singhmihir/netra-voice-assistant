@@ -146,4 +146,31 @@ T.test('a person lookup honours the directory\'s ACLs', function () {
     T.eq(r.users.map(function (u) { return u.username; }), ['bert.anglin'], 'a row the user may not read is not returned');
 });
 
+T.test('one visitor gets 40 model questions an hour; past that the web answers, and the next visitor still gets the model', function () {
+    var s = guest(new S.Session());
+    var replies = [];
+    for (var i = 0; i < 44; i++) replies.push(gem.text('answer ' + i));
+    s.model.apply(s, replies);
+    for (i = 0; i < 40; i++) s.say('tell me something interesting about octopus number ' + i);
+    T.eq(s.gemini.generate.length, 40, 'forty questions reached the model');
+    var r = s.say('and one more about octopuses please');
+    T.eq(s.gemini.generate.length, 40, 'the forty-first did not');
+    T.match(r.message, /^You have asked me a lot this hour/);
+    g.P.SESSION = {};   // another browser
+    s.say('what is an octopus');
+    T.eq(s.gemini.generate.length, 41, 'a new visitor still gets the model');
+    g.P.SESSION = { netra_guest_turns: (g.P.now - 3600001) + ':41' };   // the first visitor, an hour on
+    s.say('and why do they have three hearts');
+    T.eq(s.gemini.generate.length, 42, 'an hour later the same visitor is back on the model');
+});
+
+T.test('a signed-in user has no Guest budget', function () {
+    var s = new S.Session();
+    var replies = [];
+    for (var i = 0; i < 45; i++) replies.push(gem.text('ok ' + i));
+    s.model.apply(s, replies);
+    for (i = 0; i < 45; i++) s.say('explain something interesting number ' + i);
+    T.eq(s.gemini.generate.length, 45);
+});
+
 T.run(__filename);

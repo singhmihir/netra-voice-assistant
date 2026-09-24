@@ -478,7 +478,13 @@ var gs = {
     generateGUID: function () { return newId(); },
     getMessage: function (m) { return m; },
     eventQueue: function () {},
-    getSession: function () { return { getTimeZoneName: function () { return 'UTC'; } }; },
+    getSession: function () {
+        // one browser session's client data (P.SESSION is reset per world)
+        var sd = P.SESSION || (P.SESSION = {});
+        return { getTimeZoneName: function () { return 'UTC'; },
+                 getClientData: function (k) { return sd.hasOwnProperty(k) ? sd[k] : null; },
+                 putClientData: function (k, v) { sd[k] = String(v); } };
+    },
     daysAgoStart: function (n) { return fmtUtc(P.now - n * 86400000); },
     include: function () {}
 };
@@ -518,7 +524,7 @@ function reset() {
     P.STORE = {}; P.PROPS = {}; P.DISPLAY = {}; P.CHOICES = JSON.parse(JSON.stringify(DEFAULT_CHOICES)); P.INVALID_FIELDS = {}; P.UNSUPPORTED = []; P.LOG = [];
     P.HTTP = null; P.now = Date.UTC(2026, 8, 23, 20, 0, 0); P.guid = 0; P.tzOffsetMs = 0;
     P.user = { sys_id: 'u_admin', name: 'System Administrator', user_name: 'admin' };
-    P.ROLES = null; P.ACL = null;
+    P.ROLES = null; P.ACL = null; P.SESSION = {};
     GlideRecord.onUpdate = {}; GlideRecord.onInsert = {}; GlideRecord.refuseDelete = {}; GlideRecord.refuseInsert = {}; GlideRecord.refuseUpdate = {};
 }
 

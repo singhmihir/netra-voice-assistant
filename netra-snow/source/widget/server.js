@@ -721,6 +721,9 @@
         if (fast) return fast;
         if (!apiKey) return _offlineAnswer(userMessage, contents, { why: 'no_key' });
         if (_brainOfflineForced()) return _offlineAnswer(userMessage, contents, { why: 'forced' });
+        // one anonymous visitor's share of the key every visitor uses: past
+        // it the web still answers, and the next visitor still gets the model
+        if (_guestOverBudget()) return _offlineAnswer(userMessage, contents, { why: 'guest_budget' });
 
         var systemInstruction = _systemPrompt(liveMode);
         var tools = _toolDeclarations(liveMode);
@@ -1292,6 +1295,21 @@
         try {
             if (typeof gs.isLoggedIn === 'function' && !gs.isLoggedIn()) return true;
             return String(gs.getUserName() || '') === 'guest';
+        } catch (e) { return false; }
+    }
+    // a Guest's questions to the model, counted per browser session: 40 an
+    // hour. The public page shares one free key between every visitor, so
+    // one visitor (or a script) must not spend the day's quota for everyone
+    function _guestOverBudget() {
+        if (!_isGuest()) return false;
+        try {
+            var sess = gs.getSession(), now = new GlideDateTime().getNumericValue();
+            var parts = String(sess.getClientData('netra_guest_turns') || '').split(':');
+            var since = parseInt(parts[0], 10) || 0, n = parseInt(parts[1], 10) || 0;
+            if (now - since > 3600000) { since = now; n = 0; }
+            n++;
+            sess.putClientData('netra_guest_turns', since + ':' + n);
+            return n > 40;
         } catch (e) { return false; }
     }
     function _guestNeedsSignIn(lc, norm) {
@@ -2602,12 +2620,14 @@ _timeLine();
         // R21 - a Guest: the web, and nothing that reads or writes records
         // (the page's loading screen and greeting already said why)
         if (_isGuest()) {
+            var gNote = (why && why.why === 'guest_budget') ? 'You have asked me a lot this hour, so for now I answer from the web. ' : '';
             if (_contentWords(clean).length) {
                 try {
                     var gw = _searchWeb(clean.replace(/[?.!]+$/, ''));
-                    if (gw && gw.ok && _onTopic(clean, gw)) return _flReply(_saySearch(gw, clean), contents, 'search_web', 'offline', { search: { source: gw.source, heading: gw.heading, url: gw.url } });
+                    if (gw && gw.ok && _onTopic(clean, gw)) return _flReply(gNote + _saySearch(gw, clean), contents, 'search_web', 'offline', { search: { source: gw.source, heading: gw.heading, url: gw.url } });
                 } catch (eGw) {}
             }
+            if (gNote) return _flReply(gNote + 'The web had nothing clear on that one. Ask me to look something up, or the time, and in a while I can think it through again.', contents, 'offline_help', 'offline');
             return _flReply('I can not work that one out without my reasoning models, and the web had nothing on it. ' + _offlineWhen(why && why.resting_until_ms) +
                             ' Meanwhile, ask me to look something up, or the time.', contents, 'offline_help', 'offline');
         }
