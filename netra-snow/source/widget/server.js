@@ -2551,12 +2551,17 @@
         if (!tgt) return { ok: false, error: 'Which ticket or server should I look into?', final_speech: 'Which ticket or server should I look into?' };
         var anchor = inv.resolveAnchor(_normSpoken(tgt).toUpperCase().match(/\b(INC|CHG|PRB|RITM|REQ|SCTASK)\d{7}\b/) ? _findNums(_normSpoken(tgt))[0] : tgt);
         if (!anchor || !anchor.ok) {
-            var why = 'I could not find a ticket or configuration item called "' + tgt + '"' + (anchor && anchor.reason ? ' (' + anchor.reason + ')' : '') + '.';
+            // a ticket number that resolves to nothing is, to this user, a
+            // ticket they can not see - the same words as everywhere else
+            var tn = _findNums(_normSpoken(tgt))[0];
+            var why = tn ? 'Ticket ' + _spkNum(tn) + ' was not found, or you can not see it.'
+                         : (anchor && anchor.reason === 'blocked' ? String(anchor.message || 'I could not read the CMDB to look that name up.')
+                                                                  : 'I could not find a ticket or configuration item called "' + tgt + '".');
             return { ok: false, error: why, final_speech: why };
         }
         var seen = _invReadable(anchor);
         if (!seen) {
-            var hidden = 'Ticket ' + anchor.number + ' was not found, or you can not see it.';
+            var hidden = 'Ticket ' + _spkNum(anchor.number) + ' was not found, or you can not see it.';
             return { ok: false, error: hidden, final_speech: hidden };
         }
         if (anchor.kind === 'ticket') { try { _setFocusTicket(anchor.number); } catch (eF) {} }

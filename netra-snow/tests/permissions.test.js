@@ -211,4 +211,14 @@ T.test('similar past tickets are only ones the user could open themselves', func
     T.notMatch(res, /INC0019002|confidential/, 'someone else\'s ticket and its close notes stay out');
 });
 
+T.test('investigating a ticket the user can not see says so, with no internal codes', function () {
+    var s = new S.Session();
+    S.g.P.PROPS['x_196061_netra_v1.investigate_llm'] = 'false';
+    g.P.user = BETH;
+    g.P.ACL = function (table, op, rec) { return table !== 'incident' || rec.caller_id === 'u_beth'; };
+    var r = s.say('investigate INC0010013');
+    T.match(r.message, /Ticket \*\*incident ending 0 1 3\*\* was not found, or you can not see it\./);
+    T.notMatch(r.message, /not_found|no_match|\(/);
+});
+
 T.run(__filename);
