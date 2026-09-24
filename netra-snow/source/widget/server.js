@@ -2828,7 +2828,9 @@
         if (!gr.get(inv.anchor.sys_id)) return { text: 'That ticket is gone, or you can not see it any more.' };
         if (!gr.canWrite()) return { text: 'You do not have permission to change ' + _spkNum(inv.anchor.number) + ', so I did not link it.' };
         // caused_by only: on problem, rfc means the change raised to FIX it
-        var linkField = gr.isValidField('caused_by') ? 'caused_by' : '';
+        // whether the field EXISTS is the table's business (a plain record, as
+        // the offer used); whether this user may set it is theirs
+        var linkField = new GlideRecord(inv.anchor.table || 'incident').isValidField('caused_by') ? 'caused_by' : '';
         if (linkField && !_fieldCan(gr, 'caused_by', 'write')) return { text: 'You can not edit the "caused by" field on ' + _spkNum(inv.anchor.number) + ', so I did not link it.' };
         if (!linkField && !_fieldCan(gr, 'work_notes', 'write')) return { text: 'You do not have permission to add work notes on ' + _spkNum(inv.anchor.number) + ', so I did not link it.' };
         if (!linkField) {
@@ -6176,6 +6178,7 @@
             var gr = table ? _ugr(table) : null;
             if (!gr || !gr.get('number', num)) { failed.push({ number: num, why: 'not found, or you can not see it' }); continue; }
             if (!gr.canWrite()) { failed.push({ number: num, why: 'you do not have permission to change it' }); continue; }
+            if (comment && !_fieldCan(gr, 'comments', 'write')) { failed.push({ number: num, why: 'you do not have permission to comment on it' }); continue; }
             // before-values, so "undo that" can put the batch back
             var before = {};
             if (state) before.state = String(gr.getValue('state') || '');
@@ -7933,12 +7936,12 @@
                 sys_id:   sysId,
                 number:   String(gr.number),
                 short_description: String(gr.short_description || ''),
-                state:    String(gr.state.getDisplayValue ? gr.state.getDisplayValue() : gr.state),
+                state:    String(gr.getDisplayValue('state') || gr.getValue('state') || ''),
                 priority: String(gr.priority),
                 category: String(gr.category || ''),
                 subcategory: String(gr.subcategory || ''),
-                assignment_group: String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : ''),
-                assigned_to: String(gr.assigned_to.getDisplayValue ? gr.assigned_to.getDisplayValue() : ''),
+                assignment_group: String(gr.getDisplayValue('assignment_group') || ''),
+                assigned_to: String(gr.getDisplayValue('assigned_to') || ''),
                 close_notes: String(gr.close_notes || '').replace(/\s+/g, ' ').substring(0, 600),
                 resolved_at: String(gr.resolved_at || gr.closed_at || ''),
                 opened: String(gr.sys_created_on || ''),
@@ -8120,7 +8123,7 @@
                 number: String(gr.number),
                 short_description: String(gr.short_description || ''),
                 category: String(gr.category || '(none)'),
-                ci: String(gr.cmdb_ci.getDisplayValue ? gr.cmdb_ci.getDisplayValue() : ''),
+                ci: String(gr.getDisplayValue('cmdb_ci') || ''),
                 priority: String(gr.priority),
                 opened: String(gr.sys_created_on)
             };
@@ -8171,7 +8174,7 @@
                 total++;
                 var c = String(gr.category || '(uncategorised)');
                 cats[c] = (cats[c] || 0) + 1;
-                var g = String(gr.assignment_group.getDisplayValue ? gr.assignment_group.getDisplayValue() : '');
+                var g = String(gr.getDisplayValue('assignment_group') || '');
                 if (g) groups[g] = (groups[g] || 0) + 1;
             }
             return { cats: cats, groups: groups, total: total };
@@ -8986,7 +8989,12 @@
                 } catch (eAf) {}
                 plan.undo.push(crumb);
             }
-            if (tool === 'create_ticket' && res && res.number) plan.undo.push({ kind: 'created', number: String(res.number) });
+            if (tool === 'create_ticket' && res && res.number) {
+                // how it was left, so undo never cancels a ticket people have since worked on
+                var cc0 = new GlideRecord('incident'), mod0 = '';
+                if (cc0.get('number', String(res.number))) mod0 = String(cc0.getValue('sys_mod_count') || '0');
+                plan.undo.push({ kind: 'created', number: String(res.number), mod: mod0 });
+            }
             plan.results.push({ step: plan.cursor + 1, ok: true, one_way: oneWay, undoable: !!crumb || tool === 'create_ticket' });
             // speak what the tool REPORTS it did (the group it actually found,
             // the priority it read back) rather than what was planned
@@ -9068,6 +9076,7 @@
                     var CANCEL2 = { incident: '8', change_request: '4', sc_task: '4', sc_req_item: '4', sc_request: '4' };
                     var gr2 = tb2 ? _ugr(tb2) : null;
                     if (!gr2 || !gr2.get('number', u.number)) { problems.push(u.number + ' is gone, or you can not see it'); continue; }
+                    if (u.mod && String(gr2.getValue('sys_mod_count') || '0') !== u.mod) { problems.push(u.number + ' has been worked on since, so I left it open'); continue; }
                     if (!CANCEL2[tb2]) { problems.push(u.number + ' has no cancelled state I can set, so it is still open'); continue; }
                     if (!gr2.canWrite()) { problems.push('you do not have permission to cancel ' + u.number); continue; }
                     gr2.setValue('state', CANCEL2[tb2]);

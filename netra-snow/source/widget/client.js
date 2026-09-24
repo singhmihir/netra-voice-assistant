@@ -1373,7 +1373,10 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function _promptIndexFrom(arr, from) {
         for (var i = Math.max(0, from); i < arr.length; i++) if (_isPromptEntry(arr[i])) return i;
-        return arr.length;
+        // no prompt after the cut point (one long tool-heavy exchange): keep
+        // from the last prompt before it - a trim must never wipe the memory
+        var last = _lastPromptIndex(arr);
+        return last >= 0 ? last : arr.length;
     }
     function _lastPromptIndex(arr) {
         for (var i = arr.length - 1; i >= 0; i--) if (_isPromptEntry(arr[i])) return i;
@@ -3567,8 +3570,9 @@ api.controller = function ($scope, $timeout, $window) {
         // turn, or a read-back waiting for "yes" goes stale underneath them
         c.data.auto = !!c._nextTurnAuto && c._nextTurnAuto === transcript;
         c._nextTurnAuto = false;
-        c.data.drop_unheard = !!c._lastReplyUnheard;
-        c._lastReplyUnheard = false;
+        // an auto turn is not the user answering: keep the flag for their next turn
+        c.data.drop_unheard = !c.data.auto && !!c._lastReplyUnheard;
+        if (!c.data.auto) c._lastReplyUnheard = false;
         // R8.2 - live-stage flag (server strips navigation tools) + prosody
         c.data.live_mode = !!c.liveMode;
         var prosOut = null;
