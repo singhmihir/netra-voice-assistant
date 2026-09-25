@@ -7419,15 +7419,16 @@ api.controller = function ($scope, $timeout, $window) {
     // expressive than the older en-IN voices (closest free match to the
     // "GPT Live" sound) and handles Hinglish code-switching natively.
     // User's pick persists in localStorage via the dev-panel voice picker.
-    c.edgeVoice = 'en-US-AvaMultilingualNeural';
+    c.edgeVoice = 'en-GB-SoniaNeural';   // v7.9 - Sonia (British English) is Netra's voice by default
     var EDGE_VOICES = [
-        'en-US-AvaMultilingualNeural',   // newest gen, most human (default)
+        'en-GB-SoniaNeural',             // Netra's voice (default)
+        'en-US-AvaMultilingualNeural',   // newest gen, most human
         'en-US-EmmaMultilingualNeural',  // newest gen, brighter
         'en-US-AndrewMultilingualNeural',// newest gen, male
         'en-US-BrianMultilingualNeural', // newest gen, male casual
         'en-US-JennyNeural', 'en-US-AriaNeural',
         'en-IN-NeerjaNeural', 'en-IN-AashiNeural', 'en-IN-AnanyaNeural',
-        'hi-IN-SwaraNeural', 'en-GB-SoniaNeural'
+        'hi-IN-SwaraNeural'
     ];
     c.edgeVoices = EDGE_VOICES;   // R13 - the setup panel lists them too
     // R7 - Edge audio: 48 -> 96 kbps. The low bitrate was a big part of
@@ -8452,6 +8453,11 @@ api.controller = function ($scope, $timeout, $window) {
             var fv = voices.find(function (vv) { return vv.name === forcedVoiceName; });
             if (fv) return fv;
         }
+        // v7.9 - Sonia (English, United Kingdom) is Netra's voice wherever
+        // this device has her: an installed copy first, else the online one
+        var sonia = voices.find(function (vv) { return /Sonia/i.test(vv.name || '') && vv.localService; }) ||
+                    voices.find(function (vv) { return /Sonia/i.test(vv.name || ''); });
+        if (sonia) return sonia;
         // R13 FIX - the browser fallback now honors the picked voice too:
         // match the same speaker name first (Edge exposes "Microsoft Ava
         // Online (Natural)..." locally), then the same locale, and only
@@ -8495,7 +8501,7 @@ api.controller = function ($scope, $timeout, $window) {
 
         // Tier 1: top-shelf neural voices by exact name, best first.
         var premium = [
-            'Ava', 'Aria', 'Emma', 'Jenny', 'Michelle', 'Sonia', 'Libby',
+            'Sonia', 'Ava', 'Aria', 'Emma', 'Jenny', 'Michelle', 'Libby',
             'Google US English', 'Google UK English Female',
             'Samantha', 'Karen', 'Moira', 'Tessa', 'Neerja', 'Heera'
         ];
@@ -22729,7 +22735,7 @@ _timeLine();
     }
 
 })();
-]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>122</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-25 09:41:25</sys_updated_on><template><![CDATA[<!--
+]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>123</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-25 09:47:33</sys_updated_on><template><![CDATA[<!--
   Netra Mic widget template - R9 "Prism"
 
   R8.1: the prism hue engine drives every colour in this template via
