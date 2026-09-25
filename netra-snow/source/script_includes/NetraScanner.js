@@ -41,6 +41,19 @@ NetraScanner.prototype = {
             gs.warn('[NetraScanner] cluster detection failed: ' + eM);
         }
 
+        // R17 - execute due standing orders (the act-while-away engine).
+        // Deliberately AFTER reminders and BEFORE the per-user scans, so a
+        // task outcome rides the very next widget poll.
+        try { enqueued += new NetraTaskRunner().run(); } catch (eT) {
+            gs.warn('[NetraScanner] task runner failed: ' + eT);
+        }
+
+        // R18 - advance background missions a few items at a time (embedding
+        // API only - never a generate call - and a 45s pass deadline)
+        try { var mo = new NetraMissionRunner().advance(); enqueued += (mo && mo.notified) || 0; } catch (eMs) {
+            gs.warn('[NetraScanner] mission runner failed: ' + eMs);
+        }
+
         var prefs = new GlideRecord('x_196061_netra_v1_user_pref');
         prefs.addQuery('active', true);
         prefs.query();
@@ -108,10 +121,17 @@ NetraScanner.prototype = {
         gr.query();
 
         var byCi = {}, byCat = {}, total = 0;
+        var ciId = {}, ciFirstMs = {};   // R18 - for the likely-trigger lookup
         while (gr.next()) {
             total++;
             var ci = String(gr.cmdb_ci.getDisplayValue ? gr.cmdb_ci.getDisplayValue() : '');
-            if (ci) { byCi[ci] = (byCi[ci] || 0) + 1; }
+            if (ci) {
+                byCi[ci] = (byCi[ci] || 0) + 1;
+                ciId[ci] = String(gr.getValue('cmdb_ci') || '');
+                var oc = gr.getValue('opened_at') || gr.getValue('sys_created_on');
+                var ocMs = oc ? new GlideDateTime(oc).getNumericValue() : 0;
+                if (ocMs && (!ciFirstMs[ci] || ocMs < ciFirstMs[ci])) ciFirstMs[ci] = ocMs;
+            }
             var cat = String(gr.category || '');
             if (cat) { byCat[cat] = (byCat[cat] || 0) + 1; }
         }
@@ -127,10 +147,26 @@ NetraScanner.prototype = {
         var top = hits[0];
 
         // bucket the key by hour so a fresh flare-up tomorrow still speaks up
+        // (the column is 32 chars: bucket first and a short hash of the name,
+        // so a long CI name can never cut the hour off)
         var bucket = new GlideDateTime().toString().substring(0, 13).replace(/[^0-9]/g, '');
-        var key = ('mic_' + top.what + '_' + bucket).substring(0, 32);
+        var key = 'mic_' + bucket + '_' + this._hash(top.kind);
         var msg = 'Heads up - ' + top.n + ' tickets have come in ' + top.kind +
                   ' in the last couple of hours. That looks like one outage rather than separate issues.';
+        // R18 - if a change landed on that server just before the first
+        // ticket, say so in the same breath (correlation wording only)
+        if (byCi[top.what] && ciId[top.what]) {
+            try {
+                var sc = new NetraInvestigator({ background: true }).suspectChanges(ciId[top.what], ciFirstMs[top.what] || new GlideDateTime().getNumericValue(), {});
+                if (sc && sc.ok && sc.suspects && sc.suspects.length && sc.suspects[0].score >= 0.5) {
+                    // relative, no clock time: one message goes to every watcher,
+                    // in their own timezone, heard whenever they come back
+                    var s0 = sc.suspects[0];
+                    msg += ' Likely trigger: ' + s0.number + (s0.short_description ? " '" + s0.short_description + "'" : '') + ', ' + s0.brief + '.';
+                }
+            } catch (eSc) { gs.warn('[NetraScanner] suspect lookup failed: ' + (eSc.message || eSc)); }
+        }
+        msg = msg.substring(0, 1000);
 
         var sent = 0;
         var prefs = new GlideRecord('x_196061_netra_v1_user_pref');
@@ -140,6 +176,8 @@ NetraScanner.prototype = {
         while (prefs.next()) {
             var uid = String(prefs.user);
             if (!uid) continue;
+            // instance-wide CI and change names are fulfiller business
+            if (!this._isFulfiller(uid)) continue;
             if (this._alreadyNotified(uid, key, 'major_incident')) continue;
             this._enqueue(uid, {
                 ticket_sys_id: key,
@@ -180,17 +218,21 @@ NetraScanner.prototype = {
         }
 
         var count = 0;
+        var cap = { ms: 0 };   // set by a scan that hit its row limit
         if (pref.watch_assignments) {
-            count += this._scanIncidentAssignments(userSysId, since);
-            count += this._scanChangeAssignments(userSysId, since);
-            count += this._scanCatalogTasks(userSysId, since);
+            count += this._scanIncidentAssignments(userSysId, since, cap);
+            count += this._scanChangeAssignments(userSysId, since, cap);
+            count += this._scanCatalogTasks(userSysId, since, cap);
         }
         if (pref.watch_approvals) {
-            count += this._scanApprovals(userSysId, since);
+            count += this._scanApprovals(userSysId, since, cap);
         }
 
-        // Advance the watermark
-        pref.last_scan_time = new GlideDateTime();
+        // Advance the watermark - only as far as a capped scan got, so the
+        // rows past its limit are read next time instead of skipped for good
+        var mark = new GlideDateTime().getNumericValue();
+        if (cap.ms && cap.ms > since.getNumericValue()) mark = cap.ms;
+        pref.last_scan_time.setDateNumericValue(mark);
         pref.update();
 
         return count;
@@ -200,22 +242,24 @@ NetraScanner.prototype = {
     //  Per-table scans
     // ============================================================
 
-    _scanIncidentAssignments: function (userSysId, since) {
+    _scanIncidentAssignments: function (userSysId, since, cap) {
         var gr = new GlideRecord('incident');
         gr.addQuery('assigned_to', userSysId);
         gr.addQuery('sys_updated_on', '>=', since);
         gr.addQuery('state', 'NOT IN', '6,7,8'); // not resolved/closed/cancelled
+        gr.orderBy('sys_updated_on');
         gr.setLimit(20);
         gr.query();
 
-        var n = 0;
+        var n = 0, rows = 0, last = '';
         while (gr.next()) {
-            // Only fire when assigned_to actually changed in this window.
-            // Cheap check: compare audit history would be ideal; for v1 we
-            // dedupe by ensuring no prior notification of this kind exists.
-            if (this._alreadyNotified(userSysId, String(gr.sys_id), 'incident_assigned')) continue;
+            rows++; last = gr.getValue('sys_updated_on');
+            // Only fire when assigned_to actually changed in this window;
+            // keyed on that change, so a reassignment back is news again.
+            var key = this._assignedSince(gr, userSysId, since);
+            if (!key || this._alreadyNotified(userSysId, key, 'incident_assigned')) continue;
             this._enqueue(userSysId, {
-                ticket_sys_id: String(gr.sys_id),
+                ticket_sys_id: key,
                 ticket_number: String(gr.number),
                 kind: 'incident_assigned',
                 message: 'Heads up. Incident ' + this._spokenNumber(String(gr.number)) +
@@ -223,22 +267,26 @@ NetraScanner.prototype = {
             });
             n++;
         }
+        this._capAt(cap, rows, 20, last);
         return n;
     },
 
-    _scanChangeAssignments: function (userSysId, since) {
+    _scanChangeAssignments: function (userSysId, since, cap) {
         var gr = new GlideRecord('change_request');
         gr.addQuery('assigned_to', userSysId);
         gr.addQuery('sys_updated_on', '>=', since);
         gr.addQuery('state', 'NOT IN', '3,4'); // not closed/cancelled (state codes vary by org)
+        gr.orderBy('sys_updated_on');
         gr.setLimit(20);
         gr.query();
 
-        var n = 0;
+        var n = 0, rows = 0, last = '';
         while (gr.next()) {
-            if (this._alreadyNotified(userSysId, String(gr.sys_id), 'change_assigned')) continue;
+            rows++; last = gr.getValue('sys_updated_on');
+            var key = this._assignedSince(gr, userSysId, since);
+            if (!key || this._alreadyNotified(userSysId, key, 'change_assigned')) continue;
             this._enqueue(userSysId, {
-                ticket_sys_id: String(gr.sys_id),
+                ticket_sys_id: key,
                 ticket_number: String(gr.number),
                 kind: 'change_assigned',
                 message: 'A change request, ' + this._spokenNumber(String(gr.number)) +
@@ -246,22 +294,26 @@ NetraScanner.prototype = {
             });
             n++;
         }
+        this._capAt(cap, rows, 20, last);
         return n;
     },
 
-    _scanCatalogTasks: function (userSysId, since) {
+    _scanCatalogTasks: function (userSysId, since, cap) {
         var gr = new GlideRecord('sc_task');
         gr.addQuery('assigned_to', userSysId);
         gr.addQuery('sys_updated_on', '>=', since);
         gr.addQuery('state', 'NOT IN', '3,4,7'); // open-ish
+        gr.orderBy('sys_updated_on');
         gr.setLimit(20);
         gr.query();
 
-        var n = 0;
+        var n = 0, rows = 0, last = '';
         while (gr.next()) {
-            if (this._alreadyNotified(userSysId, String(gr.sys_id), 'sc_task_assigned')) continue;
+            rows++; last = gr.getValue('sys_updated_on');
+            var key = this._assignedSince(gr, userSysId, since);
+            if (!key || this._alreadyNotified(userSysId, key, 'sc_task_assigned')) continue;
             this._enqueue(userSysId, {
-                ticket_sys_id: String(gr.sys_id),
+                ticket_sys_id: key,
                 ticket_number: String(gr.number),
                 kind: 'sc_task_assigned',
                 message: 'A catalog task, ' + this._spokenNumber(String(gr.number)) +
@@ -269,19 +321,47 @@ NetraScanner.prototype = {
             });
             n++;
         }
+        this._capAt(cap, rows, 20, last);
         return n;
     },
 
-    _scanApprovals: function (userSysId, since) {
+    // The dedupe key when the record really became theirs inside the
+    // window: the audit row that moved assigned_to to them, or the record
+    // itself when it was created there. '' when it did not.
+    _assignedSince: function (gr, userSysId, since) {
+        var au = new GlideRecord('sys_audit');
+        au.addQuery('tablename', gr.getTableName());
+        au.addQuery('documentkey', String(gr.sys_id));
+        au.addQuery('fieldname', 'assigned_to');
+        au.addQuery('newvalue', userSysId);
+        au.addQuery('sys_created_on', '>=', since);
+        au.orderByDesc('sys_created_on');
+        au.setLimit(1);
+        au.query();
+        if (au.next()) return String(au.sys_id);
+        var made = gr.getValue('sys_created_on');
+        return made && new GlideDateTime(made).compareTo(since) >= 0 ? String(gr.sys_id) : '';
+    },
+
+    // a scan that hit its row limit holds the watermark at its last row
+    _capAt: function (cap, rows, limit, last) {
+        if (!cap || rows < limit || !last) return;
+        var ms = new GlideDateTime(last).getNumericValue();
+        if (!cap.ms || ms < cap.ms) cap.ms = ms;
+    },
+
+    _scanApprovals: function (userSysId, since, cap) {
         var gr = new GlideRecord('sysapproval_approver');
         gr.addQuery('approver', userSysId);
         gr.addQuery('state', 'requested');
         gr.addQuery('sys_updated_on', '>=', since);
+        gr.orderBy('sys_updated_on');
         gr.setLimit(20);
         gr.query();
 
-        var n = 0;
+        var n = 0, rows = 0, last = '';
         while (gr.next()) {
+            rows++; last = gr.getValue('sys_updated_on');
             if (this._alreadyNotified(userSysId, String(gr.sys_id), 'approval_requested')) continue;
 
             // Best-effort: name what we're approving (avoid getRefRecord -
@@ -309,6 +389,7 @@ NetraScanner.prototype = {
             });
             n++;
         }
+        this._capAt(cap, rows, 20, last);
         return n;
     },
 
@@ -323,6 +404,26 @@ NetraScanner.prototype = {
         gr.setLimit(1);
         gr.query();
         return gr.next();
+    },
+
+    _isFulfiller: function (userSysId) {
+        var roles = String(gs.getProperty('x_196061_netra_v1.fulfiller_roles', 'itil,admin,sn_incident_read,sn_incident_write')).replace(/\s+/g, '');
+        var hr = new GlideRecord('sys_user_has_role');
+        hr.addQuery('user', userSysId);
+        hr.addQuery('role.name', 'IN', roles);
+        hr.setLimit(1);
+        hr.query();
+        return hr.next();
+    },
+
+    // 8 hex chars, stable across runs
+    _hash: function (s) {
+        var h = 5381;
+        s = String(s);
+        for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+        var x = h.toString(16);
+        while (x.length < 8) x = '0' + x;
+        return x;
     },
 
     _enqueue: function (userSysId, opts) {

@@ -69,7 +69,7 @@ NetraChat.prototype = {
         if (m.isValidField('message_text')) m.message_text = text;
         else if (m.isValidField('message')) m.message = text;
         m.author = this.user;
-        m.insert();
+        if (!m.insert()) return { ok: false, error: 'Chat did not accept the message, so nothing was sent.' };
         return { ok: true, session: session };
     },
 

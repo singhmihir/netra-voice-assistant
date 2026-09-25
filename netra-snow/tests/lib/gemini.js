@@ -1,0 +1,63 @@
+/*
+ * Scripted stand-in for the Gemini REST API. Tests queue the replies the
+ * "model" gives, in order; every generateContent request is recorded so a
+ * test can assert how many calls a turn really cost.
+ */
+'use strict';
+
+function reply(parts) { return { candidates: [{ content: { role: 'model', parts: parts }, finishReason: 'STOP' }] }; }
+function text(t) { return reply([{ text: t }]); }
+function call(name, args) { return reply([{ functionCall: { name: name, args: args || {} } }]); }
+function calls(list) { return reply(list.map(function (c) { return { functionCall: { name: c[0], args: c[1] || {} } }; })); }
+function http(status, body) { return { status: status, body: typeof body === 'string' ? body : JSON.stringify(body) }; }
+function quota429(kind) {
+    return http(429, { error: { code: 429, details: [
+        { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: kind === 'day' ? 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' : 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', quotaValue: kind === 'day' ? '20' : '5' }] },
+        { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '30s' }] } });
+}
+
+var TOPICS = ['vpn', 'printer', 'outlook', 'password', 'laptop', 'monitor', 'web01'];
+function unitVec(seed) {
+    var v = [], s = 0;
+    for (var i = 0; i < 768; i++) { var x = Math.sin((i + 1) * (seed + 1)); v.push(x); s += x * x; }
+    s = Math.sqrt(s);
+    return v.map(function (x) { return x / s; });
+}
+
+/**
+ * install(P, queue) - queue is an array of replies (from text/call/calls/http);
+ * returns a log: { generate: [requestBodies], embed: n, models: [model ids] }
+ */
+function install(P, queue) {
+    var log = { generate: [], embed: 0, models: [] };
+    P.HTTP = function (req) {
+        // the free model list (key check) - never counts as a generate call
+        if (/\/v1beta\/models\?/.test(req.endpoint)) { log.listed = (log.listed || 0) + 1; return http(log.listStatus || 200, { models: [{ name: 'models/gemini-2.5-flash' }] }); }
+        var m = /models\/([^:]+):(generateContent|embedContent|batchEmbedContents)/.exec(req.endpoint);
+        if (!m) return http(404, { error: 'unknown endpoint ' + req.endpoint });
+        if (m[2] !== 'generateContent') {
+            log.embed++;
+            var body = {};
+            try { body = JSON.parse(req.body || '{}'); } catch (e) {}
+            // meaning by keyword: tickets about the same thing embed alike
+            var txt = JSON.stringify(body).toLowerCase(), seed = 99;
+            for (var k = 0; k < TOPICS.length; k++) if (txt.indexOf(TOPICS[k]) >= 0) { seed = k; break; }
+            return http(200, { embedding: { values: unitVec(seed) } });
+        }
+        var reqBody = JSON.parse(req.body || '{}');
+        log.generate.push(reqBody);
+        log.models.push(decodeURIComponent(m[1]));
+        var next = queue.shift();
+        // a reply may be computed from what the turn actually sent
+        if (typeof next === 'function') next = next(reqBody, JSON.stringify(reqBody));
+        if (!next) return http(500, { error: { code: 500, message: 'test script exhausted - the turn made more model calls than the test expected' } });
+        if (next.status) return next;
+        return http(200, next);
+    };
+    return log;
+}
+
+// a structured-output (responseSchema) reply
+function json(obj) { return reply([{ text: JSON.stringify(obj) }]); }
+
+module.exports = { json: json, install: install, text: text, call: call, calls: calls, http: http, quota429: quota429, unitVec: unitVec };

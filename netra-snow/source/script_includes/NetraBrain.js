@@ -1,0 +1,294 @@
+/**
+ * NetraBrain - the quota governor. (R18)
+ *
+ * Free-tier Gemini gives each model its OWN daily pool, and the pools are
+ * tiny: gemini-2.5-flash-lite allows 20 generate calls a day (Google says
+ * so right in the 429 body: quotaId ...PerDay..., quotaValue 20). Before
+ * this, every tool-loop round re-tried the dead models first, burned a
+ * timeout or two, and when the last live model hiccupped Netra went quiet.
+ *
+ * This keeps one instance-wide ledger (x_196061_netra_v1_brain, one row per
+ * model - quota is per API key, so every user learns from the same rows):
+ *   - per_day 429    -> rest until the next Pacific midnight (the reset)
+ *   - per_minute 429 -> rest for RetryInfo, at least 20s
+ *   - unknown 429    -> 60s, then 5 min, then 30 min
+ *   - 503 / 500      -> 30s cool-down, HTTP 0 (timeout) -> 120s
+ *   - 404            -> retired for 24h
+ *   - 401 / 403      -> auth problem, 1h
+ *   - used_today reaching a limit Google told us -> rest without calling
+ * ...and never sends HTTP to a resting model. The static bits (parse429,
+ * the Pacific clock) have no GlideRecord in them so they can be checked
+ * from a background script.
+ */
+var NetraBrain = Class.create();
+
+NetraBrain.TABLE = 'x_196061_netra_v1_brain';
+
+// ---- Pacific clock (US DST: 2nd Sunday of March 10:00Z -> 1st Sunday of
+// November 09:00Z). If Google's reset ever drifts from this, the first call
+// after our guessed reset just gets a 429 and re-rests: self-correcting.
+NetraBrain._nthSundayUtc = function (year, month, n) {
+    var dow = new Date(Date.UTC(year, month, 1)).getUTCDay();
+    return 1 + ((7 - dow) % 7) + 7 * (n - 1);
+};
+NetraBrain.ptOffsetMs = function (ms) {
+    var y = new Date(ms).getUTCFullYear();
+    var start = Date.UTC(y, 2, NetraBrain._nthSundayUtc(y, 2, 2), 10, 0, 0);
+    var end   = Date.UTC(y, 10, NetraBrain._nthSundayUtc(y, 10, 1), 9, 0, 0);
+    return (ms >= start && ms < end) ? 7 * 3600000 : 8 * 3600000;
+};
+NetraBrain.ptDayKey = function (ms) {
+    var d = new Date(ms - NetraBrain.ptOffsetMs(ms));
+    var m = d.getUTCMonth() + 1, day = d.getUTCDate();
+    return d.getUTCFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+};
+NetraBrain.nextPtMidnightMs = function (ms) {
+    var local = new Date(ms - NetraBrain.ptOffsetMs(ms));
+    var nextLocal = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() + 1, 0, 0, 0);
+    // the offset AT the reset, not now - matters on the two transition nights
+    var guess = nextLocal + NetraBrain.ptOffsetMs(ms);
+    return nextLocal + NetraBrain.ptOffsetMs(guess);
+};
+
+/**
+ * Read a 429 body the way Google actually sends it (verified live):
+ * error.details[] has a QuotaFailure with violations[].quotaId/quotaValue
+ * and a RetryInfo with retryDelay "9s". Note the retryDelay is short even
+ * for a DAILY limit - which is why the old "wait a minute" was a lie.
+ */
+NetraBrain.parse429 = function (bodyStr) {
+    var out = { kind: 'unknown', retry_ms: 0, limit: 0, quota_id: '' };
+    var j = null;
+    try { j = JSON.parse(String(bodyStr || '')); } catch (e) { return out; }
+    var details = (j && j.error && j.error.details) || [];
+    for (var i = 0; i < details.length; i++) {
+        var d = details[i] || {};
+        var t = String(d['@type'] || '');
+        if (t.indexOf('QuotaFailure') >= 0 && d.violations && d.violations.length) {
+            // several quotas can trip at once; the daily one decides how long
+            // to rest, so it wins over a per-minute one listed first
+            for (var vi = 0; vi < d.violations.length; vi++) {
+                var v = d.violations[vi] || {};
+                var qid = String(v.quotaId || '');
+                var kind = /PerDay/i.test(qid) ? 'per_day' : (/PerMinute/i.test(qid) ? 'per_minute' : 'unknown');
+                if (out.kind === 'per_day') break;
+                if (kind === 'unknown' && out.kind !== 'unknown') continue;
+                out.kind = kind;
+                out.quota_id = qid;
+                out.limit = parseInt(v.quotaValue, 10) || 0;
+            }
+        }
+        if (t.indexOf('RetryInfo') >= 0 && d.retryDelay) {
+            var s = parseFloat(String(d.retryDelay).replace(/[^0-9.]/g, ''));
+            if (!isNaN(s)) out.retry_ms = Math.round(s * 1000);
+        }
+    }
+    return out;
+};
+
+NetraBrain.prototype = {
+    initialize: function () {
+        this.rows = null;      // key -> row object
+        this.dirty = {};
+    },
+
+    load: function () {
+        if (this.rows) return this.rows;
+        this.rows = {};
+        try {
+            var gr = new GlideRecord(NetraBrain.TABLE);
+            gr.setLimit(50);
+            gr.query();
+            while (gr.next()) {
+                var du = gr.getValue('dead_until');
+                var lo = gr.getValue('last_ok_at');
+                this.rows[String(gr.key)] = {
+                    _sys_id: String(gr.sys_id),
+                    key: String(gr.key),
+                    state: String(gr.state || 'ok'),
+                    reason: String(gr.reason || ''),
+                    until_ms: du ? new GlideDateTime(du).getNumericValue() : 0,
+                    day_key: String(gr.day_key || ''),
+                    used_today: parseInt(gr.getValue('used_today'), 10) || 0,
+                    fails_today: parseInt(gr.getValue('fails_today'), 10) || 0,
+                    quota_limit: parseInt(gr.getValue('quota_limit'), 10) || 0,
+                    last_ok_ms: lo ? new GlideDateTime(lo).getNumericValue() : 0,
+                    last_err: String(gr.last_err || ''),
+                    avg_ms: parseInt(gr.getValue('avg_ms'), 10) || 0
+                };
+            }
+        } catch (e) {
+            // a broken ledger must never take chat down - behave as "all ok"
+            gs.warn('[NetraBrain] ledger read failed: ' + (e.message || e));
+        }
+        return this.rows;
+    },
+
+    _row: function (key, nowMs) {
+        this.load();
+        var r = this.rows[key];
+        if (!r) {
+            r = { _sys_id: '', key: key, state: 'ok', reason: '', until_ms: 0, day_key: '',
+                  used_today: 0, fails_today: 0, quota_limit: 0, last_ok_ms: 0, last_err: '', avg_ms: 0 };
+            this.rows[key] = r;
+        }
+        var today = NetraBrain.ptDayKey(nowMs);
+        if (r.day_key !== today) {
+            // new Pacific day: counters reset, and a daily rest is over
+            r.day_key = today;
+            r.used_today = 0;
+            r.fails_today = 0;
+            // re-learned from the day's first per-day 429; clearing it heals
+            // rows that once stored a per-minute value as a daily cap
+            r.quota_limit = 0;
+            if (r.reason === 'per_day' || r.reason === 'limit') { r.state = 'ok'; r.until_ms = 0; r.reason = ''; }
+            // only persist a rollover for rows that exist - just LOOKING at a
+            // model we never called shouldnt insert anything
+            if (r._sys_id) this.dirty[key] = true;
+        }
+        return r;
+    },
+
+    restingInfo: function (key, nowMs) {
+        var r = this._row(key, nowMs);
+        if (r.state !== 'ok' && r.until_ms > nowMs) return { resting: true, until_ms: r.until_ms, reason: r.reason };
+        if (r.quota_limit > 0 && r.used_today >= r.quota_limit) {
+            return { resting: true, until_ms: NetraBrain.nextPtMidnightMs(nowMs), reason: 'limit' };
+        }
+        return { resting: false };
+    },
+
+    pickChain: function (chain, nowMs) {
+        var out = { tryList: [], skipped: [], all_resting_until_ms: 0 };
+        var soonest = 0;
+        for (var i = 0; i < chain.length; i++) {
+            var info = this.restingInfo(chain[i], nowMs);
+            if (info.resting) {
+                out.skipped.push({ model: chain[i], until_ms: info.until_ms, reason: info.reason });
+                if (!soonest || info.until_ms < soonest) soonest = info.until_ms;
+            } else {
+                out.tryList.push(chain[i]);
+            }
+        }
+        if (!out.tryList.length) out.all_resting_until_ms = soonest;
+        return out;
+    },
+
+    /** R21 - a model in the chain that answered within withinMs and is not
+     *  resting now: the readiness probe needs no call at all then */
+    freshOk: function (chain, nowMs, withinMs) {
+        for (var i = 0; i < chain.length; i++) {
+            var info = this.restingInfo(chain[i], nowMs);
+            if (info.resting) continue;
+            var r = this._row(chain[i], nowMs);
+            // a failure after the last success (state stays 'resting' until
+            // the next success) means that success is stale: probe again
+            if (r.state !== 'ok') continue;
+            if (r.last_ok_ms && nowMs - r.last_ok_ms <= withinMs) return chain[i];
+        }
+        return '';
+    },
+
+    recordOk: function (key, ms, nowMs) {
+        var r = this._row(key, nowMs);
+        r.used_today++;
+        r.state = 'ok'; r.reason = ''; r.until_ms = 0;
+        r.last_ok_ms = nowMs;
+        r.avg_ms = r.avg_ms ? Math.round(r.avg_ms * 0.7 + ms * 0.3) : ms;
+        this.dirty[key] = true;
+    },
+
+    /** code: HTTP status (0 = timeout); body: FULL response body */
+    recordFail: function (key, code, body, nowMs) {
+        var r = this._row(key, nowMs);
+        r.fails_today++;
+        r.last_err = ('HTTP ' + code + ' ' + String(body || '').replace(/\s+/g, ' ')).substring(0, 480);
+        var rest = 0, reason = '';
+        if (code === 429) {
+            var q = NetraBrain.parse429(body);
+            // only a DAILY quota value is a daily cap; a per-minute value
+            // stored here would bench the model after 5 calls every day
+            if (q.kind === 'per_day' && q.limit) r.quota_limit = q.limit;
+            if (q.kind === 'per_day') {
+                reason = 'per_day';
+                rest = NetraBrain.nextPtMidnightMs(nowMs) - nowMs;
+            } else if (q.kind === 'per_minute') {
+                reason = 'per_minute';
+                rest = Math.max(20000, q.retry_ms || 0);
+            } else {
+                // R21 - a 429 without quota detail: a short rest. Escalating on
+                // fails_today let two unrelated 503 blips turn the first of
+                // these into a 30-minute bench
+                reason = 'unknown';
+                rest = 60000;
+            }
+        } else if (code === 404) {
+            reason = 'retired'; rest = 24 * 3600000;
+        } else if (code === 401 || code === 403) {
+            reason = 'auth'; rest = 3600000;
+        } else if (code === 0) {
+            reason = 'timeout'; rest = 120000;
+        } else if (code >= 500) {
+            reason = 'overloaded'; rest = 30000;
+        } else {
+            // 400s are request-shaped, not model health - dont rest the model
+            this.dirty[key] = true;
+            return;
+        }
+        r.state = 'resting';
+        r.reason = reason;
+        r.until_ms = nowMs + rest;
+        this.dirty[key] = true;
+    },
+
+    flush: function () {
+        if (!this.rows) return;
+        for (var key in this.dirty) {
+            if (!this.dirty.hasOwnProperty(key)) continue;
+            var r = this.rows[key];
+            if (!r) continue;
+            try {
+                var gr = new GlideRecord(NetraBrain.TABLE);
+                var found = r._sys_id ? gr.get(r._sys_id) : false;
+                if (!found) {
+                    gr = new GlideRecord(NetraBrain.TABLE);
+                    gr.addQuery('key', key);
+                    gr.setLimit(1);
+                    gr.query();
+                    found = gr.next();
+                    if (!found) { gr.initialize(); gr.key = key; }
+                }
+                gr.state = r.state;
+                gr.reason = r.reason;
+                gr.day_key = r.day_key;
+                gr.used_today = r.used_today;
+                gr.fails_today = r.fails_today;
+                gr.quota_limit = r.quota_limit;
+                gr.last_err = r.last_err;
+                gr.avg_ms = r.avg_ms;
+                if (r.until_ms) gr.dead_until.setDateNumericValue(r.until_ms);
+                else gr.setValue('dead_until', '');
+                if (r.last_ok_ms) gr.last_ok_at.setDateNumericValue(r.last_ok_ms);
+                if (found) gr.update(); else r._sys_id = String(gr.insert());
+            } catch (e) {
+                gs.warn('[NetraBrain] ledger write failed for ' + key + ': ' + (e.message || e));
+            }
+        }
+        this.dirty = {};
+    },
+
+    /** compact view for the Lab and for "how's your brain" */
+    snapshot: function (chain, nowMs) {
+        var out = [];
+        for (var i = 0; i < chain.length; i++) {
+            var r = this._row(chain[i], nowMs);
+            var info = this.restingInfo(chain[i], nowMs);
+            out.push({ model: chain[i], resting: !!info.resting, reason: info.reason || '',
+                       until_ms: info.until_ms || 0, used_today: r.used_today,
+                       limit: r.quota_limit, avg_ms: r.avg_ms });
+        }
+        return out;
+    },
+
+    type: 'NetraBrain'
+};

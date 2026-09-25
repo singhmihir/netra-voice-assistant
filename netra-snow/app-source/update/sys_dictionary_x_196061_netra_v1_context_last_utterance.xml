@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <?xml version="1.0" encoding="UTF-8"?><record_update><sys_dictionary action="INSERT_OR_UPDATE" element="last_utterance" table="x_196061_netra_v1_context"><active>true</active><array>false</array><attributes/><audit>false</audit><calculation><![CDATA[(function calculatedFieldValue(current) {
 
 	// Add your code here

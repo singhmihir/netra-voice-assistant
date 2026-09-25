@@ -236,7 +236,7 @@
         return String(gr.sys_id);
     }
 
-    function upsertScriptedRestOp(serviceSysId, name, method, path, scopeSysId, scope, source) {
+    function upsertScriptedRestOp(serviceSysId, name, method, path, scopeSysId, scope, source, isPublic) {
         var gr = new GlideRecord('sys_ws_operation');
         gr.addQuery('name', name);
         gr.addQuery('web_service_definition', serviceSysId);
@@ -250,10 +250,12 @@
         }
         gr.http_method = method;
         gr.relative_path = path;
-        gr.requires_authentication = true;
+        // R23 - the app files (manifest, service worker) are fetched by the
+        // browser before anyone signs in: public, and any content type
+        gr.requires_authentication = !isPublic;
         gr.requires_acl_authorization = false;
         gr.active = true;
-        gr.produces = 'application/json';
+        gr.produces = isPublic ? '*/*' : 'application/json';
         gr.consumes = 'application/json';
         gr.operation_script = fillScope(source, scope);
         if (gr.sys_id && gr.isValidRecord()) gr.update();
@@ -277,7 +279,7 @@
         gr.script = fillScope(serverScript, scope);
         gr.css = fillScope(css, scope);
         gr.option_schema = optionSchema || '[]';
-        gr.public = false;
+        gr.public = true;   // the netra_live page ships public: anyone with the link can talk to her as Guest
         gr.has_preview = false;
         if (gr.sys_id && gr.isValidRecord()) gr.update();
         else gr.insert();
@@ -327,7 +329,8 @@
         { name: 'watch_assignments', type: 'boolean',                 label: 'Watch Assignments', default: 'true' },
         { name: 'watch_comments',    type: 'boolean',                 label: 'Watch Comments',    default: 'true' },
         { name: 'watch_approvals',   type: 'boolean',                 label: 'Watch Approvals',   default: 'true' },
-        { name: 'voice_mode',        type: 'string', length: 20,      label: 'Voice Mode',        default: 'normal' }
+        { name: 'voice_mode',        type: 'string', length: 20,      label: 'Voice Mode',        default: 'normal' },
+        { name: 'last_seen_at',      type: 'glide_date_time',         label: 'Last Seen At' }   // R17 away debrief
     ]);
     upsertTable(scope + '_context', 'Netra Context', scopeSysId, [
         { name: 'user',           type: 'reference', ref: 'sys_user', label: 'User' },
@@ -356,6 +359,61 @@
         { name: 'model',         type: 'string', length: 64,    label: 'Embedding Model' },
         { name: 'embedded_at',   type: 'glide_date_time',       label: 'Embedded At' }
     ]);
+    // R17 - standing orders + R18 missions/watches (one header row each)
+    upsertTable(scope + '_task', 'Netra Task', scopeSysId, [
+        { name: 'user',                 type: 'reference', ref: 'sys_user', label: 'User' },
+        { name: 'nt_number',            type: 'string', length: 10,    label: 'NT Number' },
+        { name: 'kind',                 type: 'string', length: 40,    label: 'Kind' },
+        { name: 'target_table',         type: 'string', length: 40,    label: 'Target Table' },
+        { name: 'target_sys_id',        type: 'string', length: 32,    label: 'Target sys_id' },
+        { name: 'target_number',        type: 'string', length: 32,    label: 'Target Number' },
+        { name: 'condition_json',       type: 'string', length: 4000,  label: 'Condition JSON' },
+        { name: 'action',               type: 'string', length: 40,    label: 'Action' },
+        { name: 'action_params',        type: 'string', length: 1000,  label: 'Action Params' },
+        { name: 'authorized_utterance', type: 'string', length: 1000,  label: 'Authorized Utterance' },
+        { name: 'state',                type: 'string', length: 20,    label: 'State' },
+        { name: 'max_fires',            type: 'integer',               label: 'Max Fires' },
+        { name: 'fire_count',           type: 'integer',               label: 'Fire Count' },
+        { name: 'next_check_at',        type: 'glide_date_time',       label: 'Next Check At' },
+        { name: 'expires_at',           type: 'glide_date_time',       label: 'Expires At' },
+        { name: 'action_log',           type: 'string', length: 8000,  label: 'Action Log' },
+        { name: 'undo_json',            type: 'string', length: 4000,  label: 'Undo JSON' }
+    ]);
+    // R18 - the quota governor's instance-wide ledger (one row per model)
+    upsertTable(scope + '_brain', 'Netra Brain Health', scopeSysId, [
+        { name: 'key',         type: 'string', length: 64,  label: 'Model' },
+        { name: 'state',       type: 'string', length: 20,  label: 'State' },
+        { name: 'reason',      type: 'string', length: 20,  label: 'Reason' },
+        { name: 'dead_until',  type: 'glide_date_time',     label: 'Resting Until' },
+        { name: 'day_key',     type: 'string', length: 12,  label: 'Pacific Day' },
+        { name: 'used_today',  type: 'integer',             label: 'Used Today' },
+        { name: 'fails_today', type: 'integer',             label: 'Fails Today' },
+        { name: 'quota_limit', type: 'integer',             label: 'Learned Daily Limit' },
+        { name: 'last_ok_at',  type: 'glide_date_time',     label: 'Last OK At' },
+        { name: 'last_err',    type: 'string', length: 500, label: 'Last Error' },
+        { name: 'avg_ms',      type: 'integer',             label: 'Avg Latency ms' }
+    ]);
+    // v7.9 - the on-device ear's files (one record per model, the files as
+    // attachments; served by the public ear resource, uploaded by
+    // scripts/upload-ear-files.py - about 950 MB, not part of this installer)
+    upsertTable(scope + '_ear_file', 'Netra Ear File', scopeSysId, [
+        { name: 'name', type: 'string', length: 100, label: 'Name' }
+    ]);
+    // R18 - one row per ticket in a background mission (NOT the task table:
+    // NT numbers count every task row)
+    upsertTable(scope + '_mission_item', 'Netra Mission Item', scopeSysId, [
+        { name: 'mission',             type: 'string', length: 32,   label: 'Mission (header sys_id)' },
+        { name: 'seq',                 type: 'integer',              label: 'Sequence' },
+        { name: 'target_table',        type: 'string', length: 40,   label: 'Target Table' },
+        { name: 'target_sys_id',       type: 'string', length: 32,   label: 'Target sys_id' },
+        { name: 'target_number',       type: 'string', length: 40,   label: 'Target Number' },
+        { name: 'state',               type: 'string', length: 20,   label: 'State' },
+        { name: 'lease_until',         type: 'glide_date_time',      label: 'Lease Until' },
+        { name: 'mod_count_at_review', type: 'integer',              label: 'sys_mod_count At Review' },
+        { name: 'findings_json',       type: 'string', length: 4000, label: 'Findings (JSON)' },
+        { name: 'undo_json',           type: 'string', length: 1000, label: 'Undo (JSON)' },
+        { name: 'attempts',            type: 'integer',              label: 'Attempts' }
+    ]);
 
     /* ---- Script Includes ---- */
     say('');
@@ -370,6 +428,12 @@
     upsertScriptInclude('NetraContext',    scopeSysId, scope, 'Per-user conversational context (last ticket etc.).',               SRC.NetraContext);
     upsertScriptInclude('NetraNavigator',  scopeSysId, scope, 'Resolves spoken destinations to portal URLs.',                      SRC.NetraNavigator);
     upsertScriptInclude('NetraVulnerability', scopeSysId, scope, 'Vulnerability Response analyst operations: triage, exposure, CVE lookup, assign, state, defer, notes.', SRC.NetraVulnerability);
+    upsertScriptInclude('NetraTaskRunner',    scopeSysId, scope, 'Standing orders executed by the scanner: watch, nudge, chase, escalate, investigate-watch. No LLM.', SRC.NetraTaskRunner);
+    upsertScriptInclude('NetraBrain',         scopeSysId, scope, 'Quota governor: per-model rest ledger, Pacific reset clock, 429 classification.', SRC.NetraBrain);
+    upsertScriptInclude('NetraInvestigator',  scopeSysId, scope, 'Evidence-first investigation: change correlation, dossier, rule theories, watch snapshots. No LLM.', SRC.NetraInvestigator);
+    upsertScriptInclude('NetraSemantic',      scopeSysId, scope, 'Embedding engine for background jobs: similar resolved, triage votes, duplicates.', SRC.NetraSemantic);
+    upsertScriptInclude('NetraMissionRunner', scopeSysId, scope, 'Background missions (triage the unassigned queue) with leases, apply and undo. No generate calls.', SRC.NetraMissionRunner);
+    upsertScriptInclude('NetraSelfCheck', scopeSysId, scope, 'Netra checks her own tools: key, tables, cross-scope reads, scanner heartbeat, overdue orders, quota, memory, errors. No generate calls, no writes.', SRC.NetraSelfCheck);
 
     /* ---- Business Rule ---- */
     say('');
@@ -393,6 +457,9 @@
     upsertScriptedRestOp(svc, 'command',       'POST', '/command',       scopeSysId, scope, SRC.command);
     upsertScriptedRestOp(svc, 'notifications', 'GET',  '/notifications', scopeSysId, scope, SRC.notifications);
     upsertScriptedRestOp(svc, 'ping',          'GET',  '/ping',          scopeSysId, scope, SRC.ping);
+    upsertScriptedRestOp(svc, 'app',           'GET',  '/app/{file}',    scopeSysId, scope, SRC.app, true);
+    upsertScriptedRestOp(svc, 'ear',           'GET',  '/ear/{model}/{file}',       scopeSysId, scope, SRC.ear, true);   // v7.9 - the ear's files from this instance
+    upsertScriptedRestOp(svc, 'ear_dir',       'GET',  '/ear/{model}/{dir}/{file}', scopeSysId, scope, SRC.ear, true);
     say('  Base path: /api/' + scope + '/voice');
 
     /* ---- System properties ---- */
@@ -402,23 +469,39 @@
         var p = new GlideRecord('sys_properties');
         p.addQuery('name', scope + '.' + suffix);
         p.setLimit(1); p.query();
-        if (!p.next()) {
-            p.initialize();
-            p.setValue('name', scope + '.' + suffix);
-            p.setValue('sys_scope', scopeSysId);
-            p.setValue('type', 'string');
+        // a re-run is the update path: never clobber a value an admin set
+        // (the api key, a switched-off ticket_writes, tuned quotas)
+        if (p.next()) {
+            p.setValue('description', desc);
+            p.update();
+            say('  = prop ' + scope + '.' + suffix + ' (value kept)');
+            return;
         }
-        // never clobber an existing non-empty api key
-        if (suffix === 'gemini_api_key' && String(p.value || '')) { say('  = prop ' + suffix + ' (kept)'); return; }
+        p.initialize();
+        p.setValue('name', scope + '.' + suffix);
+        p.setValue('sys_scope', scopeSysId);
+        p.setValue('type', 'string');
         p.setValue('value', value);
         p.setValue('description', desc);
-        if (p.sys_id && p.isValidRecord()) p.update(); else p.insert();
+        p.insert();
         say('  > prop ' + scope + '.' + suffix);
     }
     upsertProp('gemini_api_key', '', 'Google AI Studio API key for Gemini. REQUIRED for the conversational brain and TTS. Get a free key at https://aistudio.google.com/apikey');
-    upsertProp('gemini_model', 'gemini-flash-lite-latest', 'Primary Gemini model for chat + reasoning. Default tuned for voice-loop latency (~1s). Set to gemini-2.5-flash for richer reasoning at ~2-4s per call.');
+    // R18 - no gemini_model pin any more: pinning disabled auto-routing and the
+    // old value was a -latest alias that moved between model generations
+    upsertProp('model_chain', 'gemma-4-26b-a4b-it,gemini-2.5-flash-lite,gemini-3.1-flash-lite,gemini-3.6-flash,gemini-2.5-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-3.5-flash,gemini-3-flash-preview', 'Ordered model chain. Each free-tier model has its own allowance; the quota governor skips resting ones for free. Gemma 4 comes first: ~1.2 s on the lean request and a far larger daily allowance than the Gemini models.');
+    upsertProp('lean_prompt', 'auto', 'auto: the short prompt and routed tools for Guests and for Gemma models; always: for every call (fastest); never: the full prompt except where a model needs the lean one.');
+    upsertProp('turn_call_budget', '5', 'Hard cap on generate calls per chat turn. When hit, Netra answers from what she already found instead of spending more.');
+    upsertProp('fast_lane', 'true', 'Answer frequent unambiguous requests (status, my tickets, approvals, debrief, confirmations) with zero model calls.');
+    upsertProp('brain_offline', 'false', 'Test switch: force basic (no-LLM) mode.');
+    upsertProp('investigate_llm', 'true', 'Use one model call to rank investigation theories; false = rule-based only.');
+    upsertProp('investigate_model', 'gemini-3-flash-preview', 'Preferred model for the investigation synthesis call (falls back through model_chain).');
     upsertProp('sentiment_llm', 'false', 'When true, refine keyword-detected frustration with an extra Gemini classification call on the reply path (adds ~1-2s on frustrated turns).');
     upsertProp('notify_author', 'false', 'When true, the comment business rule also notifies the comment author.');
+    upsertProp('ticket_writes', 'true', 'Emergency kill switch: set to false to stop Netra changing tickets. Re-running this installer keeps whatever is set here.');
+    upsertProp('vr_roles', 'sn_vul.admin,sn_vul.vulnerability_analyst,sn_vul.remediation_owner,sn_vul.read_all', 'Roles that may use the Vulnerability Response tools (any one is enough). Without one, the VR tools are not offered.');
+    upsertProp('code_roles', 'admin', 'Roles that may have Netra read, list or narrate platform scripts (any one is enough).');
+    upsertProp('fulfiller_roles', 'itil,admin,sn_incident_read,sn_incident_write', 'Roles whose holders are told about new work notes on watched tickets; everyone else hears comments only.');
 
     /* ---- Cross-scope privileges ---- */
     say('');
@@ -430,7 +513,7 @@
         'sys_data_policy_rule': ['read'], 'sys_ui_policy': ['read'], 'sys_ui_policy_action': ['read'],
         'sys_db_object': ['read'], 'sys_app': ['read'], 'sys_script_include': ['read'],
         'sys_script': ['read'], 'sysauto_script': ['read'], 'sys_ws_definition': ['read'],
-        'sys_ws_operation': ['read'], 'sp_widget': ['read'],
+        'sys_ws_operation': ['read'], 'sp_widget': ['read'], 'syslog': ['read'],
         'sys_cs_message': ['read'], 'sys_cs_session': ['read'], 'sys_cs_session_member': ['read'],
         'cmdb_ci_appl': ['read'], 'sys_choice': ['read'], 'sc_cat_item': ['read'],
         'incident': ['read', 'write', 'create'],
@@ -451,7 +534,12 @@
         'sn_vul_entry': ['read'],
         'sn_vul_vulnerability_group': ['read'],
         'sys_user_grmember': ['read'],
-        'cmdb_ci': ['read']
+        'sys_user_has_role': ['read'], 'sys_user_role': ['read'],   // work notes and the outage radar go to fulfillers only
+        'cmdb_ci': ['read'],
+        // R17/R18 - standing orders, investigations, missions
+        'task': ['read'], 'task_ci': ['read'], 'task_sla': ['read'],
+        'change_task': ['read'], 'cmdb_rel_ci': ['read'], 'cmdb_rel_type': ['read'],
+        'sys_audit': ['read']
     };
     var privCreated = 0, privSkipped = 0;
     for (var privTable in privRules) {
@@ -476,6 +564,25 @@
             if (privGr.insert()) privCreated++;
         }
     }
+    // v7.9 - the ear resource streams attachments: three scriptable API privileges
+    ['GlideSysAttachment.getContentStream', 'ScriptableServiceResultStreamWriter.writeStream', 'ScriptableServiceResultBuilder.setBody'].forEach(function (api) {
+        var apiEx = new GlideRecord('sys_scope_privilege');
+        apiEx.addQuery('source_scope', scopeSysId);
+        apiEx.addQuery('target_type', 'scriptable');
+        apiEx.addQuery('target_name', api);
+        apiEx.setLimit(1); apiEx.query();
+        if (apiEx.next()) { privSkipped++; return; }
+        var apiGr = new GlideRecord('sys_scope_privilege');
+        apiGr.initialize();
+        apiGr.setValue('source_scope', scopeSysId);
+        apiGr.setValue('target_scope', 'global');
+        apiGr.setValue('target_type', 'scriptable');
+        apiGr.setValue('target_name', api);
+        apiGr.setValue('operation', 'execute');
+        apiGr.setValue('status', 'allowed');
+        apiGr.setValue('sys_scope', scopeSysId);
+        if (apiGr.insert()) privCreated++;
+    });
     say('  privileges: created=' + privCreated + ' existing=' + privSkipped);
 
     /* ---- Widget ---- */

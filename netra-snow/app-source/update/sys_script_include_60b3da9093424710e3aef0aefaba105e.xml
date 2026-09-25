@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include"><sys_script_include action="INSERT_OR_UPDATE"><access>package_private</access><active>true</active><api_name>x_196061_netra_v1.NetraNavigator</api_name><caller_access/><client_callable>false</client_callable><description>Resolves spoken destinations to portal URLs.</description><mobile_callable>false</mobile_callable><name>NetraNavigator</name><sandbox_callable>false</sandbox_callable><script><![CDATA[/**
  * NetraNavigator — voice-driven page navigation hints.
  *

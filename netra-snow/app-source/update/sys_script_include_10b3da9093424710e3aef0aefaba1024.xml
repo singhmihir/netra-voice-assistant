@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include"><sys_script_include action="INSERT_OR_UPDATE"><access>package_private</access><active>true</active><api_name>x_196061_netra_v1.NetraIntent</api_name><caller_access/><client_callable>false</client_callable><description>Regex intent parser with smalltalk, multi-turn, advanced commands.</description><mobile_callable>false</mobile_callable><name>NetraIntent</name><sandbox_callable>false</sandbox_callable><script><![CDATA[/**
  * NetraIntent — natural-language intent parser (v3).
  *
@@ -44,7 +43,9 @@ NetraIntent.prototype = {
             return this._intent('partial_resolve', { reprompt: true }, raw);
         }
         if (pendingContext === 'confirm_destructive') {
-            if (/^(yes|yeah|yep|confirm|do it|go ahead|proceed)/.test(t)) return this._intent('confirm_yes', {}, raw);
+            // the whole answer must be a yes: "yeah no", "do it later" and
+            // "yesterday" are not
+            if (/^(yes|yeah|yep|yup|sure|ok|okay|confirm|confirmed|do it|go ahead|proceed)( please| do it| go ahead| please do)?[.!]?$/.test(t)) return this._intent('confirm_yes', {}, raw);
             return this._intent('confirm_no', {}, raw);
         }
         if (pendingContext === 'chat_reply_body') {
@@ -242,7 +243,9 @@ NetraIntent.prototype = {
         // ============================================================
         // Create ticket
         // ============================================================
-        var createMatch = t.match(/(?:create|open|log|raise|submit|file|i (?:need|want) (?:a |to (?:create|open|log) (?:a )?))?\s*(?:a |an )?(?:new )?ticket\s+(?:for|about|that|on|regarding)?[,:\-\s]+(.+)/i);
+        // an explicit request to create, anchored at the start - "is there a
+        // ticket for the email outage" is a question, never a new incident
+        var createMatch = t.match(/^(?:please\s+)?(?:create|open|log|raise|submit|file|i (?:need|want) (?:a |to (?:create|open|log) (?:a )?))\s*(?:a |an )?(?:new )?ticket\s+(?:for|about|that|on|regarding)?[,:\-\s]+(.+)/i);
         if (createMatch && createMatch[1] && createMatch[1].trim().length > 2)
             return this._intent('create', { description: this._cleanDescription(createMatch[1]) }, raw);
         var reportMatch = t.match(/^(?:please\s+)?report\s+(?:that\s+)?(.+)/i);
@@ -301,4 +304,4 @@ NetraIntent.prototype = {
 
     type: 'NetraIntent'
 };
-]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:38</sys_created_on><sys_id>10b3da9093424710e3aef0aefaba1024</sys_id><sys_mod_count>0</sys_mod_count><sys_name>NetraIntent</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_10b3da9093424710e3aef0aefaba1024</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-07-09 04:41:38</sys_updated_on></sys_script_include></record_update>
+]]></script><sys_class_name>sys_script_include</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:41:38</sys_created_on><sys_id>10b3da9093424710e3aef0aefaba1024</sys_id><sys_mod_count>2</sys_mod_count><sys_name>NetraIntent</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_script_include_10b3da9093424710e3aef0aefaba1024</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 06:00:33</sys_updated_on></sys_script_include></record_update>

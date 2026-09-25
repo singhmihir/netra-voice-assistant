@@ -1,4 +1,4 @@
-# Netra on ServiceNow — Installation Guide (v5.0)
+# Netra on ServiceNow — Installation Guide (v7.0)
 
 **Two install paths.** Pick one.
 
@@ -97,19 +97,66 @@ Proactive scan check:
 
 ---
 
-## Path B — Update Set XML (v5.0 batch, RECOMMENDED)
+## Path B — Update Set XML (v7.0 batch, RECOMMENDED)
 
-The complete app ships as ONE file now: `update-set/Netra_v5.0_Batch.xml`
-(parent "Netra - v5.0" + six children, ~280 updates - tables, script
-includes, widget + page, REST API, automation, app shell, properties and
+The complete app ships as ONE file now: `update-set/Netra_v7.0_Batch.xml`
+(parent "Netra - v7.0" + six children, ~410 updates - tables including the
+v7 quota ledger and mission items, 16 script includes, widget + page, REST
+API, automation, app shell, properties including the trust settings, and
 the navigator menu).
 
 1. *System Update Sets → Retrieved Update Sets → Import Update Set from XML*
-2. Upload `Netra_v5.0_Batch.xml`
-3. Open the parent **"Netra - v5.0"**, click **Preview Update Set Batch**
+2. Upload `Netra_v7.0_Batch.xml`
+3. Open the parent **"Netra - v7.0"**, click **Preview Update Set Batch**
 4. Click **Commit Update Set Batch** - the children commit in order
 5. Set your Gemini key in the `x_196061_netra_v1.gemini_api_key` property
    (shipped blank on purpose) and open `/sp?id=netra_live`
+
+The `netra_live` page and the widget ship **public**: anyone with the link
+can open Netra without logging in and talk to her as Guest (reads and
+writes then run with Guest's permissions, which is to say none - tickets
+need a login). Testers on a network that blocks the browser's speech
+service get the on-device ear automatically; it downloads its model once
+from huggingface.co and its runtime from jsdelivr.net.
+
+Upgrading from v6.0: commit the v7.0 batch on top. It removes the old
+`gemini_model` pin (v7 routes across a governed chain of four models), so
+if you had pinned a model, set `x_196061_netra_v1.model_chain` instead.
+
+**Who may do what** - Netra acts with each user's own permissions, so
+nothing to configure for tickets. Four properties tune the rest (re-running
+the installer keeps whatever you set):
+
+| Property (`x_196061_netra_v1.`…) | Default | Meaning |
+|---|---|---|
+| `ticket_writes` | `true` | Kill switch: `false` stops every write to tickets, approvals, vulnerability items and messages, undo and background orders included (Netra's own reminders, notes and watchlist are not affected) |
+| `vr_roles` | `sn_vul.admin, sn_vul.vulnerability_analyst, sn_vul.remediation_owner, sn_vul.read_all` | Roles that get the Vulnerability Response tools |
+| `code_roles` | `admin` | Roles that may have Netra read, list or narrate platform scripts |
+| `fulfiller_roles` | `itil, admin, sn_incident_read, sn_incident_write` | Roles told about new work notes on watched tickets (everyone else hears comments only) |
+
+The installer also grants the app read access to `sys_user_has_role` and
+`sys_user_role` (to tell fulfillers apart); on an instance upgraded by update
+set, allow those two cross-scope reads if the platform asks.
+
+Free Gemini keys allow **20 generate calls per model per day** (Gemma 4:
+16k input tokens per model per minute), shared by everyone using the key.
+v7 is built around that: most everyday questions cost no call at all, the
+page shows a loading screen through a short overload, and when every model
+is out for longer Netra answers the simple way (the web, and tickets by
+number) and tells you when her reasoning is back. Ask *"how's your brain?"*
+to hear the live ledger. For a page many people will use at once, set a
+paid key.
+
+**The loading screen.** `netra_live` accepts nothing until Netra can hear,
+speak and answer; each check is shown with its reason. Chrome and Edge play
+no voice until the page has had a key press or tap, so a fresh visitor is
+asked to press Enter (the **Start Netra** button is focused for screen
+readers).
+
+**Guests keep nothing.** Every public visitor is the one Guest user, so a
+Guest's memory, drafts and voice training last for the visit only, a Guest
+has no notification inbox, and record questions get "sign in to
+ServiceNow".
 
 ## Path C — Studio app import
 
@@ -140,3 +187,23 @@ To remove Netra entirely:
 1. **System Applications → All Available Applications → My Apps → Netra Voice Assistant**
 2. Click **Delete** on the row. ServiceNow removes every record in the `x_196061_netra` scope automatically — tables, script includes, business rules, scheduled jobs, REST API, widget.
 3. Remove the widget instance from any portal pages.
+
+## The on-device ear's files (optional, recommended on corporate networks)
+
+Where the browser's own speech service is blocked, Netra listens with Whisper
+in the browser, and she always speaks with her own voice (Piper, Cori). The
+page fetches the models, the voice, the ONNX runtime and transformers.js
+from **this instance** when they are there (the voice only from there), and
+the hearing from huggingface.co and jsdelivr.net otherwise. To put them on
+the instance (about 1 GB, once; they are not in the update set):
+
+```
+SN_URL=https://<instance>.service-now.com SN_USER=admin SN_PASS=... \
+  python3 netra-snow/scripts/upload-ear-files.py
+```
+
+It downloads the files, creates one `ear_file` record per model and uploads
+each file as an attachment (files past 100 MiB in parts). Re-running skips
+what is already there. Check with an anonymous GET of
+`/api/x_196061_netra_v1/voice/ear/whisper-tiny.en/config-json`.
+

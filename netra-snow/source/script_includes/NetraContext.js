@@ -74,6 +74,35 @@ NetraContext.prototype = {
         return raw;
     },
 
+    /** A write read back to the user, waiting for their yes (REST path).
+     *  Kept inside the CTX blob, next to the widget's own state. */
+    setPending: function (action, args) {
+        this._blobSet('rest_pending', { action: action, args: args || {}, at: new GlideDateTime().getNumericValue() });
+    },
+
+    /** @returns the pending write once (and clears it), or null */
+    takePending: function () {
+        var gr = this._get(false);
+        var raw = gr ? String(gr.last_utterance || '') : '';
+        if (raw.indexOf('CTX:') !== 0) return null;
+        var blob;
+        try { blob = JSON.parse(raw.substring(4)) || {}; } catch (e) { return null; }
+        var p = blob.rest_pending || null;
+        if (p) this._blobSet('rest_pending', null);
+        return p;
+    },
+
+    _blobSet: function (key, value) {
+        var gr = this._get(true);
+        var raw = String(gr.last_utterance || ''), blob = {};
+        if (raw.indexOf('CTX:') === 0) {
+            try { blob = JSON.parse(raw.substring(4)) || {}; } catch (e) { blob = {}; }
+        }
+        if (value === null) delete blob[key]; else blob[key] = value;
+        gr.last_utterance = 'CTX:' + JSON.stringify(blob);
+        gr.update();
+    },
+
     clear: function () {
         var gr = this._get(false);
         if (gr) {

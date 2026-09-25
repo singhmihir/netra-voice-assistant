@@ -174,10 +174,21 @@
             continue;
         }
         var userName = String(user.user_name);
+        // R21 - the shared Guest user (the public page's visitors) has no inbox
+        if (userName === 'guest') { gs.info('[NetraNotify]   skipped guest (shared public user)'); continue; }
 
         if (userName == authorUser && !notifyAuthor) {
             skippedAsAuthor++;
             gs.info('[NetraNotify]   skipped ' + userName + ' (is author of comment, field=' + fieldName + ')');
+            continue;
+        }
+        if (!_wantsComments(userSysId)) {
+            gs.info('[NetraNotify]   skipped ' + userName + ' (no Netra pref, or comment alerts off)');
+            continue;
+        }
+        // work notes are internal: a caller or watcher must never hear one read aloud
+        if (element == 'work_notes' && !_isFulfiller(userSysId)) {
+            gs.info('[NetraNotify]   skipped ' + userName + ' (work note, not a fulfiller)');
             continue;
         }
 
@@ -209,6 +220,27 @@
                            body.substring(0, 400) + (body.length > 400 ? '...' : '');
         n.delivered      = false;
         return String(n.insert() || '');
+    }
+
+    // booleans read back '1'/'0' through getValue on the platform
+    function _off(v) { v = String(v); return v === '0' || v === 'false'; }
+
+    function _wantsComments(userSysId) {
+        var p = new GlideRecord('__NETRA_SCOPE___user_pref');
+        p.addQuery('user', userSysId);
+        p.setLimit(1);
+        p.query();
+        return p.next() && !_off(p.getValue('active')) && !_off(p.getValue('watch_comments'));
+    }
+
+    function _isFulfiller(userSysId) {
+        var roles = String(gs.getProperty('__NETRA_SCOPE__.fulfiller_roles', 'itil,admin,sn_incident_read,sn_incident_write')).replace(/\s+/g, '');
+        var hr = new GlideRecord('sys_user_has_role');
+        hr.addQuery('user', userSysId);
+        hr.addQuery('role.name', 'IN', roles);
+        hr.setLimit(1);
+        hr.query();
+        return hr.next();
     }
 
 })(current, previous);

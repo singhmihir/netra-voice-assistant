@@ -43,7 +43,9 @@ NetraIntent.prototype = {
             return this._intent('partial_resolve', { reprompt: true }, raw);
         }
         if (pendingContext === 'confirm_destructive') {
-            if (/^(yes|yeah|yep|confirm|do it|go ahead|proceed)/.test(t)) return this._intent('confirm_yes', {}, raw);
+            // the whole answer must be a yes: "yeah no", "do it later" and
+            // "yesterday" are not
+            if (/^(yes|yeah|yep|yup|sure|ok|okay|confirm|confirmed|do it|go ahead|proceed)( please| do it| go ahead| please do)?[.!]?$/.test(t)) return this._intent('confirm_yes', {}, raw);
             return this._intent('confirm_no', {}, raw);
         }
         if (pendingContext === 'chat_reply_body') {
@@ -241,7 +243,9 @@ NetraIntent.prototype = {
         // ============================================================
         // Create ticket
         // ============================================================
-        var createMatch = t.match(/(?:create|open|log|raise|submit|file|i (?:need|want) (?:a |to (?:create|open|log) (?:a )?))?\s*(?:a |an )?(?:new )?ticket\s+(?:for|about|that|on|regarding)?[,:\-\s]+(.+)/i);
+        // an explicit request to create, anchored at the start - "is there a
+        // ticket for the email outage" is a question, never a new incident
+        var createMatch = t.match(/^(?:please\s+)?(?:create|open|log|raise|submit|file|i (?:need|want) (?:a |to (?:create|open|log) (?:a )?))\s*(?:a |an )?(?:new )?ticket\s+(?:for|about|that|on|regarding)?[,:\-\s]+(.+)/i);
         if (createMatch && createMatch[1] && createMatch[1].trim().length > 2)
             return this._intent('create', { description: this._cleanDescription(createMatch[1]) }, raw);
         var reportMatch = t.match(/^(?:please\s+)?report\s+(?:that\s+)?(.+)/i);

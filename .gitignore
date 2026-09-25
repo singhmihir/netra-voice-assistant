@@ -17,3 +17,6 @@ __pycache__/
 # Update-set work-in-progress (only the canonical NetraDeploymentV1.xml is tracked)
 netra-snow/update-set/*.work.xml
 netra-snow/update-set/*.tmp.xml
+
+# the on-device ear's files fetched by netra-snow/scripts/upload-ear-files.py (about 1 GB)
+netra-snow/.ear-files/

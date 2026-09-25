@@ -1594,149 +1594,84 @@
 .netra-voicelab-row button:hover { filter: brightness(1.15); }
 
 /* ============================================================
- *  R8 - NETRA LIVE STAGE (dedicated /sp?id=netra_live page)
+ *  R8 / R28 - NETRA LIVE STAGE (dedicated /sp?id=netra_live page)
  *
- *  Full-screen live voice surface: the stage is a
- *  fixed overlay that covers the entire viewport (including the
- *  Service Portal chrome), a warm near-black canvas, one big
- *  organic blob breathing dead-centre, a quiet status line, a
- *  caption of the last thing heard, and two round controls.
+ *  A calm stage that stays in one place: a fixed grid over the
+ *  whole viewport with the rows head / orb / status / cap / aux /
+ *  bar. The orb row keeps its size whatever is said, so the orb is
+ *  in the same place in every state. Sheets (Settings, Transcript)
+ *  are fixed overlays outside the grid. System fonts only. The
+ *  portal chrome under the stage is hidden by the template's own
+ *  unscoped <style> (body-level rules here never match: this file
+ *  is compiled under .v<sys_id>).
  * ============================================================ */
-
-/* On the dedicated page, hide the Service Portal shell entirely so
- * nothing but the stage shows. body gets .netra-live-body from JS. */
-.netra-live-body #sp-page,
-.netra-live-body .navbar,
-.netra-live-body header.sp-navbar,
-.netra-live-body .sp-navbar,
-.netra-live-body sp-service-portal > header,
-.netra-live-body #google_translate_element { display: none !important; }
-.netra-live-body { background: #0d0714 !important; overflow: hidden !important; }
 
 .netra-stage {
     position: fixed;
     inset: 0;
     z-index: 2147483000;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    /* R8.1 - deep cosmic canvas; the tint rides the live hue */
-    background:
-        radial-gradient(120% 90% at 50% 34%, #2a1a45 0%, #1a1030 46%, #0f0a20 100%);
-    color: #efe7ff;
-    font-family: 'Google Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    /* the orb row gives way first and the caption row next, so the bar and
+       the aux row (B's composer) always end on screen: a short laptop window,
+       an iPhone with its toolbars, a phone with the keyboard open (--vvh) */
+    /* the status row never drops below its own text (min-content counts its
+       62 px floor); on a short stage the orb, the caption and the empty part
+       of the aux row give way */
+    grid-template-rows: calc(56px + env(safe-area-inset-top, 0px)) minmax(0, 1fr) minmax(min-content, auto) minmax(0, var(--cap-row)) minmax(min-content, var(--aux-h)) auto;
+    grid-template-areas: 'head' 'orb' 'status' 'cap' 'aux' 'bar';
+    justify-items: center;
+    height: 100vh;
+    height: 100dvh;
+    height: var(--vvh, 100dvh);
+    background: #0e0e10;
+    color: #e3e3e3;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
+    /* the orb (--orb) is sized from the height the other rows leave
+       (--rows-h), both in the template's inline style: this compiler drops
+       a whole rule that has min() around calc(), and it takes the space out
+       of ") + " so a sum of two var()s is no longer valid CSS.
+       In calc() here, a var() never stands just before a + or a - */
+    --aux-h: 104px;
+    --cap-h: calc(26px + var(--cap-lines, 3) * 1.45 * var(--cap, 20px));
+    /* the caption row keeps room for the biggest size (XL, two lines), so a
+       new caption size never moves the orb either */
+    --cap-row: calc(2 * 1.45 * 32px + 26px);
 }
+/* the stage's controls use its font, not the widget's button font */
+.netra-stage button,
+.netra-stage input,
+.netra-stage select { font-family: inherit; }
+/* caption sizes (Settings): the class on the stage sets the text size and
+   the height of the caption row */
+.netra-cap-s  { --cap: 18px; }
+.netra-cap-m  { --cap: 20px; }
+.netra-cap-l  { --cap: 26px; --cap-lines: 2; }
+.netra-cap-xl { --cap: 32px; --cap-lines: 2; }
+@media (min-width: 700px) {
+    .netra-stage  { --aux-h: 64px; --cap-row: calc(2 * 1.45 * 40px + 26px); }
+    .netra-cap-m  { --cap: 22px; }
+    .netra-cap-l  { --cap: 30px; }
+    .netra-cap-xl { --cap: 40px; }
+}
+/* the orb, the status and the caption are grid items of the stage itself */
+.netra-stage-center { display: contents; }
 
-/* soft drifting light so the room feels alive, not flat - now hue-locked */
-.netra-stage::before {
-    content: '';
-    position: absolute;
-    width: 90vmin; height: 90vmin;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -54%);
-    background: radial-gradient(circle, var(--netra-glow-soft, rgba(139,61,240,0.20)) 0%, var(--netra-aura1, rgba(127,255,176,0.06)) 42%, rgba(0,0,0,0) 70%);
-    filter: blur(10px);
-    animation: netra-stage-breathe 7s ease-in-out infinite;
-    pointer-events: none;
-}
-@keyframes netra-stage-breathe {
-    0%, 100% { transform: translate(-50%, -54%) scale(1);    opacity: 0.75; }
-    50%      { transform: translate(-50%, -54%) scale(1.12); opacity: 1;    }
-}
-
-/* ------------------------------------------------------------
- * R8.1 - PRISM ROOM LAYERS
- * ------------------------------------------------------------ */
-/* faint starfield, two parallax sheets drifting at different speeds */
-.netra-stage-stars {
-    position: absolute;
-    inset: -20%;
-    pointer-events: none;
-    background-image:
-        radial-gradient(1.2px 1.2px at 12% 22%, rgba(255,255,255,0.55) 50%, transparent 51%),
-        radial-gradient(1px 1px at 34% 68%, rgba(255,255,255,0.35) 50%, transparent 51%),
-        radial-gradient(1.4px 1.4px at 56% 12%, rgba(255,255,255,0.45) 50%, transparent 51%),
-        radial-gradient(1px 1px at 72% 44%, rgba(255,255,255,0.30) 50%, transparent 51%),
-        radial-gradient(1.2px 1.2px at 88% 76%, rgba(255,255,255,0.40) 50%, transparent 51%),
-        radial-gradient(1px 1px at 22% 86%, rgba(255,255,255,0.28) 50%, transparent 51%),
-        radial-gradient(1.3px 1.3px at 64% 90%, rgba(255,255,255,0.35) 50%, transparent 51%),
-        radial-gradient(1px 1px at 44% 38%, rgba(255,255,255,0.25) 50%, transparent 51%),
-        radial-gradient(1.1px 1.1px at 8% 54%, rgba(255,255,255,0.32) 50%, transparent 51%),
-        radial-gradient(1px 1px at 94% 18%, rgba(255,255,255,0.30) 50%, transparent 51%);
-    background-size: 46vmax 46vmax;
-    animation: netra-stars-drift 160s linear infinite;
-    opacity: 0.5;
-}
-@keyframes netra-stars-drift {
-    from { transform: translate3d(0, 0, 0); }
-    to   { transform: translate3d(-8vmax, -5vmax, 0); }
-}
-
-/* aurora ribbons - two huge blurred conic sweeps in hue-offset colours,
- * counter-rotating very slowly. Amplitude raises their alpha (the vars
- * are written with amp baked in), so the whole room swells when she
- * speaks. transform-only animation = GPU cheap. */
-.netra-stage-aurora {
-    position: absolute;
-    width: 160vmax; height: 160vmax;
-    top: 50%; left: 50%;
-    margin: -80vmax 0 0 -80vmax;
-    pointer-events: none;
-    border-radius: 50%;
-    filter: blur(60px) saturate(1.2);
-    mix-blend-mode: screen;
-    will-change: transform;
-}
-.netra-stage-aurora-1 {
-    background: conic-gradient(from 0deg,
-        transparent 0deg,
-        var(--netra-aura1, rgba(64,200,255,0.14)) 40deg,
-        transparent 110deg,
-        var(--netra-aura2, rgba(160,90,255,0.11)) 180deg,
-        transparent 250deg,
-        var(--netra-aura1, rgba(64,200,255,0.10)) 300deg,
-        transparent 360deg);
-    animation: netra-aurora-spin 90s linear infinite;
-}
-.netra-stage-aurora-2 {
-    background: conic-gradient(from 120deg,
-        transparent 0deg,
-        var(--netra-aura2, rgba(160,90,255,0.11)) 60deg,
-        transparent 140deg,
-        var(--netra-aura1, rgba(64,200,255,0.10)) 220deg,
-        transparent 300deg);
-    animation: netra-aurora-spin 140s linear infinite reverse;
-}
-@keyframes netra-aurora-spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-}
-
-/* reflective floor sheen under the blob */
-.netra-stage-floor {
-    position: absolute;
-    left: 50%; bottom: 6%;
-    width: 74vmin; height: 12vmin;
-    transform: translateX(-50%);
-    background: radial-gradient(50% 100% at 50% 0%, var(--netra-glow-soft, rgba(139,61,240,0.16)) 0%, transparent 75%);
-    filter: blur(14px);
-    opacity: calc(0.5 + var(--netra-amp, 0) * 0.5);
-    pointer-events: none;
-}
-
-/* orbit layer: prism rings + ripple host, centred behind the blob */
+/* orbit layer (the 2D blob's prism rings and word ripples), centred on the
+   orb; the stage renderer hides the rings */
 .netra-stage-orbit {
-    position: absolute;
-    top: 50%; left: 50%;
+    grid-area: orb;
+    align-self: center;
+    position: relative;
     width: 0; height: 0;
     pointer-events: none;
     z-index: 0;
 }
 .netra-stage-ring {
     position: absolute;
-    width: min(74vmin, 540px); height: min(74vmin, 540px);
+    width: calc(var(--orb) * 1.28); height: calc(var(--orb) * 1.28);
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
     border-radius: 50%;
@@ -1754,7 +1689,7 @@
     filter: blur(0.4px);
 }
 .netra-stage-ring-2 {
-    width: min(86vmin, 640px); height: min(86vmin, 640px);
+    width: calc(var(--orb) * 1.5); height: calc(var(--orb) * 1.5);
     -webkit-mask: radial-gradient(closest-side, transparent 98%, #000 99%, #000 100%);
     mask: radial-gradient(closest-side, transparent 98%, #000 99%, #000 100%);
     opacity: calc(0.14 + var(--netra-amp, 0) * 0.4);
@@ -1773,7 +1708,7 @@
 .netra-stage-ripples { position: absolute; top: 0; left: 0; }
 .netra-ripple {
     position: absolute;
-    width: min(58vmin, 420px); height: min(58vmin, 420px);
+    width: var(--orb); height: var(--orb);
     top: 50%; left: 50%;
     border-radius: 50%;
     border: 1.5px solid var(--eye-glow, rgba(139,61,240,0.6));
@@ -1788,71 +1723,89 @@
     100% { transform: translate(-50%, -50%) scale(1.65); opacity: 0;   }
 }
 
+/* the header: Settings at the left, the name in the middle, Sign in at the
+   right for a Guest - one row, clear of the notch */
 .netra-stage-head {
-    position: absolute;
-    top: 22px; left: 0; right: 0;
-    display: flex;
+    grid-area: head;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
-    justify-content: center;
-    gap: 10px;
-    z-index: 2;
-}
-.netra-stage-brand {
-    font-size: 17px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    background: linear-gradient(90deg, #efe7ff, var(--iris-bright, #7fffb0));
-    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
-    filter: drop-shadow(0 0 12px var(--netra-glow-soft, rgba(139,61,240,0.25)));
-}
-.netra-stage-pill {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 9px; font-weight: 700; letter-spacing: 0.18em;
-    color: #ffd7a0;
-    border: 1px solid rgba(255,184,77,0.4);
-    background: rgba(255,184,77,0.10);
-    border-radius: 999px; padding: 2px 9px;
-}
-/* R8.1 - live state pill rides the prism hue */
-.netra-stage-pill-state {
-    color: var(--iris-bright, #d8c8ff);
-    border-color: var(--netra-glow-soft, rgba(216,200,255,0.35));
-    background: rgba(255,255,255,0.04);
-    text-transform: uppercase;
-    transition: color 0.4s ease, border-color 0.4s ease;
-}
-
-.netra-stage-center {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 30px;
-    z-index: 1;
     width: 100%;
-    padding: 0 24px;
+    box-sizing: border-box;
+    padding: env(safe-area-inset-top, 0px) calc(12px + env(safe-area-inset-right, 0px)) 0 calc(12px + env(safe-area-inset-left, 0px));
+    z-index: 3;
 }
+/* #8e918f edge is 6.1:1 on the stage; #e3e3e3 text is 12.9:1 on #1e1f20 */
+.netra-head-settings {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 22px;
+    border: 1px solid #8e918f;
+    background: #1e1f20;
+    color: #e3e3e3;
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.2;
+    cursor: pointer;
+}
+.netra-head-settings:hover { background: #2a2b2d; }
+.netra-stage-brand {
+    grid-column: 2;
+    margin: 0;
+    padding: 0;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: normal;
+    color: #e3e3e3;
+}
+/* #a8c7fa is 11.2:1 on the stage */
+.netra-head-signin {
+    grid-column: 3;
+    justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 8px;
+    color: #a8c7fa;
+    font-size: 15px;
+    font-weight: 500;
+    text-decoration: underline;
+}
+.netra-head-signin:hover { color: #d3e3fd; }
 
+/* the orb's tap target: the renderer paints the orb on it (0.36 of the
+   box is the painted radius); the 2D blob draws inside it */
 .netra-stage-blob-wrap {
+    grid-area: orb;
+    align-self: center;
     appearance: none;
+    -webkit-appearance: none;
     background: none;
     border: none;
     cursor: pointer;
-    width: min(58vmin, 420px);
-    height: min(58vmin, 420px);
+    width: var(--orb);
+    height: var(--orb);
     padding: 0;
     display: block;
     position: relative;
     z-index: 1;
-    /* R8.1 - hue under-glow (the amp-scaled second layer is applied from
-       the template <style> tag - compiler-safe there) */
-    filter: drop-shadow(0 18px 60px var(--eye-glow, rgba(139,61,240,0.45)));
+    -webkit-tap-highlight-color: transparent;
     transition: transform 0.3s ease;
 }
+/* never taller than its row: see the template's inline style */
 .netra-stage-blob-wrap:active { transform: scale(0.97); }
-/* R9.1 - kill the square focus rectangle when the blob is clicked/tapped.
-   Keyboard users still get a soft glow ring via :focus-visible below. */
+/* the on-screen keyboard is up (client.js _vvWatch): the orb's row is too
+   small to tap, so the orb steps aside while typing */
+.netra-stage[data-kbd] .netra-stage-orbit,
+.netra-stage[data-kbd] .netra-stage-blob-wrap { display: none; }
+.netra-stage[data-kbd] .netra-stage-3d { visibility: hidden; }
+/* no square box on a click or a tap; keyboard focus gets the ring that hugs
+   the orb (template <style>, ::after) */
 .netra-stage-blob-wrap,
 .netra-stage-blob-wrap:hover,
 .netra-stage-blob-wrap:active,
@@ -1860,14 +1813,26 @@
 .netra-stage-blob-wrap:focus-within {
     outline: none !important;
     box-shadow: none;
-    -webkit-tap-highlight-color: transparent;
-}
-.netra-stage-blob-wrap:focus-visible {
-    outline: none !important;
-    filter: drop-shadow(0 18px 60px var(--eye-glow, rgba(139,61,240,0.45)))
-            drop-shadow(0 0 26px var(--iris-bright, rgba(216,200,255,0.8)));
 }
 .netra-stage-svg { width: 100%; height: 100%; overflow: visible; }
+/* muted (a slashed mic) and paused (two bars) differ by shape, not only by
+   brightness; the #8e918f ring is 6.1:1 on the stage */
+.netra-orb-glyph {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 88px; height: 88px;
+    margin: -44px 0 0 -44px;
+    border-radius: 50%;
+    background: rgba(14, 14, 16, 0.72);
+    box-shadow: 0 0 0 2px #8e918f;
+    color: #e3e3e3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 2;
+}
+.netra-orb-glyph svg { display: block; }
 
 /* the big blob - warm plasma clay, Netra palette.
  * A state-tinted radial gradient is defined per stage state below; the
@@ -1894,74 +1859,593 @@
    tag (calc*var drop-shadow and grayscale(number) break the SCSS fork) */
 .nsg-0, .nsg-1, .nsg-2, .nsg-3 { transition: stop-color 0.2s linear; }
 
-.netra-stage-status {
-    font-size: 17px;
+/* the status: one line of plain words and a hint under the orb, never a
+   live region. #e3e3e3 is 15.0:1 and #c4c7c5 11.3:1 on the stage. Room
+   for a one-line hint is kept, so the orb does not move when one shows */
+.netra-status {
+    grid-area: status;
+    align-self: start;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 62px;
+    text-align: center;
+    padding: 8px 16px 4px;
+    z-index: 1;
+}
+.netra-status-label {
+    margin: 0;
+    font-size: 20px;
     font-weight: 500;
-    letter-spacing: 0.01em;
-    color: #cdbff0;
-    text-align: center;
-    min-height: 24px;
-    animation: netra-status-fade 0.4s ease;
-    /* R8.1 - quiet glass chip so the status floats over the aurora */
-    padding: 8px 22px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.045);
-    border: 1px solid var(--netra-glow-soft, rgba(216, 200, 255, 0.14));
-    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
-    transition: border-color 0.5s ease;
+    line-height: 1.3;
+    color: #e3e3e3;
 }
-@keyframes netra-status-fade { from { opacity: 0; } to { opacity: 1; } }
-
-.netra-stage-caption {
+.netra-status-hint {
+    margin: 2px 0 0;
     font-size: 15px;
-    color: #8f83b5;
-    text-align: center;
-    max-width: 640px;
-    line-height: 1.5;
-    min-height: 22px;
-    font-style: italic;
-    animation: netra-status-fade 0.3s ease;
+    font-weight: 400;
+    line-height: 1.35;
+    color: #c4c7c5;
 }
-/* R8.1 - Netra's own words while she speaks: brighter, hue-kissed */
-.netra-stage-caption-netra {
+/* Try again / Type instead after an error or a long wait */
+.netra-retry-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 8px;
+}
+.netra-retry {
+    min-height: 44px;
+    padding: 0 18px;
+    border-radius: 22px;
+    border: 1px solid #8e918f;
+    background: #1e1f20;
+    color: #e3e3e3;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+}
+.netra-retry:hover { background: #2a2b2d; }
+
+/* captions: a solid box, who is talking in front, the newest line at the
+   bottom and older text cut at the top. #f1f3f4 is 15.4:1 on #1b1b1f */
+.netra-cap {
+    grid-area: cap;
+    align-self: start;
+    width: calc(100% - 32px);
+    max-width: 36em;
+    height: var(--cap-h);
+    max-height: 100%;   /* its row gives way on a very short stage */
+    box-sizing: border-box;
+    background: #1b1b1f;
+    border: 1px solid #5f6368;
+    border-radius: 20px;
+    padding: 12px 18px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    text-align: left;
+    font-size: var(--cap, 20px);
+    font-weight: 400;
+    line-height: 1.45;
     font-style: normal;
-    font-size: 16px;
-    color: #ded2ff;
-    text-shadow: 0 0 22px var(--netra-glow-soft, rgba(139, 61, 240, 0.3));
+    color: #f1f3f4;
+    text-shadow: none;
+    z-index: 1;
+}
+.netra-cap.is-empty { background: transparent; border-color: transparent; }
+.netra-cap-line { margin: 0; }
+/* a long line fades out where the box cuts it (the top of the box: the
+   visible height, measured up from the bottom of the line) */
+.netra-cap.is-long .netra-cap-line {
+    -webkit-mask-image: linear-gradient(to top, #000 calc(-26px - 1.2em + var(--cap-h)), transparent calc(-26px + var(--cap-h)));
+    mask-image: linear-gradient(to top, #000 calc(-26px - 1.2em + var(--cap-h)), transparent calc(-26px + var(--cap-h)));
+}
+.netra-cap-who {
+    font-size: 0.72em;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin-right: 0.35em;
+}
+/* 'Netra' #a8c7fa (10.0:1), 'You' and your own words #c4c7c5 (10.1:1) */
+.netra-cap-who.is-netra { color: #a8c7fa; }
+.netra-cap-who.is-you,
+.netra-cap-who.is-you + .netra-cap-text { color: #c4c7c5; }
+
+/* the mic check card sits in the aux row, above the bar */
+.netra-calib-card {
+    grid-area: aux;
+    align-self: end;
+    width: calc(100% - 32px);
+    box-sizing: border-box;
+    z-index: 2;
 }
 
+/* a short phone upright (320 x 568): a lower aux row leaves the orb more
+   room (the orb itself follows the height that is left, see --orb) */
+@media (max-height: 640px) and (orientation: portrait) {
+    .netra-stage { --aux-h: 64px; }
+}
+/* a phone held sideways: the orb on the left, status, captions and the aux
+   row on the right, the bar across the bottom */
+@media (orientation: landscape) and (max-height: 520px) {
+    .netra-stage {
+        grid-template-columns: minmax(0, 42%) minmax(0, 1fr);
+        /* the caption gives way first, so the typing box keeps its height */
+        grid-template-rows: 48px auto minmax(0, var(--cap-h)) minmax(56px, 1fr) auto;
+        grid-template-areas: 'head head' 'orb status' 'orb cap' 'orb aux' 'bar bar';
+        --cap-lines: 2;   /* --orb for a phone held sideways: the template's inline style */
+    }
+    .netra-status { min-height: auto; padding-top: 4px; }   /* its own height: the caption row gives way */
+    .netra-status-label { font-size: 18px; }
+}
+
+/* Windows High Contrast and other forced colours: the orb is a plain
+   circle, the caption box and Settings keep an edge, focus is Highlight */
+@media (forced-colors: active) {
+    .netra-stage-3d { display: none; }
+    .netra-stage-blob-wrap { border: 3px solid ButtonText; border-radius: 50%; forced-color-adjust: none; background: Canvas; }
+    .netra-cap,
+    .netra-head-settings { border: 2px solid CanvasText; }
+    .netra-stage-blob-wrap:focus-visible::after { box-shadow: none !important; outline: 3px solid Highlight; }
+    .netra-orb-glyph { color: CanvasText; }
+}
+/* more contrast asked for: pure black and white */
+@media (prefers-contrast: more) {
+    .netra-cap { border: 2px solid #fff; background: #000; }
+    .netra-status-hint { color: #fff; }
+}
+
+/* R21 - the loading screen */
+/* R21/R23 - the loading screen. Above everything on the stage (the
+   Settings tab and the install button included), a solid card, large
+   full-contrast text; rows are explicitly transparent so no portal theme
+   class can paint over them (the theme's .ok once did: grey box, white text) */
+/* R24 - clear of the notch and the home bar; a card taller than the screen
+   (a phone held sideways) scrolls inside itself, Start never below the edge */
+.netra-ready { position: absolute; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; box-sizing: border-box; background: rgba(8, 6, 14, 0.74); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    padding: calc(12px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); }
+.netra-ready-card { max-width: 440px; width: 100%; max-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; box-sizing: border-box; padding: 24px 24px 22px; border-radius: 20px; background: #16131f; border: 1px solid rgba(255, 255, 255, 0.14); color: #ffffff; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55); text-align: left; }
+.netra-ready-title { font-size: 22px; line-height: 1.25; font-weight: 700; color: #ffffff; margin: 0 0 6px; padding: 0; font-family: inherit; letter-spacing: normal; }
+.netra-ready-title:focus { outline: none; }
+.netra-ready-title:focus-visible { outline: 2px solid #ffffff; outline-offset: 4px; border-radius: 4px; }
+.netra-ready-sub { font-size: 15px; line-height: 1.45; color: #d9d6e2; opacity: 1; margin: 0 0 16px; }
+.netra-ready .netra-ready-row { display: flex; align-items: flex-start; gap: 12px; padding: 11px 0; border-top: 1px solid rgba(255, 255, 255, 0.12); font-size: 16px; line-height: 1.4; color: #ffffff; background: transparent !important; }
+.netra-ready .netra-ready-row b { min-width: 78px; flex: 0 0 auto; font-weight: 600; color: #ffffff; }
+.netra-ready .netra-ready-row em { font-style: normal; color: #e6e3ee; opacity: 1; overflow-wrap: anywhere; }
+.netra-ready-row .dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 11px; margin-top: 6px; background: #f5b83d; animation: netra-ready-pulse 1s ease-in-out infinite alternate; }
+.netra-ready-row.netra-ready-ok .dot { background: #3ddc84; animation: none; }
+/* R28 - the one-time speech download: a 6 px track, the fill #a8c7fa */
+.netra-ready-bar { height: 6px; margin: 0 0 10px 23px; border-radius: 3px; overflow: hidden; background: #3c3c43; }
+.netra-ready-bar i { display: block; height: 100%; background: #a8c7fa; transition: width 0.3s linear; }
+@media (prefers-reduced-motion: reduce) { .netra-ready-bar i { transition: none; } }
+@keyframes netra-ready-pulse { from { opacity: .45; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .netra-ready-row .dot { animation: none; } }
+/* Start (when the browser needs a press), Type instead (when she can not
+   hear), and Leave: the controls the card covers are never out of reach */
+.netra-ready-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.netra-ready-actions button { flex: 1 1 100%; min-height: 48px; border-radius: 12px; font-size: 17px; font-weight: 700; cursor: pointer; }
+.netra-ready-start, .netra-ready-type { border: 0; background: #1967d2; color: #fff;   /* 5.4:1 with white (WCAG AA) */ }
+.netra-ready-actions .netra-ready-leave { flex: 0 0 auto; min-height: 44px; margin-left: auto; padding: 0 18px; border: 1px solid rgba(255, 255, 255, 0.4); background: transparent; color: #ffffff; font-size: 15px; font-weight: 600; }
+.netra-ready-actions button:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+@media (max-width: 420px) {
+    .netra-ready-card { padding: 20px 18px 18px; }
+    .netra-ready .netra-ready-row { gap: 10px; }
+    .netra-ready .netra-ready-row b { min-width: 70px; }
+}
+/* a phone held sideways (844x390, 667x375): compact rows, buttons side by side */
+@media (max-height: 520px) and (orientation: landscape) {
+    .netra-ready-card { max-width: 600px; padding: 12px 18px; border-radius: 16px; }
+    .netra-ready-title { font-size: 18px; margin: 0 0 2px; }
+    .netra-ready-sub { font-size: 13px; line-height: 1.35; margin: 0 0 6px; }
+    .netra-ready .netra-ready-row { padding: 5px 0; font-size: 14px; line-height: 1.35; }
+    .netra-ready-row .dot { margin-top: 4px; }
+    .netra-ready-actions { margin-top: 8px; gap: 8px; }
+    .netra-ready-actions button { flex: 1 1 auto; min-height: 44px; font-size: 15px; }
+}
+/* ============================================================
+ *  R28 - THE CONTROL BAR: Mute, Type, Transcript, End
+ *  Four round controls with their word under them, in the stage's
+ *  'bar' row. Solid fills on the #0e0e10 stage: the ring #8e918f is
+ *  6.1:1, the icon and label #e3e3e3 12.9:1. Every target is at least
+ *  64 x 84 px; 4 x 64 + 3 x 6 + 12 + 24 = 310 px fits a 320 px phone.
+ * ============================================================ */
 .netra-stage-controls {
-    display: flex;
-    gap: 22px;
-    align-items: center;
+    grid-area: bar;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(64px, 88px));
+    gap: 8px;
     justify-content: center;
-    padding-bottom: 46px;
+    width: 100%;
+    box-sizing: border-box;
+    /* the home bar's share: max(20px, inset + 10px) is in the template's style tag */
+    padding: 8px 16px 20px;
+    position: relative;
     z-index: 2;
 }
 .netra-ctl {
-    width: 62px; height: 62px;
-    border-radius: 50%;
-    border: 1px solid rgba(216,200,255,0.25);
-    background: rgba(255,255,255,0.06);
-    color: #efe7ff;
-    display: flex; align-items: center; justify-content: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    min-width: 64px;
+    min-height: 84px;
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+    color: #e3e3e3;
     cursor: pointer;
-    transition: transform 0.14s ease, background 0.18s ease, border-color 0.18s ease;
-    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
-.netra-ctl:hover { transform: translateY(-2px); background: rgba(255,255,255,0.12); border-color: var(--eye-glow, rgba(216,200,255,0.5)); box-shadow: 0 4px 24px var(--netra-glow-soft, rgba(139,61,240,0.25)); }
-.netra-ctl-muted { background: rgba(255,90,90,0.16); border-color: rgba(255,120,120,0.5); color: #ffb3b3; }
-.netra-ctl-end { background: rgba(255,90,90,0.10); border-color: rgba(255,120,120,0.35); }
-.netra-ctl-end:hover { background: rgba(255,90,90,0.22); }
+.netra-ctl-ico {
+    width: 56px;
+    height: 56px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: #1e1f20;
+    border: 1px solid #8e918f;
+    color: #e3e3e3;
+    transition: transform 0.12s ease, background 0.15s ease;
+}
+.netra-ctl-ico svg { display: block; }
+.netra-ctl-label { font: 500 13px/1.1 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #e3e3e3; white-space: nowrap; }
+.netra-ctl:hover .netra-ctl-ico { background: #2a2b2d; }
+/* pressed Mute: a light circle with the slashed mic (12.8:1) */
+.netra-ctl-mic[aria-pressed=true] .netra-ctl-ico { background: #e3e3e3; color: #1f1f1f; border-color: #e3e3e3; }
+/* End: red with a light ring, set apart (icon 6.5:1, ring 11.3:1) */
+.netra-ctl-end { margin-left: 12px; }
+.netra-ctl-end .netra-ctl-ico { background: #b3261e; border: 2px solid #f2b8b5; color: #ffffff; }
+.netra-ctl-end:hover .netra-ctl-ico { background: #8c1d18; }
+/* the focus ring sits on the circle, not on the whole column */
+.netra-ctl:focus { outline: none; }
+.netra-ctl:focus-visible { outline: none !important; }
+.netra-ctl:focus-visible .netra-ctl-ico { outline: 3px solid #ffffff; outline-offset: 3px; }
+.netra-ctl:active .netra-ctl-ico { transform: scale(0.96); }
+@media (prefers-reduced-motion: reduce) {
+    .netra-ctl:active .netra-ctl-ico { transform: none; }
+    .netra-ctl-ico { transition: none; }
+}
+@media (min-width: 600px) {
+    .netra-ctl-ico { width: 60px; height: 60px; }
+}
+@media (max-width: 359px) {
+    .netra-stage-controls { padding-left: 12px; padding-right: 12px; gap: 6px; }
+}
+/* ended: 'Start Netra again' and the transcript in the same row */
+.netra-stage-controls-ended {
+    grid-template-columns: auto auto;
+    align-items: center;
+    gap: 16px;
+}
+.netra-ended-btn {
+    min-height: 56px;
+    min-width: 220px;
+    padding: 0 24px;
+    border: 0;
+    border-radius: 28px;
+    background: #a8c7fa;
+    color: #062e6f;   /* 7.5:1 */
+    font: 600 17px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    cursor: pointer;
+}
+.netra-ended-btn:focus-visible { outline: 3px solid #ffffff; outline-offset: 3px; }
+@media (max-width: 359px) {
+    .netra-ended-btn { min-width: 180px; }
+}
+
+/* ---- R28 - Type: the box just above the bar ---- */
+.netra-type {
+    grid-area: aux;
+    align-self: end;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: calc(100% - 32px);
+    max-width: 36em;
+    padding: 4px 0;
+    margin: 0 auto;
+    position: relative;
+    z-index: 3;
+}
+/* 17 px keeps iOS from zooming; the text is 14.6:1 and the placeholder 6.3:1 */
+#netra-type-in {
+    flex: 1;
+    min-width: 0;
+    min-height: 48px;
+    box-sizing: border-box;
+    font: 400 17px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color: #f1f3f4;
+    background: #1e1f20;
+    border: 1px solid #8e918f;
+    border-radius: 24px;
+    padding: 0 18px;
+}
+#netra-type-in::placeholder { color: #9aa0a6; opacity: 1; }
+#netra-type-in:focus { outline: none; }
+#netra-type-in:focus-visible { outline: 2px solid #a8c7fa; outline-offset: 2px; }
+.netra-type-send {
+    flex: 0 0 48px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: #a8c7fa;
+    color: #062e6f;
+    border: 0;
+    cursor: pointer;
+}
+.netra-type-send[disabled] { background: #3c3c43; color: #c4c7c5; cursor: default; }
+.netra-type-close {
+    flex: 0 0 48px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: transparent;
+    color: #e3e3e3;
+    border: 0;
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+}
+.netra-type-send:focus-visible, .netra-type-close:focus-visible { outline: 3px solid #ffffff; outline-offset: 2px; }
+
+/* ---- R28 - 'Try saying' starters (text 12.9:1, border 6.1:1) ----
+   One row of chips in the aux row, as Gemini shows its suggestions: it
+   scrolls sideways on a phone instead of growing taller, so it never takes
+   the orb's room (a column of four chips squeezed the orb to nothing on a
+   320 px phone). The auto margins centre the row when it fits and let it
+   start at the left edge when it scrolls; the padding keeps focus rings in */
+.netra-try {
+    grid-area: aux;
+    align-self: start;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 16px;
+    margin: 0 auto;
+    overflow-x: auto;
+    /* the right edge fades, so a row that goes on looks like it goes on */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    scroll-padding: 0 16px;
+    position: relative;
+    z-index: 3;
+}
+.netra-try::-webkit-scrollbar { display: none; }
+.netra-try-h { flex: none; margin: 0 0 0 auto; font: 600 13px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #c4c7c5; }
+.netra-try-chip {
+    flex: none;
+    min-height: 44px;
+    padding: 8px 14px;
+    white-space: nowrap;
+    font: 500 15px/1.25 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color: #e3e3e3;
+    background: #1e1f20;
+    border: 1px solid #8e918f;
+    border-radius: 14px;
+    cursor: pointer;
+}
+.netra-try-chip:last-child { margin-right: auto; }
+.netra-try-chip:hover { background: #2a2b2d; }
+.netra-try-chip:focus-visible { outline: 3px solid #ffffff; outline-offset: 2px; }
+
+/* the on-screen keyboard is up (client.js _vvWatch sets data-kbd and the
+   visible height, --vvh): 308 px on a 320 x 568 phone, 190 px on a phone
+   held sideways. No orb row and no orb column: the status, the caption and
+   the typing box get the whole width, and the bar is compact. The middle
+   is one column that wraps: a caption with no room for one whole line
+   wraps into a second column, off the side and cut away, never a sliver
+   under the typing box (her words are still in the Transcript) */
+.netra-stage[data-kbd] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: calc(56px + env(safe-area-inset-top, 0px)) minmax(0, 1fr) auto auto;
+    grid-template-areas: 'head' 'mid' 'aux' 'bar';
+    --kbd-lines: 1;
+}
+/* a tall phone has room for two lines above its keyboard */
+@media (min-height: 700px) and (orientation: portrait) {
+    .netra-stage[data-kbd] { --kbd-lines: 2; }
+}
+.netra-stage[data-kbd] .netra-stage-center {
+    grid-area: mid;
+    display: flex;
+    flex-flow: column wrap;
+    align-items: center;
+    align-content: flex-start;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+/* the status keeps the full width, so a wrapped caption starts past the edge */
+.netra-stage[data-kbd] .netra-status { flex: none; min-height: 0; padding: 4px 16px; }
+.netra-stage[data-kbd] .netra-status-hint { display: none; }
+.netra-stage[data-kbd] .netra-retry-row { margin-top: 4px; }
+/* whole lines, the newest words; the line before is masked at the edge */
+.netra-stage[data-kbd] .netra-cap {
+    flex: none;
+    align-self: center;
+    height: calc(14px + var(--kbd-lines) * 1.45em);
+    max-height: none;
+    padding: 6px 14px;
+    border-radius: 16px;
+}
+.netra-stage[data-kbd] .netra-cap .netra-cap-line {
+    -webkit-mask-image: linear-gradient(to top, #000 calc(var(--kbd-lines) * 1.45em), transparent calc(var(--kbd-lines) * 1.45em));
+    mask-image: linear-gradient(to top, #000 calc(var(--kbd-lines) * 1.45em), transparent calc(var(--kbd-lines) * 1.45em));
+}
+.netra-stage[data-kbd] .netra-type { padding: 2px 0; }
+/* compact bar: smaller circles, the words kept as each control's name for
+   screen readers but not shown (the .netra-sr-only pattern); the keyboard
+   covers the home bar */
+.netra-stage[data-kbd] .netra-stage-controls { padding-top: 4px; padding-bottom: 6px; }
+.netra-stage[data-kbd] .netra-ctl { min-height: 44px; gap: 0; }
+.netra-stage[data-kbd] .netra-ctl-ico { width: 44px; height: 44px; }
+.netra-stage[data-kbd] .netra-ctl-label {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap;
+    border: 0;
+}
+/* sideways the header shares its row with the status and the caption */
+@media (orientation: landscape) and (max-height: 520px) {
+    .netra-stage[data-kbd] {
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-rows: 48px minmax(0, 1fr) auto auto;
+        grid-template-areas: 'head mid' '. mid' 'aux aux' 'bar bar';
+    }
+    .netra-stage[data-kbd] .netra-stage-head { column-gap: 12px; }
+    .netra-stage[data-kbd] .netra-status { padding: 2px 16px; }
+}
+
+/* ---- R28 - sheets: the Transcript and Settings ----
+   A dark scrim over the stage and a card: a bottom sheet with a grip on a
+   phone, a panel on the right from 900 px. Text 15.4:1, headings 10.1:1 */
+.netra-sheet { position: fixed; inset: 0; z-index: 30; }
+.netra-sheet-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); }
+.netra-sheet-card {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 88vh;
+    max-height: 88dvh;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    box-sizing: border-box;
+    background: #1b1b1f;
+    color: #f1f3f4;
+    border-radius: 28px 28px 0 0;
+    padding: 8px calc(20px + env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) calc(20px + env(safe-area-inset-left, 0px));
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    text-align: left;
+}
+@media (min-width: 900px) {
+    .netra-sheet-card { left: auto; top: 0; width: 420px; max-height: none; border-radius: 0; }
+    .netra-sheet-grip { display: none; }
+}
+.netra-sheet-grip { width: 32px; height: 4px; border-radius: 2px; background: #8e918f; margin: 4px auto 4px; }
+.netra-sheet-head {
+    position: sticky;
+    top: -8px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: #1b1b1f;
+    padding: 8px 0;
+}
+.netra-sheet-head h2 { margin: 0; font: 600 20px/1.3 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #f1f3f4; letter-spacing: normal; text-transform: none; }
+.netra-sheet-head h2:focus { outline: none; }
+.netra-sheet-x {
+    width: 48px;
+    height: 48px;
+    flex: 0 0 48px;
+    border-radius: 50%;
+    border: 1px solid #8e918f;
+    background: transparent;
+    color: #e3e3e3;
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+}
+.netra-sheet-btn {
+    display: block;
+    width: 100%;
+    min-height: 48px;
+    margin-top: 16px;
+    border: 0;
+    border-radius: 24px;
+    background: #a8c7fa;
+    color: #062e6f;
+    font: 600 16px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    cursor: pointer;
+}
+.netra-sheet-btn[disabled] { background: #3c3c43; color: #c4c7c5; cursor: default; }
+.netra-sheet-x:focus-visible, .netra-sheet-btn:focus-visible { outline: 3px solid #ffffff; outline-offset: 2px; }
+/* the transcript, one turn per heading */
+.netra-log { list-style: none; margin: 0; padding: 0; }
+.netra-log li { padding: 12px 0; border-top: 1px solid #3c3c43; }
+.netra-log h3 { margin: 0 0 4px; font: 600 14px/1.3 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #c4c7c5; letter-spacing: normal; text-transform: none; }
+.netra-log-t { font-weight: 400; font-variant-numeric: tabular-nums; }
+.netra-log p { margin: 0; font: 400 18px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #f1f3f4; overflow-wrap: anywhere; }
+.netra-log a { color: #a8c7fa; text-decoration: underline; }
+.netra-log a:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }
+.netra-log-empty { margin: 12px 0 0; font: 400 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #c4c7c5; }
+/* Settings, grouped and in sentence case: no mono, no capitals, no tracking */
+.netra-set-group { padding: 12px 0 16px; border-top: 1px solid #3c3c43; }
+.netra-set-group h3 { margin: 0 0 8px; font: 600 18px/1.3 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #f1f3f4; letter-spacing: normal; text-transform: none; }
+.netra-set-label { display: block; margin: 12px 0 6px; padding: 0; font: 400 16px/1.35 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #f1f3f4; }
+.netra-set-hint { margin: 6px 0 0; font: 400 14px/1.4 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #c4c7c5; }
+.netra-set-select {
+    width: 100%;
+    min-height: 48px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    background: #26262b;
+    color: #f1f3f4;
+    border: 1px solid #8e918f;
+    border-radius: 12px;
+    font: 400 16px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+.netra-set-range { width: 100%; min-height: 48px; margin: 0; accent-color: #a8c7fa; }
+.netra-set-meter { height: 6px; border-radius: 3px; overflow: hidden; background: #3c3c43; }
+.netra-set-meter i { display: block; height: 100%; background: #a8c7fa; transition: width 0.12s linear; }
+.netra-set-check { display: flex; align-items: center; gap: 12px; min-height: 48px; margin-top: 8px; font: 400 16px/1.35 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #f1f3f4; cursor: pointer; }
+.netra-set-check input, .netra-set-radios input { width: 24px; height: 24px; flex: 0 0 24px; margin: 0; accent-color: #a8c7fa; }
+.netra-set-radios { margin: 0; padding: 0; border: 0; min-width: 0; }
+.netra-set-radios legend { padding: 0; }
+.netra-set-radios label { display: flex; align-items: center; gap: 12px; min-height: 48px; font: 400 16px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #f1f3f4; cursor: pointer; }
+.netra-set-btn {
+    display: block;
+    width: 100%;
+    min-height: 48px;
+    margin-top: 10px;
+    border: 1px solid #8e918f;
+    border-radius: 24px;
+    background: #26262b;
+    color: #f1f3f4;
+    font: 500 16px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    cursor: pointer;
+}
+.netra-set-btn:focus-visible, .netra-set-select:focus-visible, .netra-set-range:focus-visible,
+.netra-set-check input:focus-visible, .netra-set-radios input:focus-visible { outline: 3px solid #ffffff; outline-offset: 2px; }
+.netra-set-keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 12px 0 0; font: 400 16px/1.4 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+.netra-set-keys dt { color: #f1f3f4; font-weight: 600; }
+.netra-set-keys dd { margin: 0; color: #c4c7c5; }
+/* the iOS steps to add Netra to the Home Screen, inline under More */
+.netra-set-app-help { margin-top: 10px; padding: 14px 16px; border-radius: 16px; background: #26262b; font: 400 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #f1f3f4; }
+.netra-set-app-title { margin: 0 0 6px; font-weight: 600; }
+.netra-set-app-title:focus { outline: none; }
+.netra-set-app-help ol { margin: 0 0 8px; padding-left: 22px; }
+.netra-set-app-help p { margin: 0; color: #c4c7c5; }
+.netra-set-app-help svg { vertical-align: -3px; color: #a8c7fa; }
+/* high contrast and forced colours keep every edge */
+@media (forced-colors: active) {
+    .netra-ctl-ico, .netra-try-chip, #netra-type-in, .netra-sheet-card, .netra-set-select, .netra-set-btn { border: 1px solid CanvasText; }
+    .netra-ctl:focus-visible .netra-ctl-ico { outline-color: Highlight; }
+}
 
 /* ============================================================
  *  R8.1 - NETRA LAB (diagnostics console on the Live stage)
  * ============================================================ */
-.netra-ctl-lab-on {
-    background: var(--netra-glow-soft, rgba(139,61,240,0.25));
-    border-color: var(--eye-glow, rgba(216,200,255,0.6));
-    color: var(--iris-bright, #d8c8ff);
-}
 /* R8.2 - the .netra-lab window frame (position:fixed glass slab) and its
    entrance keyframes live in a literal <style> tag inside template.html:
    ServiceNow's SCSS compiler silently ate this block (backdrop-filter +
@@ -1991,9 +2475,13 @@
 }
 .netra-lab-sub { flex: 1; font-size: 9px; letter-spacing: 0.12em; color: #8f83b5; }
 .netra-lab-x {
-    background: none; border: none; color: #b4a9d6;
-    font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px;
+    background: none; border: none; color: #d9d0f0;
+    font-size: 20px; line-height: 1; cursor: pointer; padding: 0;
+    min-width: 32px; min-height: 32px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    align-self: center;
 }
+.netra-lab-x:focus-visible { outline: 2px solid #ffffff; outline-offset: 1px; }
 .netra-lab-x:hover { color: #ffffff; }
 .netra-lab-sec {
     border: 1px solid rgba(216, 200, 255, 0.10);
@@ -2007,6 +2495,17 @@
     font-size: 9.5px; font-weight: 700; letter-spacing: 0.14em;
     color: var(--iris-bright, #b9a8ee);
     margin-bottom: 8px;
+}
+.netra-lab-diag {
+    margin-left: auto; min-height: 36px; padding: 6px 12px; border-radius: 10px;
+    font: 600 12px/1.2 inherit; letter-spacing: 0.02em; text-transform: none;
+    color: #ffffff; background: rgba(66, 133, 244, 0.28); border: 1px solid rgba(168, 199, 250, 0.45); cursor: pointer;
+}
+.netra-lab-diag:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+.netra-lab-diagtext {
+    width: 100%; box-sizing: border-box; min-height: 140px; margin: 0 0 8px; padding: 8px;
+    font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; color: #e8eaed;
+    background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px;
 }
 .netra-lab-chip {
     font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em;
@@ -2049,6 +2548,20 @@
     border-left: 2px solid var(--iris-mid, #8b3df0);
     border-radius: 0 8px 8px 0;
     padding: 7px 10px;
+}
+.netra-lab-ear-status { font-style: normal; opacity: .8; font-size: 11px; margin-left: 8px; }
+.netra-lab-hearing {
+  min-height: 2.2em; padding: 6px 8px; margin: 4px 0 6px; border-radius: 6px;
+  background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.55); font-size: 12px; line-height: 1.4;
+  &.on { color: #fff; background: rgba(120,140,255,0.18); }
+}
+.netra-lab-heard-row {
+  display: grid; grid-template-columns: 58px 34px 1fr; gap: 4px 8px; align-items: baseline;
+  padding: 3px 0; border-top: 1px solid rgba(255,255,255,0.06); font-size: 11.5px; line-height: 1.35;
+  .t { color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; }
+  .cf { color: rgba(255,255,255,0.45); }
+  em { font-style: normal; color: #fff; }
+  .f { grid-column: 2 / 4; color: rgba(160,200,255,0.9); }
 }
 .netra-lab-kv { display: flex; gap: 8px; margin-top: 6px; }
 .netra-lab-kv span { flex: none; width: 52px; color: #8f83b5; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; padding-top: 1px; }
@@ -2139,6 +2652,13 @@
     cursor: pointer;
 }
 .netra-lab-cmd button[disabled] { opacity: 0.45; cursor: default; }
+.netra-lab-answer {
+    margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff; font-size: 13px; line-height: 1.45;
+    max-height: 30vh; overflow-y: auto; overflow-wrap: anywhere;
+}
+.netra-lab-answer b { color: #b9a8ee; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; margin-right: 6px; }
 .netra-lab-swatch {
     width: 22px; height: 22px;
     border-radius: 50%;
@@ -2147,9 +2667,26 @@
     border: 1px solid rgba(255,255,255,0.25);
 }
 
-@media (max-width: 480px) {
-    .netra-stage-blob-wrap { width: 72vmin; height: 72vmin; }
-    .netra-stage-status { font-size: 15px; }
-    .netra-stage-controls { padding-bottom: 34px; }
-    .netra-lab { top: 56px; right: 10px; width: calc(100vw - 20px); max-height: calc(100vh - 70px); }
+/* ============================================================
+ *  R23 - PHONES AND THE INSTALLED APP
+ *  The notch and the home bar (env(safe-area-inset-*), live with
+ *  viewport-fit=cover) and a compact stage for a phone held sideways.
+ *  R28 - Install and the iOS steps live in Settings > More.
+ * ============================================================ */
+/* the Lab on a phone: rows wrap instead of running off the side */
+@media (max-width: 600px) {
+    .netra-lab-selects { flex-wrap: wrap; }
+    .netra-lab-selects select { min-width: 0; flex: 1 1 130px; }
+    .netra-lab-ear-status { flex-basis: 100%; margin-left: 0; }
+    .netra-lab-kv em, .netra-lab-heard-row em { overflow-wrap: anywhere; }
+    .netra-lab-hue-row { flex-wrap: wrap; }
+}
+/* touch screens: every control is at least 44 x 44 px */
+@media (pointer: coarse) {
+    .netra-lab-x { min-width: 44px; min-height: 44px; font-size: 26px; }
+    .netra-lab-check,
+    .netra-lab-btns button, .netra-lab-cmd button, .netra-lab-cmd input,
+    .netra-lab-selects select, .netra-calib-actions button { min-height: 44px; }
+    .netra-lab-btns button, .netra-lab-cmd button, .netra-calib-actions button { min-width: 44px; font-size: 13px; }
+    .netra-lab-slider input { min-height: 44px; }
 }

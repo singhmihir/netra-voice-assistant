@@ -1,6 +1,549 @@
-# Netra on ServiceNow 🎙️ v5.0
+# Netra on ServiceNow 🎙️ v7.0
 
 A voice-first, fully accessible assistant that runs **natively inside ServiceNow** as a scoped application. Zero external services, zero recurring cost. Designed for blind and visually-impaired ServiceNow users.
+
+---
+
+## v7.0 — Tireless (2026-09)
+
+The brief: make Netra work like a dedicated senior agent — investigate
+before concluding, keep going across many steps, verify her own work, keep
+working while you are away, recover instead of giving up, and report
+honestly. The constraint that shaped everything: **the free Gemini tier
+allows 20 generate calls per model per day** (Google says so in the 429
+body — `quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier,
+quotaValue: 20`), and every ordinary turn used to cost two. So v7 does the
+heavy lifting deterministically and spends a model call only where
+reasoning actually earns its keep.
+
+- **Never goes dark.** A quota governor (`NetraBrain`, instance-wide ledger
+  in `x_196061_netra_v1_brain`) remembers which model is out of quota and
+  until when — per-day limits rest until the Pacific-midnight reset (US DST
+  handled), per-minute limits for the RetryInfo delay, timeouts and
+  overloads briefly — and **never sends HTTP to a resting model**. Chat
+  *and* the reasoning tools share one governed chain across four models,
+  each with its own daily pool. Per-turn call budget (default 5), at most 6
+  tool calls a round. If the brain dies mid-turn she tells you what she
+  already found instead of "I am thinking too much". *"How's your brain?"*
+  reads the ledger for free.
+- **Zero-call fast lane.** Ticket status (including *"i n c zero zero one
+  zero zero one three"*), my tickets, my approvals, the away debrief, the
+  work board, quota status, repeat, plan hops, and yes/no on anything she
+  parked in the previous turn — all answered with **no model call**.
+- **Basic mode.** When every model is resting she still reads tickets,
+  lists work, searches by meaning (the embedding API has its own quota),
+  raises a ticket with a read-back and a yes, refuses other writes *with a
+  reason*, and says when her reasoning comes back.
+- **Investigates like an engineer** (`NetraInvestigator`). *"Investigate
+  INC0010013"* gathers a numbered evidence dossier — journal, audit trail,
+  the CI and its neighbours, **changes that landed just before**, sibling
+  incidents, open problems, KB, similar resolved tickets — for free, then
+  spends **one** call to rank theories that must cite evidence. Code drops
+  any theory with a missing or invented citation, caps confidence by
+  evidence strength, and composes the spoken answer from the evidence
+  fields so numbers and times can't drift. *"Evidence for two"*, *"what did
+  you check"*, *"write it up"*, *"link that change"* — show-your-work at zero
+  calls, writes confirm-gated and verified.
+- **Change correlation** — *"what changed on this server before these
+  tickets"* ranks changes by link, timing, type, risk and outcome, worded as
+  correlation, never causation. The outage radar now names the likely
+  trigger in the same announcement.
+- **Keeps digging while you're away** — an evidence watch that reports only
+  new facts, checks each theory's signal, and when the ticket resolves
+  **grades its own theories** against the real close notes — including
+  saying *"I got this one wrong"*.
+- **Missions** (`NetraMissionRunner`) — *"work through the unassigned
+  queue"*: the scanner reviews a few tickets per pass (routing, likely
+  duplicate, known fix — embeddings only, never a generate call), you hear
+  progress on the work board, and it applies only what you then say yes to
+  — re-reading every write, skipping anything a human touched since, fully
+  undoable.
+
+**Verified live on a PDI** (seeded scenarios under `install/seed-*.js`):
+a real turn skipped two daily-exhausted models without sending them a
+request and answered on the first live one; fast-lane intents, undo and the
+away debrief ran at 0 generate calls; change correlation ranked the one
+direct change first and left the decoys out (dossier gathered in ~110 ms);
+*"investigate"* spent exactly one call, cited only real evidence, came back
+from cache for free on the second ask, and said "not enough evidence" on a
+ticket with no CI instead of inventing a theory; the evidence watch reported
+only new facts and graded its theory against the real close notes; a mission
+reviewed 27 tickets with 27 embedding calls and **0** generate calls,
+skipped the one a human had edited, applied 11 confirmed changes with
+read-back, and undo restored all 11.
+
+### Trust, by construction
+
+- **She acts with your permissions, never the app's.** Every ticket,
+  attachment, approval, knowledge and vulnerability read or write she makes
+  for you goes through `GlideRecordSecure`, and journal entries are read only
+  after a field-level check on their ticket, so the same ACLs as the
+  ServiceNow forms apply. Approvals are only ever your own. Checked live with a self-service
+  caller: their own ticket is read with its comments but never its internal
+  work notes, someone else's ticket is "not found, or you can not see it",
+  "my tickets" lists only theirs, investigations and "similar past tickets"
+  never draw on records they could not open, and a work note they may not
+  write is refused before anything is read back. Platform code, Vulnerability
+  Response and work-note alerts are limited to the roles in the `code_roles`,
+  `vr_roles` and `fulfiller_roles` properties. Background jobs act only on
+  what their owner authorised, and the `ticket_writes` kill switch stops every
+  write to tickets, approvals, vulnerability items and messages, on every
+  path: undo, the fast lane's yes and background orders included.
+- **A "yes" only runs what you just heard.** Every write that needs consent is
+  read back and parked with the turn it was proposed in; only your next turn
+  can confirm it. Comments the caller sees, work notes, messages, batch
+  changes and undo are always read back from their real arguments - the exact
+  words, the resolved person - before they run. Once text written by other
+  people (ticket descriptions, comments, attachments, articles) is in the
+  conversation, every write the model asks for waits for your yes, so an
+  instruction hidden in a ticket can not act for you. Approvals and standing
+  orders go further: the model's own `confirm` flag is never the yes - your
+  words in that turn must be one, answering a read-back you heard. A reply you never
+  heard (you barged in, or it arrived late), two drafts in one turn, a stale
+  plan, a yes from twelve minutes ago - all dropped or read back again.
+- **Everything she changes is checked and undoable.** Writes are read back
+  before she says "done" - a secure update can report success while the
+  platform quietly dropped a field, so journal entries are checked in the
+  journal itself. Undo restores what really changed (priority through impact
+  and urgency, resolve with its close notes, batches ticket by ticket, whole
+  plans step by step), never overwrites a change someone made since, says how
+  long ago the change was, and says plainly what can not be taken back.
+- **Nothing is lost while you are away.** Notifications are marked delivered
+  only once she has spoken them - asleep or busy, they wait; the away debrief
+  includes every report and the true count.
+- **She checks herself.** *"Run a self check"* tests her key (against Google's
+  free model list), her tables, her cross-scope reads, the background scanner's
+  heartbeat, overdue standing orders, quota, memory coverage and recent errors
+  — zero model calls — and says what is wrong and how to fix it.
+
+### Tested without an instance
+
+`node netra-snow/tests/run.js` runs the real widget and script-include code
+against an in-memory ServiceNow and a scripted Gemini in under half a minute:
+conversations through the real router for the confirm gate, fast-lane
+routing, investigations, standing orders fired by the real background
+runner, queue missions, permissions (with ACLs and roles), record facts,
+spoken numbers and times, the client's local replies and the self-check,
+a sweep of all 110 tools called by a model that obeys an instruction
+planted in a ticket (nothing changes unheard), plus static guarantees
+(everything parses, no secrets ship, every declared tool has a handler, the
+router hoisting trap stays closed). GitHub Actions
+runs it on every push (`.github/workflows/netra-tests.yml`). See
+[`tests/README.md`](tests/README.md).
+
+The v7 code was also put through an adversarial whole-codebase audit - an
+auditor per slice, then a skeptic per slice trying to refute each finding -
+and the confirmed defects were fixed with a test each.
+
+### Her voice (v7.1)
+
+Two things had quietly broken the neural voice, so every reply fell through
+to the browser's default voice (the "tin can"):
+
+- Microsoft's read-aloud service now closes the socket with *"SSML is
+  invalid"* for anything but `<voice>` with one `<prosody>` round plain text.
+  Every reply carried `<break>` and `<emphasis>` tags, so none was ever
+  served. The pauses now live in punctuation (sentence ends, commas, dashes
+  and "..."), which the voice honours anyway.
+- The service also refuses the handshake from any browser that is not
+  **Microsoft Edge** (the user agent cannot be changed for a socket), so in
+  Chrome the neural voice is not on offer: Netra says so once in the Lab,
+  skips the doomed handshake and uses the best voice the browser has
+  (Google's online voices in Chrome). Open her in Edge for the neural voice.
+
+**A second ear (v7.2).** The browser's recognizer sends your audio to
+Google's or Microsoft's speech service; when that service returns no words
+(a blocked network, a language it will not take, a grammar it rejects, a
+session that died silently) the mic shows sound and Netra hears nothing,
+which reads as "she is not listening". The page now watches for exactly
+that - clear speech on the meter, nothing from the recognizer - and heals in
+steps: it rebuilds without the grammar, tries plain en-US, and if the
+recognizer stays deaf (or the speech service is unreachable, or the browser
+has no recognizer at all) it opens its own ear: Whisper running inside the
+browser in a worker, fed straight from the mic's audio graph, no speech
+service involved. Every word it hears travels the same road a browser final
+does, and the words so far show live while you are still speaking. On a
+browser with WebGPU it runs the clearer *base* model with a light decoder,
+elsewhere the quick *tiny* one; the Lab's **model** switch overrides that
+and its **ear** switch forces the ear on or off; the status row says which
+ear is listening, why, and how long the last utterance took. The model (about 40 MB, cached by the
+browser after the first load) comes from the Hugging Face hub and the
+runtime from jsDelivr, so those two hosts must be reachable once.
+
+**Ready before it listens (v7.4).** On the public page every question
+used to end in "I can not work that one out without my reasoning models":
+all four Gemini models were out of their 20-a-day free quota or answering
+503 "high demand", and every request carried ~20k tokens (a 34 KB prompt
+and all 110 tool definitions), which also shut out Gemma 4 - its free tier
+allows 16k input tokens per model per minute, with a far larger daily
+allowance. Now:
+
+- **A lean request**: a short prompt plus only the tools the utterance can
+  need (a core set, the groups its words point at, every tool already in the
+  conversation) - about 2k tokens. Always for a Guest and for Gemma; the
+  `lean_prompt` property (`auto` / `always` / `never`) sets it for the rest.
+- **Gemma 4 first** (`gemma-4-26b-a4b-it`, ~1.2-1.9 s a call measured live;
+  on the public page on 24 Sep 2026, a typed question reached its written
+  answer in 1.8-2.4 s on Gemma 4 and in 0.1-0.5 s on the fast lane), then
+  every Gemini flash model the key can reach, each with its own allowance;
+  a request too big for Gemma's per-minute allowance skips it for free.
+- A web question or a ticket status takes **one** model call, not two;
+  Gemma's private "thought" parts are never spoken or echoed back.
+- **The loading screen**: the page accepts nothing until it can *hear* (the
+  on-device ear engaged, or the browser recognizer having returned words),
+  *speak* (a voice loaded, or captions only) and *answer* (`ready_check`: a
+  model answered in the last minute, or a tiny ping just did). A blind user
+  hears "I am Netra, and I am ready - just speak" when it opens, and "still
+  getting ready" if they speak before. If the brain drops out mid-visit, the
+  question is held, the screen comes back, and the question is asked again
+  (once) as soon as the brain answers - never a basic-mode stand-in.
+- **The on-device ear is the default ear** until the browser recognizer has
+  proven itself by returning words: some recognizers start and then hear
+  nothing, without any error.
+- **Guests are told the truth**: ticket questions get "sign in to ServiceNow";
+  no automatic briefing, no notification polling, a Guest's own help text.
+
+**Hardened for the public page (v7.5).** A bug hunt over the whole Guest
+journey (hunters per area, then an adversarial verifier per finding; 13 of
+23 findings confirmed) and a fix with a test for each:
+
+- **Nothing a Guest does is kept for the next visitor.** Every public
+  visitor is the *one* Guest user, so a shared memory row handed one
+  visitor's words, drafts and voice-training aliases to the next (one
+  visitor's "no means yes" alias rewrote everyone's "no"). A Guest's state
+  now lives for the request only; no notification inbox, no preference row
+  (the comment rule skips Guest); no TTS proxy on the instance's key, no
+  training writes; the `debug` action is admin-only and never shows any part
+  of the key; a Guest's fast lane is the web search only, and reindexing
+  needs the itil role.
+- **The sign-in line only for real record asks** ("my tickets",
+  INC0010013, "create a ticket", "brief me"); "what problems does
+  Kubernetes solve" or "what is an SLA" goes to the model.
+- **A turn always ends in time.** The model chain stops at 14 s and gives
+  each call only the time left (it was 12 s each under a 20 s deadline, up
+  to ~44 s); past 16 s a many-step turn speaks what it found. A reply with
+  nothing in it (no candidates, a blocked prompt, thought parts only) asks
+  the next model instead of ending the turn; an unreadable 200 is a short
+  rest, a refused key is an auth failure, a detail-less 429 is one minute.
+- **The loading screen is honest and never sticks.** A key press or tap is
+  asked for when the browser would refuse to play any voice ("Start Netra"
+  button, focused for screen readers); readiness is recomputed when the ear
+  fails or the browser first hears words; a browser with no recognizer
+  still boots (the on-device ear, or typing only); "stop" and "stop
+  listening" work while it is up, noise does not trigger the explanation,
+  and it is said once per spell; a question held through an outage is
+  asked again for up to ten minutes ("Back now. You asked: ...") and never
+  dropped without a word; the readiness probe pings one model, not three,
+  while any model rests. When every model is out for more than five
+  minutes (a spent daily quota) and the web search works, the page opens
+  in **web answers** mode and says so, instead of waiting all day.
+- **Her own voice is never taken for the user's.** The on-device ear
+  transcribes a segment a second or two after hearing it, when she has
+  often stopped; each segment now remembers whether it overlapped her voice
+  and what she was saying, and her words are dropped or stripped. After the
+  ear hands back to the browser recognizer, the same words are never asked
+  twice.
+
+**Defaults for everyone (v7.9).** Hearing is **Best** (small) by default for
+every user and Guest, and a Guest gets no Hearing choice in Settings (a
+phone still stays on tiny); the microphone sensitivity starts at 1.5x; the
+recognizer starts in **English (India)** for everyone; Netra's voice is
+**Sonia (British English)** by default - the neural Sonia on the Edge engine,
+and the device's own Sonia on the browser engine wherever it has her. A
+signed-in user's own choices still win and persist.
+The loading card no longer freezes: a proxy that strips the download's
+size still shows the MB so far, and a download that does not start or
+stops for 45 s gives way - the GPU model to the smaller one on
+WebAssembly, and that one to "type instead" with the reason.
+
+**The ear's files come from the instance (v7.9).** No visitor has to reach
+huggingface.co or a CDN, both blocked on many corporate networks: the Whisper
+models (small, base and tiny: their JSON and ONNX weights, the GPU pair of
+small included), the ONNX runtime and transformers.js are attachments on the
+app's `ear_file` records, served by the public resource
+`GET /api/<scope>/voice/ear/{model}/{file}` (and `/{model}/{dir}/{file}`),
+about 950 MB in all, uploaded once by `scripts/upload-ear-files.py`. The
+page's worker asks the instance first and the hub only when the instance has
+no copy (a per-load fallback, logged); a library the instance cannot serve
+falls back to the CDN the same way. Three platform quirks, each held by a
+test: a path ending in .json, .js or .wasm is read as a response format and
+never reaches the resource, so the worker asks for `config-json`,
+`transformers.min-js` and `…jsep-wasm`; a .mjs attachment is refused, so the
+runtime's modules are kept as `.mjs.js`; an upload past about 200 MB is
+refused (the limit is 150 MiB), so a big file is kept in 100 MiB parts,
+`.part1`, `.part2`, …, and streamed back as one. The size header is dropped by the platform (the files come chunked), so
+the bar runs against the size expected for the model and the loading card
+says the MB so far. Verified live as a Guest with the browser recognizer blocked:
+every file came from the instance (no request to the hub or the CDN), the
+small model loaded in 61 s and both spoken phrases were heard exactly; with
+the instance's files blocked the ear loaded from the hub in 39 s; with both
+blocked the card offered typing within 6 s.
+
+**Netra's own voice, from the instance (v7.9).** No device voice, no online
+voice, no CDN: a neural voice (Piper, en_GB "Cori", medium quality) runs in
+a module worker from the instance's own files - the ONNX runtime, the
+phonemizer (espeak-ng in WebAssembly, 18 MB of language data) and the 63 MB
+voice model, all under the ear resource's `voice/` and `ort/`. It is the
+default engine for everyone, and once it is there it is the only voice
+heard: a line spoken while it loads waits for it, up to 90 s; a sentence it
+cannot make (tried twice, 5 s a try) is left out, never said in another
+voice; a worker that dies at any point in the visit is started again (four
+times at most, after a pause that doubles from 1.5 s to 12 s) and lines
+wait up to 25 s for it to come back, since its files are cached by then; a
+load that goes quiet for 45 s (no bytes landing, no start step begun) is
+started again too; a worker that gives no answer for 30 s (plus 100 ms a
+character of the sentence, so a long one is busy, not stuck - even one the
+page has since dropped) to the sentence it is on is stuck and is started
+again - and that watch is not moved by new
+lines or by a barge-in, so a stuck worker is caught while the user keeps
+talking. A failure that would only repeat - a file the instance does not
+have, a worker the browser will not make - is not retried: the device
+speaks at once and the loading card moves on. While she has never been
+ready, a restart keeps the rest of the 90 s window; two healthy minutes
+earn a fresh restart budget, so the cap bounds flapping, not the visit; and
+the sentence that stalled is left out, so the restarted line does not begin
+with it again. The thinking cues are
+four short lines made in her voice once she is ready, and on her engine the
+device's speech synthesis is never used for a cue (silence keeps the pacing
+instead). A reply with no full stop is cut into pieces of at most 220
+characters at a comma or a space, so no piece takes the worker long. This
+device's own voice speaks only when the instance has no voice files at all,
+or when hers died and would not come back in time - and then for the rest
+of the line she had begun, so nothing is lost (the stage does not show her
+speaking while that rest waits, and if she is back by the time the rest is
+due it is hers again). A device line still going when her clip starts is
+cut first; a reminder or a notification waits while a line waits for her,
+so it is never said twice. Each sentence is its own group: synthesized in the worker
+in order and played back to back; a barge-in, a stop or a new line drops
+what is still queued and lets the cut clip's memory go. Leaving the page
+ends the worker. Settings lists "Netra's own voice (Cori, British English)"
+first; a device voice can still be picked, and a line that was waiting for
+her is then said at once by that voice; the Lab's engine cycle includes
+hers.
+
+She loads fast: the worker starts the moment the page has its data (before
+any tap), fetches the config, the phonemizer, the voice, its language data
+and both WebAssembly binaries together through Cache storage (the second
+visit needs no network; the bytes so far show on the loading card), hands
+the language data and the WebAssembly to the phonemizer and the runtime
+instead of letting them fetch it again, builds the phonemizer while the
+63 MB model is still coming down, then the ONNX session, and warms up once;
+the on-device ear's 250 MB download waits for her files to come down (up to
+45 s when it is needed, her whole load when it is only standby). Measured
+in Chromium (one WebAssembly thread, the browser recognizer blocked): first
+visit, ready 12-30 s after the page's data, as the network delivers the
+82 MB (15-42 s after navigation); next visit, 2.6-3.7 s (5-7 s after
+navigation), the greeting in her voice, the thinking cue in her voice, the
+device's synthesis called zero times. Her own ear transcribed her own
+voice's audio word for word.
+
+**Hearing, accuracy first (v7.8).** "It fails to catch simple phrases I
+speak" - so the on-device ear now takes the most accurate Whisper its
+device runs, and says what that costs. On a desktop with WebGPU the ear is
+**small.en** (an fp32 encoder with a q4 decoder, about 590 MB, once); on a
+desktop CPU it is **base.en** (q8, about 80 MB, no real word errors on 32
+Indian-English phrases where tiny had three: "tell me a joke" heard as
+"then meet a joke"); a phone stays on tiny (its own recognizer is
+primary). Settings > How Netra listens has a **Hearing** select - Auto,
+Quick (tiny, 40 MB), Balanced (base, 80 MB), Best (small, about 250 MB on
+a CPU, and slow there: about 19 s a phrase on four cores, so the loading
+card names the size and says so) - and a chosen size wins on a desktop;
+changing it reloads a loaded ear. The copy a desktop keeps ready in the
+background is the very model the ear will use, so the switch costs
+nothing later, and a GPU that fails falls back to base, never tiny. The
+mic graph asks the browser for a 16 kHz audio context, so the browser
+resamples the mic with its own proper filter; where it refuses, a 33-tap
+windowed-sinc low-pass replaces the block average that folded everything
+above 8 kHz onto the speech (a 19 kHz tone came through as a 3 kHz alias
+only 14 dB down). Segments keep 600 ms before the meter rose (a soft first
+syllable stays whole), wait 900 ms of silence (a pause mid-phrase is not
+the end), and run up to 20 s; her share of a segment is scored over its
+voiced part, so the longer wait never dilutes the echo guard. The worker
+passes Whisper no decode options: transformers.js 3.7.1 has no beam search
+and no prompt, and an n-gram ban (tried, and taken out in review) forces a
+repeated digit run such as "zero zero one zero zero zero one" onto a wrong
+digit.
+
+**A calmer stage, built for the people who use it (v7.7).** Learning
+from Gemini Live, ChatGPT voice, Siri and the screen-reader guidance they
+follow, the Live page was redesigned around one rule: nothing moves that
+you did not move.
+
+- **One stage that stays put.** A fixed grid - header, orb, status,
+  caption, a row for typing or suggestions, and the control bar - so the
+  orb sits in the same place in every state, and the bar and the typing
+  box stay on screen on a 320 px phone, a phone held sideways, a short
+  laptop window and with the keyboard up (the orb steps aside while you
+  type, the bar goes compact and the caption shows whole lines or none).
+  Checked in a real browser at sixteen sizes, six of them with the
+  keyboard up, compiled the way the portal compiles it.
+- **One status, said once.** Listening, Thinking (named: "Searching the
+  web…"), Speaking, Mic off, Paused, Ended - one line with a hint, one
+  polite announcer, and never a word over her own voice. A wait has a
+  soft tick, a named step at 8 s and "Try again" at 20 s; a failed turn
+  keeps Try again after her apology.
+- **Captions you can read.** A solid You / Netra caption box in four
+  sizes (S to XL), AAA contrast, newest line at the bottom.
+- **Four labelled controls.** Mute, Type, Transcript and End, 64 x 84 px,
+  with their names under them; the orb itself pauses, resumes or stops
+  her, and says so in its name.
+- **Type, Transcript and Settings.** Typing is a real way in from the
+  first second; the transcript is a sheet with every turn and Copy; the
+  Settings sheet holds the voice, pace, caption size, Calm visuals, sounds,
+  keyboard shortcuts and More (the Lab with Copy diagnostics, the app
+  install). Single-key shortcuts (M, /, T, S, Esc, ?) for keyboard users.
+- **Try saying.** Four starters until the first question; the time in
+  another city is answered at once from the browser's own time zones,
+  written as people write it ("1:12 PM").
+- **The focus is never lost.** When Try again, the mic check's card or the
+  loading card goes, the focus moves to the orb or into the card - never
+  to the page - and Try again sends exactly the question that failed. The
+  single keys work wherever the focus is on the stage; Escape closes a
+  sheet, then the Lab, then the typing box, then stops her; the Lab is a
+  modal wherever it covers the stage. On an iPhone that needs a tap, the
+  orb says so and wakes the mic instead of pausing her. A shared reviewer
+  account is not greeted by name, and the voice picked in Settings is the
+  voice that speaks.
+- **Found live, fixed for good.** The portal's SCSS compiler silently drops
+  a rule with min() around calc() (it took the stage's grid with it) and
+  writes `var(--a) + 1px` as the invalid `var(--a)+ 1px`; those sums now
+  live in the template's own style, and a test holds the SCSS to it.
+
+**Fenced, and a Gemini stage (v7.6).** A final regression round (code
+review in four lenses, a live reviewer journey, emulated phones) found the
+public page trusted what its own page sent. Now:
+
+- **The server is the fence.** A Guest runs only web search, jokes and help,
+  checked in the tool dispatcher whatever the model names; only plain words
+  from a Guest's history reach the model (a planted tool call or tool
+  result never does); the anonymous page load carries no group,
+  application or catalog names and no model telemetry; person lookups
+  honour ACLs. A Guest browser session gets 40 model questions an hour,
+  then web answers, so one visitor can not spend the shared key's day.
+- **Approvals and standing orders need the user's own yes** to a read-back
+  they heard - the model's `confirm` flag alone decides nothing. Approvals
+  are read and decided under the user's ACLs, and the kill switch stops
+  decisions and messages on every path.
+- **Answers, not search results.** General questions are answered from the
+  model's own knowledge; the web is for what changes. A search hit is read
+  out only when it is about the question (the generic CVE page is not about
+  CVE-2021-44228), without links, emoji or pronunciation guides. The model
+  always has the user's local time.
+- **A loading screen that opens when the browser can hear.** No wait for
+  the on-device ear's download where the browser's recognizer starts
+  cleanly; the ear loads when it is missing, blocked or deaf, and the card
+  says why and how big (a desktop keeps the small ear ready in the
+  background; a phone downloads nothing up front). The card is a modal
+  dialog with one polite status line that speaks at milestones only;
+  the iPhone speech unlock runs in the Start button's own tap; a browser
+  that can not hear offers "Type instead".
+- **Phones and screen readers.** Pinch-zoom works; End keeps a Guest or
+  the installed app on the page with "Start Netra again"; Mute stops the
+  recognizer and the ear; captions stay on screen when no voice plays and
+  in landscape; focus rings, 44 px targets, reduced motion, AA contrast.
+- **A Gemini Live stage.** One 24 KB light renderer replaces the 667 KB
+  three.js scene: a near-black stage, a luminous orb that swirls violet and
+  rose while she speaks, sweeps a gradient arc while she thinks and greys
+  when muted, and Gemini's glow at the foot. About 30 fps on software GL
+  (the old stage: 1-2), paused in a hidden tab, still for reduced motion.
+
+**Quick by default (v7.3).** For a page anyone opens, the quickest of
+everything is the default: the browser's own installed voice (instant,
+offline; the neural voice is a Lab choice), the tiny on-device model,
+en-US recognition. The on-device ear loads in standby for every visitor
+the moment the page opens, so the switch from a blocked speech service
+costs nothing; the stage says **Getting ready…** (with the load progress)
+until one ear can actually hear, and **Listening** only then - nobody
+talks to a page that cannot hear them. No mic check runs at start (say
+"mic check" or use the Lab), no "still here" nudges, no "oh wait" before a
+reply.
+
+Along with that: the Lab's **HEARD (LIVE)** section shows the live
+transcript and, for every final, what became of it ("answered on the page",
+"sent to Netra", "dropped: my own echo", "asked to repeat"); the Lab's
+**voice** row says what is really speaking; a bare "stop" is a quiet
+acknowledgement, not sleep ("stop listening" still sleeps); "stop" spoken
+over her voice stops her even when the mic catches a word of her own after
+it, and a garbled barge-in is asked again rather than sent as a command;
+clock times and greetings use the browser's timezone, not the profile's;
+"search the web for X" (and "who founded X", "what is X") answers from
+Wikipedia or Bing with the source named, and says so when nothing relevant
+came back; the recognizer's network failures are reported instead of
+swallowed. The whole loop was tested with real speech: Indian-English
+audio played into the page's own recognition handlers, replies from the
+real instance, echo from the speakers simulated.
+
+**Known limits.** Free keys allow 20 generate calls per model per day, and
+Gemma 4's free tier 16k input tokens per model per minute - shared by
+*every* visitor on the key, so a busy public page runs out: short overloads
+show the loading screen, a spent day puts Netra into web answers / basic
+mode until the Pacific-midnight reset - she says so and says when she is
+back. For wide testing, use a paid key. Chrome and Edge play no voice until
+the page has had a key press or tap: the loading screen asks for one. Instances without a `caused_by` field on incident get
+the change link as a cross-referenced work note on both records instead.
+Some instances fence the system log off from scoped apps; the self-check then
+says it could not look there rather than reporting "no errors".
+
+---
+
+## v6.0 — Trusted Agency (2026-09)
+
+v5 made her reason. v6 makes her **act** — while you're away, across turns,
+and increasingly the way *you* would — with every autonomous act bounded,
+logged, spoken, and reversible by voice.
+
+- **Standing orders** — *"watch INC0010031 and if nobody touches it for four
+  hours, escalate it to P2"*. Said once, confirmed once, then executed by the
+  5-minute scanner with **zero Gemini calls** — pure deterministic condition
+  checks. Actions are deliberately small: notify, comment, nudge assignee,
+  escalate priority. Autonomous reassign/resolve stays interactive, on purpose.
+  The confirm is **structural, not prompt-discipline**: the create tool
+  physically cannot arm an order in the turn that proposed it (the first live
+  test caught the model trying).
+- **Approval chaser / assignee nudger** — cadence-capped in *code*: max one
+  nudge per person per 24h, three per task, quiet hours 19:00–08:00 (re-armed
+  for morning, not dropped). Nudges are attributed honestly: *"Reminder from
+  Mihir via Netra…"*.
+- **While-you-were-away debrief** — on return she reads a numbered ledger of
+  what she did: *"One: escalated INC-thirty-one at 6:40, as you authorized.
+  Say undo one if I got any of it wrong."* — and **"undo one" works**, restoring
+  recorded before-values, refusing if a human touched the record after her.
+- **Plans (compound commands that finish)** — *"resolve these three with note
+  X and bump the last one to P2"* becomes a filed plan, read back, then executed
+  in budgeted chunks (4 writes/transaction, auto-continuing across turns,
+  hop-capped). A failed step **halts** the plan with an honest report; *"undo
+  the plan"* walks the undo stack in reverse.
+- **She learns you** — overrides of her triage advice, undos of her writes, and
+  `remember that…` facts feed a per-user profile injected into every turn.
+  `suggest_triage` now blends instance history with *your* history and **flags
+  disagreement instead of silently picking**: *"history says Hardware, but
+  you've sent these to Field Services three times — which way?"*
+- **Verify-after-write, everywhere** — found live: on stock incident, priority
+  is recalculated from impact × urgency, so direct writes "succeeded" while
+  changing nothing. Every field write now reads back what actually stored, uses
+  the impact/urgency matrix when priority is derived, and *says so honestly*
+  when the platform stomped the change.
+
+### Gemini 3 migration (the 2.5 family retires as early as 2026-10-16)
+
+- Pinned, measured chain — no more `-latest` roulette: primary
+  `gemini-2.5-flash-lite` (0.5s, until Google turns it off) → `gemini-3.6-flash`
+  (6s, also the complex-turn brain) → `gemini-3-flash-preview`. The dead 2.0
+  ids are gone. HTTP 0 (timeout) now counts as transient so the chain falls
+  through instead of dying.
+- Generation-aware knobs: `thinkingLevel` on 3.x (`thinkingBudget` → 400 there,
+  verified live), `thinkingBudget: 0` kept for 2.5-flash, temperature forced to
+  1.0 on 3.x per Google's guidance.
+- **Thought signatures**: Gemini 3 rejects any unsigned `functionCall` in
+  history — and a mixed-generation fallback chain produces exactly those (a
+  2.5 model answers hop 1, a 3.x model reads it back on hop 2 → 400, chat
+  dead). Fix verified against the live API: signatures are echoed verbatim,
+  preserved through history truncation, and foreign/unsigned calls get
+  Google's documented migration token.
+- **Timezone-proof scheduling**: assigning a date *string* to a GlideRecord
+  field re-interprets it in the session timezone (our first standing order
+  armed itself 7 hours late). All load-bearing date writes now go through
+  `setDateNumericValue()`.
 
 ---
 
@@ -215,7 +758,7 @@ Three-part fix:
 
 | Path | Files | Manual steps |
 |---|---|---|
-| **A. Update Set XML (Recommended)** | `update-set/Netra_v5.0_Batch.xml` | *Retrieved Update Sets → Import Update Set from XML*, then Preview & Commit the parent **"Netra - v5.0"** — the six children commit automatically |
+| **A. Update Set XML (Recommended)** | `update-set/Netra_v7.0_Batch.xml` | *Retrieved Update Sets → Import Update Set from XML*, then Preview & Commit the parent **"Netra - v7.0"** — the six children commit automatically |
 | B. Studio app import | `app-source/` | Push this repo to your own git remote, then *Studio → Import From Source Control* — Netra installs as a real scoped application |
 | C. Background Script | `install/setup-netra.js` | Create scope (1 click), paste + Run script (1 click), drop widget on page (1 click) |
 
