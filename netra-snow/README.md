@@ -264,6 +264,18 @@ public page trusted what its own page sent. Now:
   out only when it is about the question (the generic CVE page is not about
   CVE-2021-44228), without links, emoji or pronunciation guides. The model
   always has the user's local time.
+- **A loading screen that opens when the browser can hear.** No wait for
+  the on-device ear's download where the browser's recognizer starts
+  cleanly; the ear loads when it is missing, blocked or deaf, and the card
+  says why and how big (a desktop keeps the small ear ready in the
+  background; a phone downloads nothing up front). The card is a modal
+  dialog with one polite status line that speaks at milestones only;
+  the iPhone speech unlock runs in the Start button's own tap; a browser
+  that can not hear offers "Type instead".
+- **Phones and screen readers.** Pinch-zoom works; End keeps a Guest or
+  the installed app on the page with "Start Netra again"; Mute stops the
+  recognizer and the ear; captions stay on screen when no voice plays and
+  in landscape; focus rings, 44 px targets, reduced motion, AA contrast.
 - **A Gemini Live stage.** One 24 KB light renderer replaces the 667 KB
   three.js scene: a near-black stage, a luminous orb that swirls violet and
   rose while she speaks, sweeps a gradient arc while she thinks and greys
