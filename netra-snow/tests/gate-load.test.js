@@ -549,3 +549,46 @@ T.test('no wake word in the state label, "getting ready" while the gate is shut,
 });
 
 T.run(__filename);
+
+T.test('v7.9 - a proxy that strips the size: the MB so far are shown, and a stalled download gives way', function () {
+    // the worker: no total on any file -> MB so far, no figure
+    var at = CLIENT_SRC.indexOf('var EAR_WORKER_SRC ='), end = CLIENT_SRC.indexOf('    c.earSummary', at);
+    var expr = CLIENT_SRC.substring(at + 'var EAR_WORKER_SRC ='.length, end).replace(/;\s*$/, '');
+    var src = vm.runInNewContext('(' + expr + ')', { EAR_LIB: 'lib' }).replace(/^import[^\n]*\n/, '');
+    var posted = [], self = { postMessage: function (m) { posted.push(m); } };
+    var pipeline = function (task, model, opts) {
+        opts.progress_callback({ status: 'progress', file: 'onnx/encoder_model.onnx', loaded: 3 * 1048576, total: 0 });
+        opts.progress_callback({ status: 'progress', file: 'onnx/decoder_model_merged.onnx', loaded: 5 * 1048576, total: 0 });
+        return new Promise(noop);
+    };
+    new Function('self', 'pipeline', 'env', src)(self, pipeline, {});
+    self.onmessage({ data: { cmd: 'load', model: 'm', device: 'wasm' } });
+    T.eq(posted.map(function (m) { return [m.progress, m.mb]; }), [[undefined, 3], [undefined, 8]], 'bytes so far, no figure without every size');
+    // the page: the card and the hint say the MB so far
+    var cl = page(), f = cl.fn, c = cl.c;
+    global.Worker = function () {};
+    cl.set('_nativeVerdict', 'blocked'); cl.set('$window', { navigator: { userAgent: DESKTOP } });
+    c.ear.size = 'base'; f._earPickModel(); c.ear.status = 'loading'; cl.set('_earWorker', { terminate: noop });
+    f._earOnMessage({ data: { mb: 8 } });
+    T.eq(c.ear.progress, 0); T.eq(c.ear.loadedMb, 8);
+    T.match(c.gate.hearingText, /downloading speech recognition, one time \(balanced, about 80 MB, 8 MB so far\)$/);
+    T.match(f._earSummary(), /8 MB so far/);
+    f._earOnMessage({ data: { progress: 40, mb: 32 } });
+    T.notMatch(c.gate.hearingText, /so far/, 'a real figure drives the bar instead');
+    // a stall: nothing from the worker for 45 s on the GPU -> the smaller model on wasm; on wasm -> failed with a reason
+    var spawned = [];
+    cl.set('_earSpawn', function () { spawned.push(c.ear.model + '/' + c.ear.device); cl.set('_earWorker', { terminate: noop }); });
+    c.ear.device = 'webgpu'; c.ear.model = 'onnx-community/whisper-small.en'; c.ear.size = 'small'; c.ear.status = 'loading';
+    cl.set('_earLastMsgAt', Date.now() - 46000);
+    f._earStallCheck();
+    T.eq(spawned, ['onnx-community/whisper-small.en/wasm'], 'the GPU download that stalled gives way to WebAssembly');
+    T.eq(c.ear.status, 'loading');
+    cl.set('_earLastMsgAt', Date.now() - 46000);
+    f._earStallCheck();
+    T.eq(c.ear.status, 'error'); T.match(c.ear.error, /download stopped.*blocked on this network/);
+    T.eq(spawned.length, 1);
+    // no stall: nothing happens
+    c.ear.status = 'loading'; c.ear.error = ''; cl.set('_earLastMsgAt', Date.now() - 1000);
+    f._earStallCheck();
+    T.eq(c.ear.status, 'loading');
+});

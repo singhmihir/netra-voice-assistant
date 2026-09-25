@@ -251,6 +251,10 @@ recognizer starts in **English (India)** for everyone; Netra's voice is
 **Sonia (British English)** by default - the neural Sonia on the Edge engine,
 and the device's own Sonia on the browser engine wherever it has her. A
 signed-in user's own choices still win and persist.
+The loading card no longer freezes: a proxy that strips the download's
+size still shows the MB so far, and a download that does not start or
+stops for 45 s gives way - the GPU model to the smaller one on
+WebAssembly, and that one to "type instead" with the reason.
 
 **Hearing, accuracy first (v7.8).** "It fails to catch simple phrases I
 speak" - so the on-device ear now takes the most accurate Whisper its
