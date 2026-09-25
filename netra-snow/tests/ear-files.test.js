@@ -69,11 +69,18 @@ T.test('the runtime\'s .mjs module is kept as .mjs.js (the platform refuses a .m
     T.eq([r.status, r.type, r.streamed[0]], [200, 'text/javascript', 'stream:r2:ort-wasm-simd-threaded.jsep.mjs.js']);
 });
 
-T.test('a file kept in parts (the platform refuses an upload past about 200 MB) is streamed back as one, in order, its size the sum; a stray name is not a part', function () {
+T.test('a file kept in parts (the platform refuses an upload past 150 MiB) is streamed back as one, in order, its size the sum; a stray name is not a part; the whole file wins over parts', function () {
     var r = serve({ model: 'whisper-small.en', dir: 'onnx', file: 'encoder_model.onnx' }, REC, ATT);
     T.eq(r.status, 200);
     T.eq(r.streamed, ['stream:p1', 'stream:p2', 'stream:p3'], 'part1, part2, part3 - never the stray');
     T.eq(r.headers['Content-Length'], String(157286400 * 2 + 38253070));
+    // eleven parts: numeric order, not part1, part10, part2
+    var many = []; for (var i = 11; i >= 1; i--) many.push(att('r1', 'onnx__decoder_model_merged_q4.onnx.part' + i, 1000 + i, 'q' + i));
+    r = serve({ model: 'whisper-small.en', dir: 'onnx', file: 'decoder_model_merged_q4.onnx' }, REC, ATT.concat(many));
+    T.eq(r.streamed, ['stream:q1', 'stream:q2', 'stream:q3', 'stream:q4', 'stream:q5', 'stream:q6', 'stream:q7', 'stream:q8', 'stream:q9', 'stream:q10', 'stream:q11']);
+    // the whole file and stale parts side by side: the whole file alone
+    r = serve({ model: 'whisper-small.en', dir: 'onnx', file: 'encoder_model_quantized.onnx' }, REC, ATT.concat([att('r1', 'onnx__encoder_model_quantized.onnx.part1', 5, 'stale1'), att('r1', 'onnx__encoder_model_quantized.onnx.part2', 5, 'stale2')]));
+    T.eq(r.streamed, ['stream:r1:onnx__encoder_model_quantized.onnx']); T.eq(r.headers['Content-Length'], '92326170');
 });
 
 T.test('what is not there is a 404 with a reason, never a stream: an unknown model, a missing file, a bad name, a path with .. or /', function () {

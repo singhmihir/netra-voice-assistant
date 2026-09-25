@@ -42,13 +42,19 @@
     // file is kept as .part1, .part2, ... and streamed back as one
     var stored = /\.mjs$/.test(name) ? name + '.js' : name;
     att.addQuery('file_name', 'STARTSWITH', stored);
-    att.orderBy('file_name');
     att.query();
-    var ids = [], size = 0;
+    var whole = null, parts = [];
     while (att.next()) {
-        var fn = String(att.getValue('file_name'));
-        if (fn !== stored && !/\.part\d+$/.test(fn.substring(stored.length))) continue;
-        ids.push(att.getUniqueValue()); size += parseInt(att.getValue('size_bytes'), 10) || 0;
+        var fn = String(att.getValue('file_name')), bytes = parseInt(att.getValue('size_bytes'), 10) || 0;
+        if (fn === stored) whole = { id: att.getUniqueValue(), size: bytes };
+        else if (/^\.part\d+$/.test(fn.substring(stored.length))) parts.push({ id: att.getUniqueValue(), size: bytes, n: parseInt(fn.substring(stored.length + 5), 10) });
+    }
+    // the whole file when it is there, else its parts in order (part10 after part9)
+    var ids = [], size = 0;
+    if (whole) { ids = [whole.id]; size = whole.size; }
+    else {
+        parts.sort(function (a, b) { return a.n - b.n; });
+        for (var i = 0; i < parts.length; i++) { ids.push(parts[i].id); size += parts[i].size; }
     }
     if (!ids.length) return miss('no such file on this instance');
 
@@ -62,4 +68,4 @@
     var out = response.getStreamWriter(), sa = new GlideSysAttachment();
     for (var i = 0; i < ids.length; i++) out.writeStream(sa.getContentStream(ids[i]));
 })(request, response);
-]]></operation_script><operation_uri>/api/x_196061_netra_v1/voice/ear/{model}/{file}</operation_uri><produces>application/json,application/xml,text/xml</produces><produces_customized>false</produces_customized><relative_path>/ear/{model}/{file}</relative_path><request_example/><requires_acl_authorization>false</requires_acl_authorization><requires_authentication>false</requires_authentication><requires_snc_internal_role>false</requires_snc_internal_role><short_description/><support_trailing_slash>false</support_trailing_slash><sys_class_name>sys_ws_operation</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-25 10:01:52</sys_created_on><sys_id>c009c1ed93670fd0e3aef0aefaba1094</sys_id><sys_mod_count>9</sys_mod_count><sys_name>ear</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_ws_operation_c009c1ed93670fd0e3aef0aefaba1094</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-25 10:28:57</sys_updated_on><web_service_definition display_value="Netra Voice">f8b3da9093424710e3aef0aefaba1066</web_service_definition><web_service_version/></sys_ws_operation></record_update>
+]]></operation_script><operation_uri>/api/x_196061_netra_v1/voice/ear/{model}/{file}</operation_uri><produces>application/json,application/xml,text/xml</produces><produces_customized>false</produces_customized><relative_path>/ear/{model}/{file}</relative_path><request_example/><requires_acl_authorization>false</requires_acl_authorization><requires_authentication>false</requires_authentication><requires_snc_internal_role>false</requires_snc_internal_role><short_description/><support_trailing_slash>false</support_trailing_slash><sys_class_name>sys_ws_operation</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-25 10:01:52</sys_created_on><sys_id>c009c1ed93670fd0e3aef0aefaba1094</sys_id><sys_mod_count>11</sys_mod_count><sys_name>ear</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_ws_operation_c009c1ed93670fd0e3aef0aefaba1094</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-25 10:37:12</sys_updated_on><web_service_definition display_value="Netra Voice">f8b3da9093424710e3aef0aefaba1066</web_service_definition><web_service_version/></sys_ws_operation></record_update>

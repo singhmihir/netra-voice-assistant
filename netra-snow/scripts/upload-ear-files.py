@@ -77,6 +77,10 @@ for model, files in WANT.items():
         size = os.path.getsize(local)
         stored = rel.replace('/', '__') + ('.js' if rel.endswith('.mjs') else '')
         parts = [(stored, 0, size)] if size <= PART else [(stored + '.part' + str(i + 1), i * PART, min(PART, size - i * PART)) for i in range((size + PART - 1) // PART)]
+        if size > PART:   # a whole copy already there at the right size is kept (the resource prefers it)
+            whole = api('GET', '/api/now/table/sys_attachment?sysparm_query=' + urllib.parse.quote('table_name=' + TABLE + '^table_sys_id=' + rec + '^file_name=' + stored) + '&sysparm_fields=size_bytes')['result']
+            if whole and int(whole[0]['size_bytes']) == size:
+                print(model, rel, 'already there (whole)'); continue
         for pname, off, length in parts:
             have = api('GET', '/api/now/table/sys_attachment?sysparm_query=' + urllib.parse.quote('table_name=' + TABLE + '^table_sys_id=' + rec + '^file_name=' + pname) + '&sysparm_fields=sys_id,size_bytes')['result']
             if have and int(have[0]['size_bytes']) == length:
