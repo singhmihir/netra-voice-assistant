@@ -279,6 +279,21 @@ small model loaded in 61 s and both spoken phrases were heard exactly; with
 the instance's files blocked the ear loaded from the hub in 39 s; with both
 blocked the card offered typing within 6 s.
 
+**Netra's own voice, from the instance (v7.9).** No device voice, no online
+voice, no CDN: a neural voice (Piper, en_GB "Cori", medium quality) runs in
+a module worker from the instance's own files - the ONNX runtime, the
+phonemizer (espeak-ng in WebAssembly, 18 MB of language data) and the 63 MB
+voice model, all under the ear resource's `voice/` and `ort/`. It is the
+default engine for everyone: the loading card waits up to 25 s for it, and
+this device's own voice speaks a line while hers loads or if she fails. Each
+sentence group is synthesized in the worker in order and played back to back
+(a barge-in abandons the queue; a failed group hands the rest to the device
+voice). Settings lists "Netra's own voice (Cori, British English)" first; a
+device voice can still be picked, and the Lab's engine cycle includes hers.
+Measured in Chromium (one WebAssembly thread): the voice ready in about 3 s
+once cached, a 6-second sentence synthesized in 2.3 s; her own ear
+transcribed her own voice's audio word for word.
+
 **Hearing, accuracy first (v7.8).** "It fails to catch simple phrases I
 speak" - so the on-device ear now takes the most accurate Whisper its
 device runs, and says what that costs. On a desktop with WebGPU the ear is

@@ -191,10 +191,11 @@ To remove Netra entirely:
 ## The on-device ear's files (optional, recommended on corporate networks)
 
 Where the browser's own speech service is blocked, Netra listens with Whisper
-in the browser. The page fetches the model, the ONNX runtime and
-transformers.js from **this instance** when they are there, and from
-huggingface.co and jsdelivr.net otherwise. To put them on the instance
-(about 950 MB, once; they are not in the update set):
+in the browser, and she always speaks with her own voice (Piper, Cori). The
+page fetches the models, the voice, the ONNX runtime and transformers.js
+from **this instance** when they are there (the voice only from there), and
+the hearing from huggingface.co and jsdelivr.net otherwise. To put them on
+the instance (about 1 GB, once; they are not in the update set):
 
 ```
 SN_URL=https://<instance>.service-now.com SN_USER=admin SN_PASS=... \

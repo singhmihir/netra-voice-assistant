@@ -143,7 +143,8 @@ api.controller = function ($scope, $timeout, $window) {
     c.conversationOpen = false;     // follow-up window open?
     c.useRemoteTTS = REMOTE_TTS_DEFAULT;
     c.remoteVoice  = REMOTE_TTS_VOICE;
-    c.ttsEngine    = 'browser';   // R20 - the quickest voice there is; the Lab can pick the neural one
+    c.ttsEngine    = 'netra';     // v7.9 - her own voice, from this instance; the Lab can pick another engine
+    try { if (localStorage.getItem('netra_engine') === 'browser') c.ttsEngine = 'browser'; } catch (eEng) {}
 
     // R1 - Stats + Charts
     var BOOT_TIME = Date.now();
@@ -875,6 +876,7 @@ api.controller = function ($scope, $timeout, $window) {
         var out = list.map(function (v, i) { return { name: v.name, label: _deviceVoiceLabel(v), r: rank(v), i: i }; })
             .sort(function (a, b) { return a.r - b.r || a.i - b.i; });
         out.unshift({ name: '', label: 'The best voice on this device' });
+        if (_netraVoiceWanted()) out.unshift({ name: '__netra__', label: 'Netra\'s own voice (' + VOICE_NAME + ', British English)' });   // v7.9
         // a pick this device no longer has is said so, not shown as a blank
         if (pick && list.length && !out.some(function (v) { return v.name === pick; })) out.push({ name: pick, label: pick + ' (not on this device now)' });
         _devVoices = { key: key, out: out };
@@ -889,6 +891,14 @@ api.controller = function ($scope, $timeout, $window) {
     // a voice picked in Settings: this device speaks with it from now on
     // (chooseVoice takes forcedVoiceName first), and on the next visit too
     function _setDeviceVoice(name) {
+        // v7.9 - her own voice from this instance, or one of this device's
+        if (String(name || '') === '__netra__') {
+            c.ttsEngine = 'netra'; c.voicePick = '__netra__';
+            try { localStorage.setItem('netra_engine', 'netra'); localStorage.removeItem('netra_voicePick'); } catch (eN) {}
+            logEvent('dev', 'voice -> my own (' + VOICE_NAME + ', from this instance)');
+            return;
+        }
+        if (c.ttsEngine === 'netra') { c.ttsEngine = 'browser'; try { localStorage.setItem('netra_engine', 'browser'); } catch (eB) {} }
         forcedVoiceName = String(name || '');
         try {
             if (forcedVoiceName) localStorage.setItem('netra_voicePick', forcedVoiceName);
@@ -905,8 +915,9 @@ api.controller = function ($scope, $timeout, $window) {
         if (/^guest$/i.test(first)) first = '';
         var eng = c.ttsEngine || 'browser', who = '';
         // the neural name only while that voice really plays (a tripped read-aloud socket falls back)
-        if (_neuralVoices() && !_edgeCircuitOpen()) who = String(_voiceName(c.edgeVoice)).replace(/\s*\(.*$/, '');
-        else if (eng === 'browser' || eng === 'edge') { var v = chooseVoice(); who = v ? _deviceVoiceLabel(v).split(',')[0] : ''; }
+        if (eng === 'netra' && _netraVoiceReady()) who = VOICE_NAME;
+        else if (_neuralVoices() && !_edgeCircuitOpen()) who = String(_voiceName(c.edgeVoice)).replace(/\s*\(.*$/, '');
+        else if (eng === 'browser' || eng === 'edge' || eng === 'netra') { var v = chooseVoice(); who = v ? _deviceVoiceLabel(v).split(',')[0] : ''; }
         var pace = _paceText(c.speechRate);
         speak((first ? 'Hi ' + first + '. ' : 'Hi. ') + (who ? 'This is the ' + who + ' voice, ' : 'This is my voice, ') +
               (pace === 'normal' ? 'at a normal pace.' : pace + ' than normal.'));
@@ -2264,6 +2275,7 @@ api.controller = function ($scope, $timeout, $window) {
     var forcedVoiceName = '';
     // the voice picked in Settings on this device, if any
     try { forcedVoiceName = c.voicePick = String(localStorage.getItem('netra_voicePick') || ''); } catch (eFv) {}
+    if (c.ttsEngine === 'netra') c.voicePick = '__netra__';   // v7.9 - Settings shows her own voice as the pick
     var ignoreFinalsUntil = 0;
     var commandMode = false;
     var commandTimer = null;
@@ -3635,6 +3647,7 @@ api.controller = function ($scope, $timeout, $window) {
             // this): the first deaf strike then swaps it in at once. A phone
             // downloads nothing up front
             startContinuous();
+            _netraVoiceLoad();   // v7.9 - her own voice, from this instance
             _readyUpdate();
             if (!_isPhone()) $timeout(function () { if (!_nativeHeardWords && !_ctrlDestroyed) _earLoad(true); }, 15000);
             _brainProbe('boot');        // R21: the loading screen waits for a real answer from the brain
@@ -3725,6 +3738,127 @@ api.controller = function ($scope, $timeout, $window) {
     }
     // (a .js path never reaches the instance's resource either: -js)
     function _earLib(src) { return src === 'pdi' ? _earBase() + 'lib/transformers.min-js' : EAR_LIB; }
+
+    /* ============================================================
+     *  v7.9 - NETRA'S OWN VOICE, from this instance
+     *
+     *  A neural voice (Piper, en_GB "Cori", medium) run in a module worker
+     *  from the instance's own files: the ONNX runtime, the phonemizer
+     *  (espeak-ng in WebAssembly) and the voice model, all served by the
+     *  ear resource under voice/ and ort/. No visitor reaches a CDN or a
+     *  hub, and no device voice or online voice is needed. Each sentence
+     *  group becomes PCM in the worker; the page plays the groups back to
+     *  back, pipelined like the neural voice, and this device's own voice
+     *  speaks a line while hers loads or if she fails.
+     * ============================================================ */
+    var VOICE_MODEL = 'en_GB-cori-medium', VOICE_NAME = 'Cori';
+    var VOICE_WORKER_SRC =
+        "let pdiBase = '';\n" +
+        // the runtime fetches its .wasm by name: the suffix the platform eats
+        "if (self.fetch) { const realFetch = self.fetch.bind(self); self.fetch = (url, opts) => { let u = String(url && url.url || url); if (pdiBase && u.indexOf(pdiBase) === 0) u = u.replace(/\\.(json|js|wasm)$/, '-$1'); return realFetch(u, opts); }; }\n" +
+        "let ort = null, session = null, cfg = null, phon = null, makePhon = null, gotIds = null, chain = Promise.resolve(), droppedUpTo = 0;\n" +
+        "self.onmessage = (e) => {\n" +
+        "  const d = e.data || {};\n" +
+        "  if (d.cmd === 'load') chain = chain.then(() => load(d)).catch((err) => self.postMessage({ error: String(err && err.message || err) }));\n" +
+        // a barge-in or a new line: the sentences still queued are skipped, not made
+        "  else if (d.cmd === 'drop') droppedUpTo = Math.max(droppedUpTo, d.upTo || 0);\n" +
+        "  else if (d.cmd === 'say') chain = chain.then(() => (d.id <= droppedUpTo ? self.postMessage({ id: d.id, dropped: true }) : say(d))).catch((err) => self.postMessage({ id: d.id, error: String(err && err.message || err) }));\n" +
+        "};\n" +
+        "async function load(d) {\n" +
+        "  pdiBase = d.base; const t0 = Date.now();\n" +
+        "  ort = await import(pdiBase + 'ort/ort.wasm.bundle.min.mjs');\n" +
+        "  ort.env.wasm.wasmPaths = pdiBase + 'ort/'; ort.env.wasm.numThreads = 1;\n" +
+        "  cfg = await (await fetch(pdiBase + 'voice/' + d.model + '.onnx-json')).json();\n" +
+        "  const glue = await (await fetch(pdiBase + 'voice/piper_phonemize-js')).text();\n" +
+        "  const factory = new Function('self', glue + '\\nreturn createPiperPhonemize;')(self);\n" +
+        "  makePhon = () => factory({ print: (line) => { try { if (gotIds) gotIds(JSON.parse(line).phoneme_ids); } catch (e) {} }, printErr: () => {}, locateFile: (f) => f.endsWith('.wasm') ? pdiBase + 'voice/piper_phonemize-wasm' : (f.endsWith('.data') ? pdiBase + 'voice/piper_phonemize.data' : f) });\n" +
+        "  const model = await (await fetch(pdiBase + 'voice/' + d.model + '.onnx')).arrayBuffer();\n" +
+        "  session = await ort.InferenceSession.create(model, { executionProviders: ['wasm'] });\n" +
+        "  phon = await makePhon();\n" +
+        "  self.postMessage({ ready: true, ms: Date.now() - t0, rate: cfg.audio.sample_rate });\n" +
+        "}\n" +
+        // the phonemizer is a main() program: run again while it will, made afresh when it will not
+        "async function phonemize(text) {\n" +
+        "  const run = () => new Promise((resolve, reject) => { gotIds = resolve; const t = setTimeout(() => reject(new Error('phonemizer silent')), 8000); gotIds = (ids) => { clearTimeout(t); resolve(ids); }; try { phon.callMain(['-l', cfg.espeak.voice, '--input', JSON.stringify([{ text }]), '--espeak_data', '/espeak-ng-data']); } catch (e) { clearTimeout(t); reject(e); } });\n" +
+        "  try { return await run(); } catch (e) { phon = await makePhon(); return await run(); }\n" +
+        "}\n" +
+        "async function say(d) {\n" +
+        "  const ids = await phonemize(String(d.text || ''));\n" +
+        "  if (d.id <= droppedUpTo) { self.postMessage({ id: d.id, dropped: true }); return; }\n" +
+        "  const feeds = { input: new ort.Tensor('int64', BigInt64Array.from(ids.map(BigInt)), [1, ids.length]), input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(ids.length)])), scales: new ort.Tensor('float32', Float32Array.from([cfg.inference.noise_scale, cfg.inference.length_scale * (d.lengthScale || 1), cfg.inference.noise_w])) };\n" +
+        "  if (cfg.num_speakers > 1) feeds.sid = new ort.Tensor('int64', BigInt64Array.from([0n]));\n" +
+        "  const t = Date.now(); const r = await session.run(feeds); const pcm = r.output.data;\n" +
+        "  self.postMessage({ id: d.id, pcm, rate: cfg.audio.sample_rate, ms: Date.now() - t }, [pcm.buffer]);\n" +
+        "}\n";
+    c.voice = { status: 'off', error: '', loadMs: 0, said: 0 };
+    var _voiceWorker = null, _voiceJobs = {}, _voiceJobId = 0, _voiceLoadStart = 0, _voiceWaitSaid = false;
+    function _voiceState() { if (!c.voice) c.voice = { status: 'off', error: '', loadMs: 0, said: 0 }; return c.voice; }
+    function _netraVoiceWanted() { _voiceState(); return !!_earBase() && typeof Worker !== 'undefined' && typeof Blob !== 'undefined'; }
+    function _netraVoiceReady() { return _voiceState().status === 'ready' && !!_voiceWorker; }
+    function _netraVoiceLoad() {
+        var vs = _voiceState();
+        if (_voiceWorker || vs.status === 'loading' || !_netraVoiceWanted()) return;
+        vs.status = 'loading'; vs.error = ''; _voiceLoadStart = Date.now();
+        try {
+            _voiceWorker = new Worker(URL.createObjectURL(new Blob([VOICE_WORKER_SRC], { type: 'text/javascript' })), { type: 'module' });
+            _voiceWorker.onmessage = _netraVoiceOnMessage;
+            _voiceWorker.onerror = function (ev) { _netraVoiceFail('worker: ' + (ev && ev.message || 'failed')); };
+            _voiceWorker.postMessage({ cmd: 'load', base: _earBase(), model: VOICE_MODEL });
+            logEvent('tts', 'loading my own voice (' + VOICE_NAME + ') from this instance');
+        } catch (e) { _netraVoiceFail(String(e && e.message || e)); }
+        _readyUpdate();
+    }
+    function _netraVoiceOnMessage(ev) {
+        var d = ev.data || {};
+        if (d.ready) {
+            c.voice.status = 'ready'; c.voice.loadMs = d.ms || (Date.now() - _voiceLoadStart); _voiceWaitSaid = false;
+            logEvent('tts', 'my own voice is ready (' + VOICE_NAME + ', ' + (c.voice.loadMs / 1000).toFixed(1) + ' s)');
+            _readyUpdate(); $scope.$applyAsync();
+            return;
+        }
+        if (d.id !== undefined) {
+            var job = _voiceJobs[d.id]; delete _voiceJobs[d.id];
+            if (!job) return;
+            if (job.timer) $timeout.cancel(job.timer);
+            if (d.dropped) { job.cb(null); return; }
+            if (d.error || !d.pcm || !d.pcm.length) { logEvent('warn', 'my own voice: ' + (d.error || 'no audio')); job.cb(null); return; }
+            c.voice.said++;
+            job.cb(_pcmToWav(d.pcm, d.rate || 22050));
+            return;
+        }
+        if (d.error) _netraVoiceFail(d.error);
+    }
+    function _netraVoiceFail(msg) {
+        c.voice.status = 'error'; c.voice.error = msg;
+        logEvent('warn', 'my own voice failed (' + msg + ') - this device\'s voice instead');
+        try { if (_voiceWorker) _voiceWorker.terminate(); } catch (e) {}
+        _voiceWorker = null;
+        for (var k in _voiceJobs) { var j = _voiceJobs[k]; delete _voiceJobs[k]; if (j.timer) $timeout.cancel(j.timer); j.cb(null); }
+        _readyUpdate();
+    }
+    // a barge-in, a stop or a new line: what is still queued in the worker is not made
+    function _netraVoiceDrop() {
+        var any = false;
+        for (var k in _voiceJobs) { var j = _voiceJobs[k]; delete _voiceJobs[k]; if (j.timer) $timeout.cancel(j.timer); any = true; }
+        if (any && _voiceWorker) { try { _voiceWorker.postMessage({ cmd: 'drop', upTo: _voiceJobId }); } catch (e) {} }
+    }
+    // one sentence group -> a WAV blob (null when she can not)
+    function _netraVoiceSynth(text, cb) {
+        if (!_netraVoiceReady()) { cb(null); return; }
+        var id = ++_voiceJobId, job = { cb: cb, timer: null };
+        _voiceJobs[id] = job;
+        job.timer = $timeout(function () { if (_voiceJobs[id]) { delete _voiceJobs[id]; logEvent('warn', 'my own voice: no audio in 30 s for "' + String(text).substring(0, 40) + '"'); cb(null); } }, 30000, false);
+        var rate = parseFloat(c.speechRate) || 1;
+        _voiceWorker.postMessage({ cmd: 'say', id: id, text: String(text), lengthScale: 1 / rate });
+    }
+    function _pcmToWav(pcm, rate) {
+        var n = pcm.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+        var str = function (o, t) { for (var i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+        str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+        v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
+        for (var i = 0, o = 44; i < n; i++, o += 2) { var x = Math.max(-1, Math.min(1, pcm[i])); v.setInt16(o, Math.round(x < 0 ? x * 32768 : x * 32767), true); }
+        return new Blob([buf], { type: 'audio/wav' });
+    }
     // v7.8 - accuracy first: the ladder is tiny (a phone: its own recognizer
     // is primary), base (a desktop on WebAssembly, ~80 MB, no real errors on
     // Indian English) and small (a desktop GPU, or chosen: slow on a CPU but
@@ -3836,6 +3970,12 @@ api.controller = function ($scope, $timeout, $window) {
             return false;
         }
         if (eng === 'edge' && _edgeVoiceAvailable() && !_edgeCircuitOpen()) { c.gate.voiceText = 'neural voice'; return true; }
+        // v7.9 - her own voice from this instance: waited for up to 25 s;
+        // later than that (or failed) this device's voice speaks until hers is ready
+        if (eng === 'netra') {
+            if (_netraVoiceReady()) { c.gate.voiceText = 'my own voice (' + VOICE_NAME + ')'; return true; }
+            if (_voiceState().status === 'loading' && Date.now() - _voiceLoadStart < 25000) { c.gate.voiceText = 'loading my own voice from this instance…'; return false; }
+        }
         // no speech synthesis at all: there will never be voices to wait for
         if (!c.hasTTS) { c.gate.voiceText = 'captions only (this browser can not speak)'; return true; }
         if (!_voiceCheckStart) _voiceCheckStart = Date.now();
@@ -3910,15 +4050,17 @@ api.controller = function ($scope, $timeout, $window) {
         if (/^ready( \(.*\))?$/i.test(s)) return 'Ready';
         // the download's note: the size word and MB (v7.8), or the bare MB of an older line
         var note = (s.match(/\(([^()]*about \d+ MB[^()]*), once\)/) || [])[1];
-        s = s.replace(/loading my on-device ear( \d+%)?( \([^()]*, once\))?/, 'downloading speech recognition, one time' + (note ? ' (' + note + ')' : ''))
+        s = s.replace(/loading my on-device ear( from this instance)?( \d+%)?( \([^()]*, once\))?/, function (m, here) { return (here ? 'getting speech recognition ready from this instance, one time' : 'downloading speech recognition, one time') + (note ? ' (' + note + ')' : ''); })
              .replace(/preparing my on-device ear( \(the first time can take a minute\))?/, 'setting up speech recognition$1')
              .replace(/switching to my own ear/, 'switching to on-device listening')
              .replace(/my on-device ear|on-device ear/g, 'on-device listening')
              .replace(/^browser recognizer$/, 'Ready')
+             .replace(/^my own voice \(([^)]+)\)$/, 'Netra\'s own voice ($1)')
+             .replace(/^loading my own voice from this instance…$/, 'Getting her voice ready from this instance…')
              .replace(/press Enter or tap Start.*$/, 'Press Start so the browser lets Netra speak')
              .replace(/^captions only.*$/, 'No voice on this device. Replies will be shown as text.')
              .replace(/\bcan not\b/g, 'can\'t').replace(/\bCan not\b/g, 'Can\'t');
-        return s.replace(/^(downloading|setting up|on-device listening|the browser|this browser|loading voices)/, function (w) { return w.charAt(0).toUpperCase() + w.substring(1); });
+        return s.replace(/^(downloading|getting|setting up|on-device listening|the browser|this browser|loading voices)/, function (w) { return w.charAt(0).toUpperCase() + w.substring(1); });
     }
     // R24 - the browser recognizer failed or is missing, and the on-device
     // ear can not stand in (it failed, is switched off, or can not run here)
@@ -4241,7 +4383,7 @@ api.controller = function ($scope, $timeout, $window) {
             // reaches 100 % before the model is compiled and warmed up
             var why = _nativeVerdict === 'blocked' ? 'the browser can not reach its speech service - ' : (!c.hasSR ? 'this browser has no speech recognizer - ' : '');
             if (c.ear.status === 'loading') c.readyText = 'Getting ready — ' + why + (c.ear.prepared ? 'preparing my on-device ear (the first time can take a minute)…'
-                                                        : 'loading my on-device ear' + (c.ear.progress ? ' ' + c.ear.progress + '%' : '') + ' (' + _earSizeNote() + ', once)…');
+                                                        : 'loading my on-device ear' + (c.ear.src === 'pdi' ? ' from this instance' : '') + (c.ear.progress ? ' ' + c.ear.progress + '%' : '') + ' (' + _earSizeNote() + ', once)…');
             else if (_nativeVerdict === 'blocked') c.readyText = 'Getting ready — the browser can not reach its speech service, switching to my own ear…';
             else if (!c.hasSR) c.readyText = 'Getting ready…';
             else c.readyText = 'Getting ready — checking the browser can hear…';
@@ -6605,6 +6747,7 @@ api.controller = function ($scope, $timeout, $window) {
     function stopSpeaking(reason) {
         if (/barge|reflex|unsure/i.test(String(reason || ''))) _bargeStoppedAt = Date.now();
         _speakSessionId++;                      // aborts pipelined sentence queue
+        _netraVoiceDrop();                      // v7.9 - and the sentences her own voice still had to make
         _turnEpoch++;                           // any in-flight reply is now stale
         // a cut-off calibration prompt never reaches its tone (edge-live
         // drops the done-callback): end the check, do not leave it stuck
@@ -6954,6 +7097,11 @@ api.controller = function ($scope, $timeout, $window) {
         // sounds most like Gemini chat). Otherwise fall through to
         // Edge / StreamElements / browser as before.
         var engine = c.ttsEngine || (c.useRemoteTTS ? 'edge' : 'browser');
+        // v7.9 - her own voice from this instance; this device's voice for a line while hers loads or if she failed
+        if (engine === 'netra' && !_netraVoiceReady()) {
+            if (!_voiceWaitSaid) { _voiceWaitSaid = true; logEvent('tts', 'my own voice is ' + (_voiceState().status === 'error' ? 'not available' : (_voiceState().status === 'off' ? 'not on this instance' : 'still loading')) + ' - this device\'s voice for now'); }
+            engine = 'browser';
+        }
         if (engine === 'edge' && !_edgeVoiceAvailable()) {
             if (!_edgeUnavailableSaid) {
                 _edgeUnavailableSaid = true;
@@ -6963,6 +7111,8 @@ api.controller = function ($scope, $timeout, $window) {
         }
         if (engine === 'gemini') {
             speakGemini(clean, wrappedDone);
+        } else if (engine === 'netra') {
+            speakNetraVoice(clean, wrappedDone);
         } else if (engine === 'edge') {
             // R7 - live-streamed synthesis (MediaSource): audio starts on
             // the first chunk, prosody flows unbroken across the whole
@@ -6997,6 +7147,65 @@ api.controller = function ($scope, $timeout, $window) {
         }
         if (cur.trim()) groups.push(cur.trim());
         return groups;
+    }
+
+    // v7.9 - her own voice, from this instance: sentence groups synthesized in
+    // the worker in order and played back to back; a barge-in or stop (a
+    // bumped session) abandons the queue; a failed group hands the rest to
+    // this device's voice
+    function speakNetraVoice(text, done) {
+        if (!_netraVoiceReady()) return speakBrowser(text, done);
+        _netraVoiceDrop();   // an earlier line still being made is not finished
+        var session = ++_speakSessionId;
+        var groups = _splitSentenceGroups(text, 1);   // one sentence a group: the first is heard while the rest are made
+        if (!groups.length) { if (done) done(); return; }
+        setState('speaking');
+        var blobs = new Array(groups.length), waiters = new Array(groups.length);
+        groups.forEach(function (g, i) {
+            blobs[i] = null;
+            _netraVoiceSynth(g, function (blob) {
+                blobs[i] = blob || false;
+                if (waiters[i]) { var w = waiters[i]; waiters[i] = null; w(); }
+            });
+        });
+        logEvent('tts', 'my own voice: ' + groups.length + ' segment' + (groups.length === 1 ? '' : 's') + ' (' + text.length + ' chars)');
+        var idx = 0;
+        function playNext() {
+            if (session !== _speakSessionId) return;
+            if (idx >= groups.length) { _clearSpeaking(); if (done) done(); return; }
+            var i = idx++;
+            var ready = function () {
+                if (session !== _speakSessionId) return;
+                if (blobs[i] === false) {
+                    var rest = groups.slice(i).join(' ');
+                    logEvent('warn', 'my own voice: segment ' + (i + 1) + ' failed - this device\'s voice for the rest');
+                    return speakBrowser(rest, done);
+                }
+                var url = URL.createObjectURL(blobs[i]);
+                var audio = new Audio(url);
+                audio.playbackRate = 1.0;   // the pace is in the synthesis
+                audio.volume = _duckedForBarge ? 0.25 : 1.0;
+                _silenceCurrentAudio();
+                currentAudio = audio;
+                attachOutputAnalyser(audio);
+                _speakingNow = true;
+                var segSettled = false;
+                var advanceOnce = function () {
+                    if (segSettled) return;
+                    segSettled = true;
+                    detachOutputAnalyser(audio);
+                    URL.revokeObjectURL(url);
+                    if (currentAudio === audio) currentAudio = null;
+                    playNext();
+                };
+                audio.onended = advanceOnce;
+                audio.onerror = advanceOnce;
+                audio.play().catch(advanceOnce);
+            };
+            if (blobs[i] !== null) ready();
+            else waiters[i] = ready;
+        }
+        playNext();
     }
 
     function speakEdgePipelined(text, done) {
@@ -8985,12 +9194,13 @@ api.controller = function ($scope, $timeout, $window) {
 
     c.devToggleTTS = function () {
         // R2.8 - cycle: edge -> gemini -> stream -> browser -> edge
-        var seq = ['edge', 'gemini', 'stream', 'browser'];
-        var idx = seq.indexOf(c.ttsEngine || 'edge');
+        var seq = ['netra', 'edge', 'gemini', 'stream', 'browser'];
+        var idx = seq.indexOf(c.ttsEngine || 'netra');
         c.ttsEngine = seq[(idx + 1) % seq.length];
         c.useRemoteTTS = (c.ttsEngine !== 'browser');
         logEvent('dev', 'TTS engine -> ' + c.ttsEngine +
-                 (c.ttsEngine === 'edge'   ? ' (' + c.edgeVoice + ', Microsoft Neural, free)' :
+                 (c.ttsEngine === 'netra'  ? ' (my own voice, ' + VOICE_NAME + ', from this instance)' :
+                  c.ttsEngine === 'edge'   ? ' (' + c.edgeVoice + ', Microsoft Neural, free)' :
                   c.ttsEngine === 'gemini' ? ' (' + c.geminiVoice + ', Gemini native, ~1 Gemini quota / turn)' :
                   c.ttsEngine === 'stream' ? ' (StreamElements ' + c.remoteVoice + ')' :
                                              ' (browser ' + c.voiceName + ')'));

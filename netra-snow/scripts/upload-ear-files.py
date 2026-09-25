@@ -5,8 +5,10 @@ Netra's on-device hearing (Whisper, run in the browser by transformers.js)
 fetches its files from the instance first - the public resource
 GET /api/x_196061_netra_v1/voice/ear/{model}/{file} serves them - and from
 huggingface.co and jsdelivr.net only when the instance has no copy. This
-script downloads the files once and uploads them as attachments on the
-app's ear_file records (one record per model; a '/' in a path is '__' in
+script downloads the files once (the Whisper models, the ONNX runtime,
+transformers.js, and Netra's own voice: Piper's phonemizer and the en_GB Cori
+voice) and uploads them as attachments on the app's ear_file records (one
+record per model; a '/' in a path is '__' in
 the attachment's name; the platform refuses a .mjs attachment, so those
 are kept as .mjs.js). The update set carries the table and the resource,
 not these files (about 390 MB).
@@ -35,6 +37,8 @@ HUB = 'https://huggingface.co/onnx-community/'
 CDN = 'https://cdn.jsdelivr.net/npm/'
 ORT = 'onnxruntime-web@1.22.0-dev.20250409-89f8206ba4/dist/'
 LIB = '@huggingface/transformers@3.7.1/dist/'
+PIPER = '@diffusionstudio/piper-wasm@1.0.0/build/'
+VOICES = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/'
 JSONS = ['config.json', 'generation_config.json', 'preprocessor_config.json', 'tokenizer.json', 'tokenizer_config.json']
 Q8 = ['onnx/encoder_model_quantized.onnx', 'onnx/decoder_model_merged_quantized.onnx']
 GPU = ['onnx/encoder_model.onnx', 'onnx/decoder_model_merged_q4.onnx']
@@ -42,8 +46,11 @@ WANT = {
     'whisper-small.en': [(HUB + 'whisper-small.en/resolve/main/' + f, f) for f in JSONS + Q8 + GPU],
     'whisper-base.en': [(HUB + 'whisper-base.en/resolve/main/' + f, f) for f in JSONS + Q8],
     'whisper-tiny.en': [(HUB + 'whisper-tiny.en/resolve/main/' + f, f) for f in JSONS + Q8],
-    'ort': [(CDN + ORT + f, f) for f in ['ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm', 'ort-wasm-simd-threaded.jsep.mjs', 'ort-wasm-simd-threaded.jsep.wasm']],
+    'ort': [(CDN + ORT + f, f) for f in ['ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm', 'ort-wasm-simd-threaded.jsep.mjs', 'ort-wasm-simd-threaded.jsep.wasm', 'ort.wasm.bundle.min.mjs']],
     'lib': [(CDN + LIB + 'transformers.min.js', 'transformers.min.js')],
+    # Netra's own voice: Piper's phonemizer (espeak-ng in WebAssembly) and the en_GB Cori voice
+    'voice': [(CDN + PIPER + f, f) for f in ['piper_phonemize.js', 'piper_phonemize.wasm', 'piper_phonemize.data']] +
+             [(VOICES + 'en/en_GB/cori/medium/' + f, f) for f in ['en_GB-cori-medium.onnx', 'en_GB-cori-medium.onnx.json']],
 }
 
 def api(method, path, payload=None, raw=None, ctype='application/json'):
