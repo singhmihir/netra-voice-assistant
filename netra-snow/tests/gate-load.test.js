@@ -564,17 +564,31 @@ T.test('v7.9 - a proxy that strips the size: the MB so far are shown, and a stal
     new Function('self', 'pipeline', 'env', src)(self, pipeline, {});
     self.onmessage({ data: { cmd: 'load', model: 'm', device: 'wasm' } });
     T.eq(posted.map(function (m) { return [m.progress, m.mb]; }), [[undefined, 3], [undefined, 8]], 'bytes so far, no figure without every size');
+    // a server that sends no size: the library reports total = loaded on every event - unknown until loaded < total is seen
+    posted.length = 0;
+    pipeline = function (task, model, opts) {
+        opts.progress_callback({ status: 'progress', file: 'onnx/encoder_model.onnx', loaded: 4 * 1048576, total: 4 * 1048576 });
+        opts.progress_callback({ status: 'progress', file: 'onnx/encoder_model.onnx', loaded: 9 * 1048576, total: 9 * 1048576 });
+        opts.progress_callback({ status: 'progress', file: 'onnx/decoder_model_merged.onnx', loaded: 1 * 1048576, total: 10 * 1048576 });
+        opts.progress_callback({ status: 'progress', file: 'onnx/decoder_model_merged.onnx', loaded: 10 * 1048576, total: 10 * 1048576 });
+        return new Promise(noop);
+    };
+    new Function('self', 'pipeline', 'env', src)(self, pipeline, {});
+    self.onmessage({ data: { cmd: 'load', model: 'm', device: 'wasm' } });
+    T.eq(posted.map(function (m) { return [m.progress, m.mb]; }), [[undefined, 4], [undefined, 9], [undefined, 10], [undefined, 19]], 'the chunked file never shows loaded < total, so no figure, only the MB');
     // the page: the card and the hint say the MB so far
     var cl = page(), f = cl.fn, c = cl.c;
     global.Worker = function () {};
     cl.set('_nativeVerdict', 'blocked'); cl.set('$window', { navigator: { userAgent: DESKTOP } });
     c.ear.size = 'base'; f._earPickModel(); c.ear.status = 'loading'; cl.set('_earWorker', { terminate: noop });
     f._earOnMessage({ data: { mb: 8 } });
-    T.eq(c.ear.progress, 0); T.eq(c.ear.loadedMb, 8);
+    T.eq(c.ear.progress, 10, 'the bar runs against the 80 MB expected for base'); T.eq(c.ear.loadedMb, 8); T.eq(c.ear.sizeUnknown, true);
     T.match(c.gate.hearingText, /downloading speech recognition, one time \(balanced, about 80 MB, 8 MB so far\)$/);
     T.match(f._earSummary(), /8 MB so far/);
+    f._earOnMessage({ data: { mb: 200 } });
+    T.eq(c.ear.progress, 99, 'never 100 before the download is done'); T.match(c.gate.hearingText, /200 MB so far/);
     f._earOnMessage({ data: { progress: 40, mb: 32 } });
-    T.notMatch(c.gate.hearingText, /so far/, 'a real figure drives the bar instead');
+    T.eq(c.ear.sizeUnknown, false); T.notMatch(c.gate.hearingText, /so far/, 'a real figure drives the bar instead');
     // a stall: nothing from the worker for 45 s on the GPU -> the smaller model on wasm; on wasm -> failed with a reason
     var spawned = [];
     cl.set('_earSpawn', function () { spawned.push(c.ear.model + '/' + c.ear.device); cl.set('_earWorker', { terminate: noop }); });
