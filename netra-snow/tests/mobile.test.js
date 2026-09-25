@@ -116,8 +116,8 @@ T.test('iOS always gets the Start tap, and the tap unlocks speech inside the tap
     delete global.SpeechSynthesisUtterance;
 });
 
-T.test('on a phone, or for a Guest, the settings never open over the stage by themselves', function () {
-    [[{ is_guest: true }, 1280, false], [{ is_guest: false }, 390, false], [{ is_guest: false }, 1280, true]].forEach(function (k) {
+T.test('the settings never open over the stage by themselves, on a phone, a desktop or for a Guest', function () {
+    [[{ is_guest: true }, 1280, false], [{ is_guest: false }, 390, false], [{ is_guest: false }, 1280, false]].forEach(function (k) {
         var cl = page(), f = cl.fn, c = cl.c;
         c.data = k[0]; c.setupOn = false; c.labCalib = { stage: 'idle' };
         cl.set('$window', { innerWidth: k[1], navigator: {}, document: { addEventListener: function () {} } });

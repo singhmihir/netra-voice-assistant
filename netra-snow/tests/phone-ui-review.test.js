@@ -1,9 +1,9 @@
 /* The phone and stage controls, second pass.
  *
- * Leaving Netra gives the portal back its header and footer; Escape in the
- * Settings or the install steps still stops her talking; Mute really stops
+ * Leaving Netra gives the portal back its header and footer; Escape closes
+ * an open sheet or the typing box first, and otherwise stops her talking; Mute really stops
  * both ears and the cloud recognizer; while muted or ended the status never
- * says "talk to interrupt"; the Lab sheet clears the round controls at every
+ * says "talk to interrupt"; the Lab sheet clears the control bar at every
  * phone width. */
 'use strict';
 var T = require('./lib/t'), N = require('./lib/netra');
@@ -140,26 +140,33 @@ T.test('End for a signed-in desktop user gives the portal back before going back
 
 // ---- 2. Escape still silences her ----------------------------------------------
 
-T.test('Escape in the Settings sheet or the install steps closes it and still stops her talking', function () {
+T.test('Escape in a sheet or the typing box closes only that; with nothing open it stops her talking', function () {
     var p = page(), c = p.c, handler = null;
     p.set('$window', { innerWidth: 1024, addEventListener: function (k, f) { if (k === 'keydown') handler = f; } });
     p.f.bindHotkeys();
     T.ok(handler, 'the page listens for keys');
-    // the sheet's ng-keydown first, then the page, unless it was stopped
-    function press(own) {
+    c.liveMode = true; c.gate = { open: true };
+    // the sheet's own ng-keydown first, then the page, unless it was stopped
+    function press(own, target) {
         var stopped = false;
-        var ev = { key: 'Escape', preventDefault: function () {}, stopPropagation: function () { stopped = true; } };
-        own(ev);
+        var ev = { key: 'Escape', target: target || DOC.body, preventDefault: function () {}, stopPropagation: function () { stopped = true; } };
+        if (own) own(ev);
         if (!stopped) handler(ev);
     }
-    c.setupOn = true;
-    press(p.f._setupKey);
+    p.f._setupToggle();
+    press(p.f._sheetKey);
     T.eq(c.setupOn, false, 'Settings closed');
-    T.eq(p.rec.stops, ['Escape key'], 'and she stops talking');
-    c.app.showHelp = true;
-    press(p.f._appHelpKey);
-    T.eq(c.app.showHelp, false, 'install steps closed');
-    T.eq(p.rec.stops, ['Escape key', 'Escape key'], 'and she stops talking');
+    T.eq(p.rec.stops, [], 'Escape there closes the sheet, it does not also cut her off');
+    p.f._sheetOpen('log', '.netra-ctl-log');
+    press(null);   // the focus fell to the page: the page's Escape closes the open sheet first
+    T.eq(c.sheet, null, 'Transcript closed');
+    T.eq(p.rec.stops, []);
+    p.f._typeToggle(true);
+    press(null);
+    T.eq(c.typeOn, false, 'the typing box closed first');
+    T.eq(p.rec.stops, []);
+    press(null);
+    T.eq(p.rec.stops, ['Escape key'], 'nothing open: she stops talking');
 });
 
 // ---- 3. the on-device ear while muted ---------------------------------------------
@@ -215,18 +222,23 @@ T.test('muted: the browser recognizer is stopped and nothing starts it again unt
 
 // ---- 5. the status while muted or ended ------------------------------------------------
 
-T.test('while muted or ended her status never says "talk to interrupt", and does not flip while she speaks', function () {
+T.test('while muted or ended her status never says "talk to interrupt", and nothing is announced around her line; ended stays ended while she speaks', function () {
     var p = page(), c = p.c;
-    c.micOff = true;
-    p.f.setState('dormant'); var before = c.liveStatus;
+    c.micOff = true; c.hasTTS = true;
+    p.f.setState('dormant');
+    T.eq([c.liveStatus, c.liveHint, c.liveKind], ['Mic off', 'Press Mute or tap Netra to turn it on', 'muted']);
+    var said = [], val = c.srSay;
+    Object.defineProperty(c, 'srSay', { configurable: true, get: function () { return val; }, set: function (v) { said.push(v); val = v; } });
     p.f.setState('speaking');
-    T.notMatch(c.liveStatus, /interrupt/i); T.eq(c.liveStatus, before, 'no second announcement around her line');
+    T.eq([c.liveStatus, c.liveHint], ['Speaking', 'Mic off'], 'her "Mic off." line: speaking, the mic still off');
+    p.f.setState('dormant');
+    T.eq(said, [], 'no second announcement around her line: her voice says it');
     c.ended = true;
     p.f.setState('speaking');
-    T.match(c.liveStatus, /Ended/); T.notMatch(c.liveStatus, /interrupt/i);
+    T.eq([c.liveStatus, c.liveHint, c.liveKind], ['Ended', 'The mic is off', 'ended'], 'her goodbye does not flip it');
     c.micOff = false; c.ended = false;
     p.f.setState('speaking');
-    T.eq(c.liveStatus, 'Speaking — just talk to interrupt', 'listening as usual: talking does interrupt');
+    T.eq([c.liveStatus, c.liveHint], ['Speaking', 'Talk or tap to interrupt'], 'listening as usual: talking does interrupt');
 });
 
 // ---- 6. the Lab sheet above the round controls -------------------------------------------
@@ -240,17 +252,23 @@ function block(src, media) {
 }
 function px(text, re) { var m = text.match(re); T.ok(m, 'found ' + re); return +m[1]; }
 
-T.test('the Lab sheet on a phone clears the round controls and their focus ring at every width up to 600 px', function () {
-    var r23 = CSS.slice(CSS.indexOf('R23 - PHONES AND THE INSTALLED APP'));
-    var padWide = px(r23, /\.netra-stage-controls \{ padding-bottom: calc\((\d+)px/);
-    var padNarrow = px(block(r23, '@media (max-width: 480px)'), /\.netra-stage-controls \{ padding-bottom: calc\((\d+)px/);
-    var ctl = px(CSS, /\.netra-ctl \{\s*width: (\d+)px/);
-    var ring = px(CSS, /\.netra-ctl:focus-visible \{ outline: (\d+)px/) + px(CSS, /\.netra-ctl:focus-visible \{[^}]*outline-offset: (\d+)px/);
+T.test('the Lab sheet on a phone clears the control bar and its focus rings at every width up to 600 px', function () {
+    var bar = CSS.slice(CSS.indexOf('R28 - THE CONTROL BAR'));
+    var top = px(rule(bar, '.netra-stage-controls'), /padding: (\d+)px/);
+    var home = px(TPL, /\.netra-stage \.netra-stage-controls \{ padding-bottom: max\((\d+)px/);
+    var ctl = px(rule(bar, '.netra-ctl'), /min-height: (\d+)px/);
+    var ring = px(bar, /\.netra-ctl:focus-visible \.netra-ctl-ico \{ outline: (\d+)px/) + px(bar, /\.netra-ctl:focus-visible \.netra-ctl-ico \{[^}]*outline-offset: (\d+)px/);
+    T.ok(ring <= top, 'the ring over the circles stays inside the bar (' + ring + ' of ' + top + ' px)');
     var phone = block(TPL, '@media (max-width: 600px)');
-    var wide = px(phone.slice(phone.indexOf('.netra-stage .netra-lab {')), /bottom: calc\((\d+)px/);
-    T.ok(wide >= padWide + ctl + ring, '481-600 px: the Lab at ' + wide + ' px, the controls reach ' + (padWide + ctl + ring));
-    var narrow = px(block(TPL, '/* 480 px and less: the controls sit'), /bottom: calc\((\d+)px/);
-    T.ok(narrow >= padNarrow + ctl + ring, '480 px and less: the Lab at ' + narrow + ' px, the controls reach ' + (padNarrow + ctl + ring));
+    var lab = px(phone.slice(phone.indexOf('.netra-stage .netra-lab {')), /bottom: calc\((\d+)px/);
+    T.ok(lab >= home + ctl + top, 'up to 600 px: the Lab at ' + lab + ' px, the bar reaches ' + (home + ctl + top));
+    T.notMatch(TPL, /480 px and less: the controls sit/, 'one bar height at every phone width');
 });
+
+function rule(src, sel) {
+    var at = src.indexOf(sel + ' {');
+    T.ok(at >= 0, 'found the rule ' + sel);
+    return src.slice(at, src.indexOf('}', at) + 1);
+}
 
 T.run(__filename);

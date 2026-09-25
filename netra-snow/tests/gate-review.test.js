@@ -37,7 +37,7 @@ T.test('an ear that is loading, on standby or on is never "can not hear", whatev
     T.eq(f._cantHear(), false, 'on');
     c.ear.on = false; c.ear.status = 'loading'; f._readyUpdate();
     T.eq(c.gate.cantHear, false);
-    T.match(c.gate.hearingText, /loading my on-device ear 40%/, 'the card shows the download, not "type instead"');
+    T.match(c.gate.hearingText, /downloading speech recognition/, 'the card shows the download, not "type instead"');
     // a failed ear with no recognizer: typing is what is left
     c.ear.status = 'error';
     T.eq(f._cantHear(), true, 'error');
@@ -124,7 +124,7 @@ T.test('a Guest pressing Leave on the loading card stays on the page: the card g
     T.ok(!p.back, 'no navigation to the login page');
     T.eq(c.ended, true, 'the ended state, whose button starts her again');
     givenBack(p, 'Guest Leave');
-    T.match(said[0] || '', /Start Netra again/);
+    T.match(said[0] || '', /^Netra ended\. The mic is off\.$/, 'said once, plainly; the focus lands on the way back in');
     var TEMPLATE = require('fs').readFileSync(require('path').join(N.SRC, 'widget', 'template.html'), 'utf8');
     T.match(TEMPLATE, /class="netra-ready" ng-if="[^"]*!c\.ended/, 'the card is not shown once ended');
 });

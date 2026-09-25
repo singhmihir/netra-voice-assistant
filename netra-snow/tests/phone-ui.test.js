@@ -131,22 +131,26 @@ T.test('the live page lets a low-vision user pinch to zoom: the theme\'s user-sc
 
 // ---- 2. End ---------------------------------------------------------------
 
-T.test('End: a Guest or the installed app stays on the page, asleep, with "Start Netra again"; signed-in desktop goes back', function () {
+T.test('End: a Guest or the installed app stays on the page, ended, the focus on the way back in; signed-in desktop goes back', function () {
     [[{ is_guest: true }, {}], [{ is_guest: false }, { standalone: true }], [{ is_guest: false }, { fromApp: true }]].forEach(function (k) {
         var p = page(), c = p.c, w = win(p);
+        var orb = DOC.body.appendChild(el('button', 'netra-stage-blob-wrap'));
         c.data = k[0]; for (var a in k[1]) c.app[a] = k[1][a];
         p.f._liveExit();
         T.eq(w.went, undefined, JSON.stringify(k) + ': no trip to the login page');
         T.eq(c.ended, true); T.eq(c.micOff, true, 'she stops listening'); T.eq(c.alert, false);
-        T.match(p.rec.spoken.join(' '), /Start Netra again/);
+        T.eq(p.rec.spoken.join(' '), 'Netra ended. The mic is off.');
+        T.eq([c.liveStatus, c.liveHint], ['Ended', 'The mic is off']);
+        T.eq(p.f._orbLabel(), 'Start Netra again');
+        T.ok(DOC.activeElement === orb, 'no "Start Netra again" button yet: the orb, named for it, has the focus');
         p.f._liveRestart();
         T.eq(c.ended, false); T.eq(c.micOff, false); T.eq(c.alert, true, 'back and listening');
+        T.eq(p.rec.spoken[p.rec.spoken.length - 1], 'Hi again — I’m listening.');
     });
     var p = page(), w = win(p);
     p.c.data = { is_guest: false };
     p.f._liveExit();
     T.eq(w.went, 'back', 'a signed-in desktop user returns to the portal as before');
-    T.match(TPL, /class="netra-ended-btn" ng-if="c\.ended" ng-click="c\.liveRestart\(\)">Start Netra again</);
 });
 
 // ---- 3. Mute mic ------------------------------------------------------------
@@ -158,7 +162,7 @@ T.test('Mute mic means she does not listen: her name does not wake her, the ear 
     p.f._micMute();
     T.eq(c.micOff, true); T.eq(c.alert, false);
     T.eq(gain.gain.value, 0, 'the meter and the on-device ear get silence');
-    T.match(p.rec.spoken[0], /Unmute/);
+    T.eq(p.rec.spoken[0], 'Mic off.');
     ['Netra wake up', 'Netra', 'stop listening', 'list my tickets'].forEach(function (u) {
         p.f.processFinalTranscript(u, 0.95);
         T.eq(c.alert, false, '"' + u + '" while muted');
@@ -169,15 +173,17 @@ T.test('Mute mic means she does not listen: her name does not wake her, the ear 
     T.eq(gain.gain.value, 0, 'the sensitivity slider does not unmute');
     p.f._micUnmute();
     T.eq(c.micOff, false); T.eq(c.alert, true); T.eq(gain.gain.value, 2);
+    T.eq(p.rec.spoken[p.rec.spoken.length - 1], 'Mic on.');
+    T.notMatch(p.rec.spoken.join(' '), /press Unmute|\bshe\b/);
 });
 
 T.test('the Mute button and her status say what is true', function () {
     var p = page(), c = p.c;
     p.set('window', {});
     p.f._micMute(true);
-    T.match(c.liveStatus, /Mic off/); T.match(c.stateLabel, /mic off/);
+    T.eq([c.liveStatus, c.liveHint], ['Mic off', 'Press Mute or tap Netra to turn it on']);
+    T.match(c.stateLabel, /mic off/); T.notMatch(c.stateLabel, /Unmute/);
     T.match(TPL, /class="netra-ctl netra-ctl-mic" ng-click="c\.toggleMic\(\)"/);
-    T.match(TPL, /aria-label="\{\{c\.micOff \? 'Unmute mic' : 'Mute mic'\}\}"/);
     T.notMatch(TPL, /Tap to mute or wake/, 'the blob no longer claims to mute');
 });
 
@@ -211,9 +217,12 @@ T.test('captions only: a voice that fails keeps the caption, a barge-in does not
         T.eq(c.captionKeep, k[1], k[0]);
         delete global.SpeechSynthesisUtterance;
     });
-    T.match(TPL, /netra-stage-caption-netra"\s+ng-show="c\.captionWho\(\) === 'netra'"/);
-    T.notMatch(block(CSS, '@media (max-height: 520px) and (orientation: landscape)'), /netra-stage-caption \{ display: none/, 'no caption-less landscape');
-    T.match(block(TPL, '/* a phone held sideways: a short caption'), /\.netra-stage \.netra-stage-caption \{[^}]*font-size: 13px/);
+    // one labelled caption box: 'Netra' or 'You', then the words
+    T.match(TPL, /<section class="netra-cap" ng-if="c\.capOn !== false" ng-class="[^"]*" aria-label="Captions">/);
+    T.match(TPL, /\{\{c\.captionWho\(\) === 'you' \? 'You' : 'Netra'\}\}<\/b> <span class="netra-cap-text"[^>]*>\{\{c\.captionText\(\)\}\}<\/span>/);
+    // held sideways: a caption of two lines, never none
+    var land = block(CSS, '@media (orientation: landscape) and (max-height: 520px)');
+    T.match(land, /--cap-lines: 2;/); T.notMatch(land, /netra-cap \{ display: none/, 'no caption-less landscape');
 });
 
 // ---- 5. one app shell ----------------------------------------------------------
@@ -227,36 +236,43 @@ T.test('the live page gets no second manifest, icon or theme colour from the old
 
 // ---- 6. install button vs the state pill ------------------------------------------
 
-T.test('on a 320-412 px phone the install button sits below the header, clear of the state pill and the Settings tab', function () {
-    var narrow = block(CSS, '/* phones (320-480 px)');
-    var top = +(narrow.match(/\.netra-app-btn \{ top: calc\((\d+)px/) || [])[1];
-    var headTop = +(block(CSS, '@media (max-width: 480px) {\n    .netra-stage-controls').match(/\.netra-stage-head \{ top: calc\((\d+)px/) || [])[1];
-    T.ok(top >= headTop + 30, 'button top ' + top + ' px is below the header row (' + headTop + ' px + its ~22 px pills)');
-    // second row: the Settings tab on the left (~8 + 110 px), the button on the right (~130 px wide)
-    [320, 375, 390, 412].forEach(function (w) { T.ok(8 + 110 < w - 12 - 130, w + ' px: the tab and the button do not meet'); });
-    T.match(rule(CSS, '.netra-app-btn'), /min-height: 44px/);
+T.test('the install button is in Settings > More, not floating over the header on a phone', function () {
+    var stage = TPL.slice(TPL.indexOf('<div class="netra-stage"'), TPL.indexOf('<div class="netra-sheet netra-settings"'));
+    T.notMatch(stage, /class="netra-app-btn"|class="netra-app-help"/, 'nothing floats over the header');
+    T.notMatch(CSS, /\.netra-app-btn \{/, 'and no rule places one');
+    var set = TPL.slice(TPL.indexOf('<div class="netra-sheet netra-settings"'));
+    set = set.slice(0, set.indexOf('<aside class="netra-lab"'));
+    T.match(set, /<button type="button" class="netra-set-btn netra-set-install" ng-if="!c\.app\.standalone && \(c\.app\.canInstall \|\| c\.app\.ios\)"/);
+    T.match(rule(CSS, '.netra-set-btn'), /min-height: 48px/);
 });
 
 // ---- 7. contrast --------------------------------------------------------------------
 
 T.test('button text is at least 4.5:1 and the round control icons at least 3:1', function () {
-    T.ok(contrast('#ffffff', bg(rule(CSS, '.netra-app-help-ok'))) >= 4.5, 'Got it');
-    T.ok(contrast('#ffffff', bg(rule(CSS, '.netra-ended-btn'))) >= 4.5, 'Start Netra again');
+    var STAGE = '#0e0e10';
+    T.ok(contrast('#062e6f', bg(rule(CSS, '.netra-ended-btn'))) >= 4.5, 'Start Netra again');
     var off = (APP.match(/'button\{[^}]*background:(#[0-9a-f]{6})/i) || [])[1];
     T.ok(off && contrast('#ffffff', off) >= 4.5, 'offline Try again: ' + off);
-    var ctl = rule(CSS, '.netra-ctl');
-    T.notMatch(ctl, /background: rgba/, 'a solid fill, not a see-through one');
-    T.ok(contrast((ctl.match(/color: (#[0-9a-f]{6})/i) || [])[1], bg(ctl)) >= 3, 'mute / lab / end icons');
-    var muted = rule(CSS, '.netra-ctl-muted');
+    var ico = rule(CSS, '.netra-ctl-ico');
+    T.notMatch(ico, /background: rgba/, 'a solid fill, not a see-through one');
+    T.ok(contrast((ico.match(/color: (#[0-9a-f]{6})/i) || [])[1], bg(ico)) >= 3, 'mute / type / transcript icons');
+    T.ok(contrast((ico.match(/border: 1px solid (#[0-9a-f]{6})/i) || [])[1], STAGE) >= 3, 'the circle edge on the stage');
+    T.ok(contrast((rule(CSS, '.netra-ctl-label').match(/color: (#[0-9a-f]{6})/i) || [])[1], STAGE) >= 4.5, 'the labels');
+    var muted = rule(CSS, '.netra-ctl-mic[aria-pressed=true] .netra-ctl-ico');
     T.ok(contrast((muted.match(/color: (#[0-9a-f]{6})/i) || [])[1], bg(muted)) >= 3, 'the muted icon');
-    T.notMatch(rule(CSS, '.netra-ctl-lab-on'), /background: var\(/, 'the open-Lab state is solid too');
+    var end = rule(CSS, '.netra-ctl-end .netra-ctl-ico');
+    T.ok(contrast('#ffffff', bg(end)) >= 4.5, 'End icon'); T.ok(contrast('#f2b8b5', STAGE) >= 3, 'End ring');
+    T.ok(contrast('#062e6f', bg(rule(CSS, '.netra-type-send'))) >= 4.5, 'Send');
+    T.ok(contrast('#f1f3f4', bg(rule(CSS, '#netra-type-in'))) >= 7, 'typed text');
 });
 
 // ---- 8. focus ring on the blob ----------------------------------------------------------
 
-T.test('the blob has a visible keyboard focus ring, in 3D mode too', function () {
-    T.match(TPL, /\.netra-stage\.netra-3d-on \.netra-stage-blob-wrap:focus-visible \{\s*outline: 3px solid #ffffff !important;\s*outline-offset: 6px;/);
-    T.notMatch(rule(CSS, '.netra-stage-blob-wrap:focus-visible'), /outline: none/);
+T.test('the orb has a visible keyboard focus ring that hugs the painted orb, in 3D mode too', function () {
+    // a white ring with a dark halo on ::after, inset to the orb's 0.36 radius
+    T.match(TPL, /\.netra-stage \.netra-stage-blob-wrap:focus-visible::after \{[^}]*inset: 13%;[^}]*box-shadow: 0 0 0 3px #fff, 0 0 0 6px #0e0e10;/);
+    T.notMatch(TPL + CSS, /blob-wrap:focus-visible[^{]*\{[^}]*outline-offset: 6px/, 'no 464 px square-ish ring around the button');
+    T.notMatch(TPL, /\.netra-3d-on \.netra-stage-blob-wrap:focus-visible::after \{[^}]*display: none/, 'the renderer does not hide it');
 });
 
 // ---- 9. reduced motion ---------------------------------------------------------------------
@@ -292,11 +308,14 @@ T.test('the portal under the live stage is inert; no floating orb there, no DEV 
 T.test('on a touch screen every small control is at least 44 x 44 px', function () {
     var coarse = block(CSS, '@media (pointer: coarse)');
     T.match(coarse, /\.netra-lab-x \{ min-width: 44px; min-height: 44px;/, 'the Lab close x (was 14 x 18)');
-    ['.netra-setup-tab', '.netra-setup-check', '.netra-lab-btns button', '.netra-lab-cmd button', '.netra-lab-selects select', '.netra-calib-actions button'].forEach(function (s) {
+    ['.netra-lab-btns button', '.netra-lab-cmd button', '.netra-lab-selects select', '.netra-calib-actions button'].forEach(function (s) {
         T.ok(coarse.indexOf(s) >= 0, s);
     });
     T.match(coarse, /min-height: 44px/);
-    T.match(block(TPL, '/* touch screens: a checkbox'), /width: 24px; height: 24px/);
+    // Settings and the Transcript: 48 px controls and 24 px boxes everywhere, not only on touch
+    ['.netra-set-select', '.netra-set-btn', '.netra-set-check', '.netra-sheet-btn', '#netra-type-in'].forEach(function (s) { T.match(rule(CSS, s), /min-height: 48px/, s); });
+    T.match(rule(CSS, '.netra-set-check input, .netra-set-radios input'), /width: 24px; height: 24px/);
+    T.match(rule(CSS, '.netra-try-chip'), /min-height: 44px/);
 });
 
 // ---- 12. the Lab on a phone ------------------------------------------------------------------------
@@ -304,8 +323,7 @@ T.test('on a touch screen every small control is at least 44 x 44 px', function 
 T.test('the Lab on a phone: a full-width sheet above the round controls, rows that wrap, her answer inside, no saved desktop spot', function () {
     var phone = block(TPL, '@media (max-width: 600px)');
     var lab = phone.slice(phone.indexOf('.netra-stage .netra-lab {'));
-    T.match(lab, /bottom: calc\(116px/, 'stops above the controls (46 px + 62 px + the focus ring + the home bar)');
-    T.match(block(TPL, '/* 480 px and less: the controls sit'), /bottom: calc\(104px/, '480 px and less: 30 px + 62 px + the ring');
+    T.match(lab, /bottom: calc\(120px/, 'stops above the control bar (8 + 84 + 20 px, the ring inside it) and the home bar');
     T.match(lab, /overflow-x: hidden/);
     T.match(lab, /left: calc\(8px \+ env\(safe-area-inset-left/);
     T.match(block(CSS, '/* the Lab on a phone'), /\.netra-lab-selects \{ flex-wrap: wrap; \}/);
@@ -324,63 +342,62 @@ T.test('the Lab on a phone: a full-width sheet above the round controls, rows th
 // ---- 13. Guest settings -------------------------------------------------------------------------------
 
 T.test('a Guest is not offered the morning briefing', function () {
-    T.match(TPL, /<label class="netra-setup-check" ng-if="!\(c\.data && c\.data\.is_guest\)">\s*<input type="checkbox" ng-model="c\.prefBrief"/);
+    T.match(TPL, /<label class="netra-set-check" ng-if="!\(c\.data && c\.data\.is_guest\)">\s*<input type="checkbox" ng-model="c\.prefBrief"/);
 });
 
 // ---- 14. the iOS install help ----------------------------------------------------------------------------
 
-T.test('install help: worded for the browser, focus to the title, Escape closes, focus back, name starts "Install app"', function () {
+T.test('install help: worded for the browser, inline in Settings, focus to the title, Got it gives the focus back', function () {
     var p = page(), c = p.c;
     T.eq(p.f._shareWhere('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 CriOS/120.0 Mobile/15E148 Safari/604.1'), 'Chrome\'s address bar');
     T.eq(p.f._shareWhere('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1'), 'Safari\'s toolbar');
-    var btn = DOC.body.appendChild(el('button', 'netra-app-btn'));
-    var title = DOC.body.appendChild(el('div', 'netra-app-help-title', { id: 'netra-app-help-title' }));
+    var btn = DOC.body.appendChild(el('button', 'netra-set-btn netra-set-install'));
+    var title = DOC.body.appendChild(el('p', 'netra-set-app-title', { id: 'netra-app-help-title' }));
     c.app.ios = true;
     btn.focus();
     p.f._installApp();
     T.eq(c.app.showHelp, true); T.ok(DOC.activeElement === title, 'VoiceOver lands on the steps');
-    var stopped = 0;
-    p.f._appHelpKey({ key: 'Escape', preventDefault: function () {}, stopPropagation: function () { stopped++; } });
-    T.eq(c.app.showHelp, false, 'Escape closes'); T.eq(stopped, 0, 'the page\'s Escape still stops her talking');
+    p.f._appHelpClose();
+    T.eq(c.app.showHelp, false, 'Got it closes');
     T.ok(DOC.activeElement === btn, 'focus is back on the button, not lost to the page');
-    var b = TPL.slice(TPL.indexOf('<button type="button" class="netra-app-btn"'));
+    var set = TPL.slice(TPL.indexOf('<div class="netra-sheet netra-settings"'));
+    var b = set.slice(set.indexOf('<button type="button" class="netra-set-btn netra-set-install"'));
     b = b.slice(0, b.indexOf('</button>'));
-    T.notMatch(b, /aria-label=/, 'the accessible name is the visible "Install app"');
+    T.notMatch(b, /aria-label=/, 'the accessible name is the visible "Install Netra as an app"');
     T.match(b, /aria-controls="netra-app-help"/); T.match(b, /aria-expanded/);
-    T.match(b, /<span>Install app<\/span>/);
-    T.match(TPL, /in \{\{c\.app\.shareWhere\}\}\./);
-    T.match(TPL, /ng-keydown="c\.appHelpKey\(\$event\)"/);
-    T.match(TPL, /id="netra-app-help-title" tabindex="-1"/);
+    T.match(b, />Install Netra as an app$/);
+    T.match(set, /in \{\{c\.app\.shareWhere\}\}\./);
+    T.match(set, /id="netra-app-help-title" tabindex="-1"/);
 });
 
 // ---- 15. the Settings sheet from the keyboard ------------------------------------------------------------
 
-T.test('Settings: Escape closes and focus returns to the tab; on a phone Tab wraps inside the sheet', function () {
+T.test('Settings: Escape closes and focus returns to the Settings button; Tab wraps inside the sheet', function () {
     var p = page(), c = p.c;
-    win(p, { innerWidth: 390 });
-    var tab = DOC.body.appendChild(el('button', 'netra-setup-tab'));
-    var body = DOC.body.appendChild(el('div', 'netra-setup-body'));
-    var first = body.appendChild(el('select')), mid = body.appendChild(el('button')), last = body.appendChild(el('button'));
-    var hidden = body.appendChild(el('button')); hidden.offsetParent = null;   // a control not on screen
-    c.setupOn = true;
-    function key(k, shift) { var e = { key: k, shiftKey: !!shift, prevented: 0, preventDefault: function () { e.prevented++; }, stopPropagation: function () {} }; p.f._setupKey(e); return e; }
+    win(p, { innerWidth: 1280 });
+    var head = DOC.body.appendChild(el('button', 'netra-head-settings'));
+    var card = DOC.body.appendChild(el('div', 'netra-sheet-card'));
+    card.appendChild(el('h2', '', { id: 'netra-settings-h', tabindex: '-1' }));
+    var first = card.appendChild(el('select')), mid = card.appendChild(el('button')), last = card.appendChild(el('button'));
+    var hidden = card.appendChild(el('button')); hidden.offsetParent = null;   // a control not on screen
+    p.f._setupToggle();
+    T.eq(c.setupOn, true); T.eq(c.sheet, 'settings');
+    function key(k, shift) { var e = { key: k, shiftKey: !!shift, prevented: 0, stopped: 0, preventDefault: function () { e.prevented++; }, stopPropagation: function () { e.stopped++; } }; p.f._sheetKey(e); return e; }
     last.focus();
     T.eq(key('Tab').prevented, 1); T.ok(DOC.activeElement === first, 'Tab on the last control goes to the first');
     key('Tab', true); T.ok(DOC.activeElement === last, 'Shift+Tab on the first goes to the last');
     mid.focus(); T.eq(key('Tab').prevented, 0, 'in between, Tab moves normally');
-    key('Escape');
-    T.eq(c.setupOn, false); T.ok(DOC.activeElement === tab, 'Escape closes, focus on the Settings tab');
-    T.match(TPL, /<aside class="netra-setup"[^>]*ng-keydown="c\.setupKey\(\$event\)"/);
+    T.eq(key('Escape').stopped, 1, 'Escape closes the sheet only');
+    T.eq(c.setupOn, false); T.eq(c.sheet, null); T.ok(DOC.activeElement === head, 'focus on the Settings button');
+    T.match(TPL, /<div class="netra-sheet netra-settings" id="netra-settings" ng-if="c\.setupOn" ng-keydown="c\.sheetKey\(\$event\)">/);
 });
 
 // ---- 16. landscape notch -----------------------------------------------------------------------------------
 
-T.test('held sideways, the Settings, the install help and the Lab keep clear of the notch', function () {
-    T.match(rule(TPL, '  .netra-setup'), /left: calc\(14px \+ env\(safe-area-inset-left/);
+T.test('held sideways, the sheets and the Lab keep clear of the notch', function () {
     T.match(rule(TPL, '  .netra-lab'), /right: calc\(26px \+ env\(safe-area-inset-right/);
-    var help = rule(CSS, '.netra-app-help');
-    T.match(help, /right: calc\(12px \+ env\(safe-area-inset-right/); T.match(help, /left: calc\(12px \+ env\(safe-area-inset-left/);
-    T.match(block(TPL, '@media (max-width: 600px)'), /padding: 16px calc\(18px \+ env\(safe-area-inset-right, 0px\)\) calc\(18px \+ env\(safe-area-inset-bottom, 0px\)\) calc\(18px \+ env\(safe-area-inset-left/);
+    T.match(rule(CSS, '.netra-sheet-card'), /padding: 8px calc\(20px \+ env\(safe-area-inset-right, 0px\)\) calc\(20px \+ env\(safe-area-inset-bottom, 0px\)\) calc\(20px \+ env\(safe-area-inset-left/);
+    T.match(rule(CSS, '.netra-sheet-card'), /overflow: auto/, 'a sheet taller than the screen scrolls');
 });
 
 // ---- 17. the offline page -------------------------------------------------------------------------------------

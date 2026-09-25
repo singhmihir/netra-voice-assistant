@@ -244,6 +244,40 @@ journey (hunters per area, then an adversarial verifier per finding; 13 of
   ear hands back to the browser recognizer, the same words are never asked
   twice.
 
+**A calmer stage, built for the people who use it (v7.7).** Learning
+from Gemini Live, ChatGPT voice, Siri and the screen-reader guidance they
+follow, the Live page was redesigned around one rule: nothing moves that
+you did not move.
+
+- **One stage that stays put.** A fixed grid - header, orb, status,
+  caption, a row for typing or suggestions, and the control bar - so the
+  orb sits in the same place in every state, and the bar and the typing
+  box stay on screen on a 320 px phone, a phone held sideways, a short
+  laptop window and with the keyboard up (the orb steps aside while you
+  type). Checked in a real browser at ten sizes, compiled the way the
+  portal compiles it.
+- **One status, said once.** Listening, Thinking (named: "Searching the
+  web…"), Speaking, Mic off, Paused, Ended - one line with a hint, one
+  polite announcer, and never a word over her own voice. A wait has a
+  soft tick, a named step at 8 s and "Try again" at 20 s; a failed turn
+  keeps Try again after her apology.
+- **Captions you can read.** A solid You / Netra caption box in four
+  sizes (S to XL), AAA contrast, newest line at the bottom.
+- **Four labelled controls.** Mute, Type, Transcript and End, 64 x 84 px,
+  with their names under them; the orb itself pauses, resumes or stops
+  her, and says so in its name.
+- **Type, Transcript and Settings.** Typing is a real way in from the
+  first second; the transcript is a sheet with every turn and Copy; the
+  Settings sheet holds the voice, pace, caption size, Calm visuals, sounds,
+  keyboard shortcuts and More (the Lab with Copy diagnostics, the app
+  install). Single-key shortcuts (M, /, T, S, Esc, ?) for keyboard users.
+- **Try saying.** Four starters until the first question; the time in
+  another city is answered at once from the browser's own time zones.
+- **Found live, fixed for good.** The portal's SCSS compiler silently drops
+  a rule with min() around calc() (it took the stage's grid with it) and
+  writes `var(--a) + 1px` as the invalid `var(--a)+ 1px`; those sums now
+  live in the template's own style, and a test holds the SCSS to it.
+
 **Fenced, and a Gemini stage (v7.6).** A final regression round (code
 review in four lenses, a live reviewer journey, emulated phones) found the
 public page trusted what its own page sent. Now:

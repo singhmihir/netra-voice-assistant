@@ -41,7 +41,7 @@ T.test('a recognizer that started cleanly opens the gate at once, even where the
     T.eq(c.ready, true, 'no wait for words or for the ear');
     T.eq(c.gate.open, true);
     T.eq(c.ear.status, 'off', 'and nothing was downloaded');
-    T.match(said[0] || '', /I am Netra, and I am ready/);
+    T.match(said[0] || '', /I'm Netra, and I'm listening\./);
     T.eq(cl.get('NATIVE_SETTLE_MS') <= 3000, true, 'a short settle time');
     delete global.Worker;
 });
@@ -109,7 +109,7 @@ T.test('a blocked speech service loads the ear, and the loading screen says why 
     cl.get('contRec').onerror({ error: 'network' });
     T.eq(spawned, ['onnx-community/whisper-tiny.en'], 'the ear starts loading');
     T.eq(c.ready, false);
-    T.match(c.gate.hearingText, /can not reach its speech service - loading my on-device ear \(about 40 MB, once\)/);
+    T.eq(c.gate.hearingText, 'The browser can\'t reach its speech service - downloading speech recognition, one time (about 40 MB)');
     // a refusal that comes after the clean start still brings the ear
     var cl2 = page(), f2 = cl2.fn, c2 = cl2.c, spawned2 = [];
     cl2.set('SR', function () { var r = this; r.start = noop; r.stop = noop; r.abort = noop; });
@@ -173,19 +173,19 @@ T.test('download progress is one figure for all the files, only goes up, and "pr
     ]);
     T.eq(shown, [50, 12, 25, 99], 'bytes over bytes across the model files, never 100 before the download is done');
     // the page keeps the highest figure, and "preparing" is not undone
-    var cl = page(), f = cl.fn, c = cl.c, texts = [];
+    var cl = page(), f = cl.fn, c = cl.c, texts = [], figs = [];
     global.Worker = function () {};
     cl.set('_nativeVerdict', 'blocked');
     c.ear.status = 'loading';
-    shown.forEach(function (p) { f._earOnMessage({ data: { progress: p } }); texts.push(c.gate.hearingText); });
-    T.eq(c.ear.progress, 99);
-    T.match(texts[1], /loading my on-device ear 50%/, 'a new file does not pull the figure back');
+    shown.forEach(function (p) { f._earOnMessage({ data: { progress: p } }); texts.push(c.gate.hearingText); figs.push(c.ear.progress); });
+    T.eq(figs, [50, 50, 50, 99], 'a new file does not pull the figure back (the card\'s bar shows it)');
+    texts.forEach(function (t) { T.match(t, /downloading speech recognition, one time \(about 40 MB\)$/); T.notMatch(t, /%/, 'the figure is the bar, not the words'); });
     f._earOnMessage({ data: { progress: 100 } });
     T.eq(c.ear.progress, 99, 'never 100 from a file figure');
     f._earOnMessage({ data: { downloaded: true } });
-    T.match(c.gate.hearingText, /preparing my on-device ear/);
+    T.match(c.gate.hearingText, /setting up speech recognition/i);
     f._earOnMessage({ data: { progress: 40 } });
-    T.match(c.gate.hearingText, /preparing my on-device ear/, 'no flip back to "loading 40%"');
+    T.match(c.gate.hearingText, /setting up speech recognition/i, 'no flip back to "downloading"');
     delete global.Worker;
 });
 
@@ -241,8 +241,8 @@ T.test('the status line changes on milestones only: a whole download is one anno
     f._earOnMessage({ data: { downloaded: true } });
     if (c.gate.status !== lines[lines.length - 1]) lines.push(c.gate.status);
     T.eq(lines.length, 1, 'no percentage is ever announced: ' + JSON.stringify(lines));
-    T.eq(lines[0], 'Voice and answers ready. Waiting for hearing. Loading my on-device ear, about 40 MB, once - this can take a minute.');
-    T.match(c.gate.hearingText, /preparing/, 'the visible row still moves');
+    T.eq(lines[0], 'Voice and answers ready. Waiting for hearing. Downloading speech recognition, about 40 MB, one time. This can take a minute.');
+    T.match(c.gate.hearingText, /setting up speech recognition/i, 'the visible row still moves');
     // a real problem is a milestone: answers go down
     c.gate.brain = false; c.gate.brainDown = true; c.gate.brainText = 'The free AI models are overloaded right now';
     f._gateUpdate();
@@ -346,34 +346,51 @@ T.test('while the gate is shut everything behind the card is inert and the focus
 
 /* ---- 5. no hearing, answers ready: type instead, or leave ---- */
 
-T.test('a browser that can not hear offers Type instead once answers are ready, and a way to leave', function () {
-    var cl = page(), f = cl.fn, c = cl.c, toggles = 0;
+T.test('Type instead is offered whenever answers are ready, even while hearing still loads, and a way to leave', function () {
+    var cl = page(), f = cl.fn, c = cl.c, typed = [];
     delete global.Worker;
     c.hasSR = false; c.ear.status = 'error'; c.ear.error = 'no workers in this browser'; c.state = 'idle';
-    c.labOn = false; c.labToggle = function () { toggles++; c.labOn = !c.labOn; };
+    c.labOn = false;
+    cl.set('_typeToggle', function (on) { typed.push(on); c.typeOn = on; });
     f._readyUpdate();
     T.eq(c.gate.cantHear, true);
-    T.match(c.gate.hearingText, /this browser can not listen.*type to me instead/);
+    T.match(c.gate.hearingText, /^This browser can't listen.*type to Netra instead/);
     T.notMatch(c.gate.hearingText, /Lab/, 'the Lab is behind the card: not offered there');
-    T.match(c.gate.status, /^I can not hear in this browser\. Answers are ready - press Type instead to type to me\./);
+    T.match(c.gate.status, /^Netra can't hear in this browser\. Answers are ready\. Press Type instead to type to Netra\./);
     T.eq(f._typeHint(), 'Press Type instead to type to me.');
     var block = TEMPLATE.substring(TEMPLATE.indexOf('<div class="netra-ready"'), TEMPLATE.indexOf('<div class="netra-stage-center">'));
-    T.match(block, /ng-if="c\.gate\.cantHear && c\.gate\.brain" ng-click="c\.gateType\(\)">Type instead</);
+    // not only when the browser can not hear: the moment answers are ready
+    T.eq((/class="netra-ready-type" ng-if="([^"]*)"/.exec(block) || [])[1], 'c.gate.brain');
+    T.match(block, /ng-click="c\.gateType\(\)">Type instead</);
     T.match(block, /ng-click="c\.liveExit\(\)"[^>]*>Leave</);
     T.match(block, /ng-if="c\.gate && !c\.gate\.open && !c\.gate\.typing( && !c\.ended)?"/);
     T.match(CLIENT_SRC, /c\.gateType = _gateTypeInstead;/);
     f._gateTypeInstead();
     T.eq(c.gate.typing, true, 'the card steps aside');
-    T.eq(c.labOn, true, 'and the typing box opens');
+    T.eq(typed, [true], 'and the typing box above the controls opens');
+    T.ok(!c.labOn, 'not the Lab');
     T.eq(c.gate.open, false, 'nothing is heard: the gate stays shut for speech');
-    T.eq(c.liveStatus, 'Typing only - I can not hear you in this browser');
+    T.eq(c.liveStatus, 'Typing'); T.eq(c.liveHint, 'Netra can’t hear in this browser');
     T.eq(f._typedRefused('who founded servicenow'), false, 'typed questions go through');
-    // before answers are ready the card says so, and offers no button
+    // the ear still downloading, answers ready: Type instead works too
+    var clL = page(), fL = clL.fn, cL = clL.c, typedL = [];
+    global.Worker = function () {};
+    clL.set('_nativeVerdict', 'blocked');
+    clL.set('_typeToggle', function (on) { typedL.push(on); cL.typeOn = on; });
+    cL.ear.status = 'loading'; cL.ear.progress = 37;
+    fL._readyUpdate();
+    T.eq(cL.gate.cantHear, false); T.eq(cL.gate.brain, true);
+    fL._gateTypeInstead();
+    T.eq(cL.gate.typing, true); T.eq(typedL, [true]); T.ok(!cL.labOn);
+    delete global.Worker;
+    // before answers are ready the card says so, and Type instead does nothing
     var cl2 = page(), f2 = cl2.fn, c2 = cl2.c;
     c2.hasSR = false; c2.ear.status = 'error'; c2.gate.brain = false;
     f2._readyUpdate();
-    T.match(c2.gate.hearingText, /type to me once answers are ready/);
-    T.match(c2.gate.status, /You can type to me once answers are ready\./);
+    T.match(c2.gate.hearingText, /type to Netra once answers are ready/);
+    T.match(c2.gate.status, /You can type to Netra once answers are ready\./);
+    f2._gateTypeInstead();
+    T.ok(!c2.gate.typing, 'no typing into a gate with no answers');
 });
 
 /* ---- 6. a phone held sideways: the card fits ---- */
@@ -441,7 +458,7 @@ T.test('in web mode a not-ready check with every model resting keeps the gate op
     c2.server = { get: function () { return { then: function (ok) { ok({ data: { ready: { ready: true, mode: 'web', wait_ms: 120000, say: 'answers from the web only - my Gemini key was refused' } } }); } }; } };
     f2._brainProbe('boot');
     T.eq(c2.gate.open, true);
-    T.match(said[0], /I am ready - just speak\. My Gemini key was refused, so I will answer from the web for now\.$/);
+    T.match(said[0], /Just speak, or press Type\. My Gemini key was refused, so I will answer from the web for now\.$/);
 });
 
 function webWorks(P, text) {
@@ -525,6 +542,10 @@ T.test('no wake word in the state label, "getting ready" while the gate is shut,
     T.eq(c.stateLabel, 'listening - just speak');
     T.match(TEMPLATE, /<div class="netra-sr-only" role="status" aria-live="polite" aria-atomic="true" ng-if="!c\.liveMode">\s*\{\{c\.stateLabel\}\}/);
     T.notMatch(CLIENT_SRC, /listening for "Netra"/);
+    // R28 - the stage's own region says the status model's words; paused is not "asleep"
+    T.match(TEMPLATE, /<div class="netra-sr-only" id="netra-say" role="status" aria-live="polite" aria-atomic="true">\{\{c\.srSay\}\}<\/div>/);
+    T.eq(f._stateLabel('dormant'), 'paused - say Netra or tap to resume');
+    T.eq(c.liveStatus, 'Listening'); T.eq(c.liveKind, 'listen');
 });
 
 T.run(__filename);

@@ -232,13 +232,13 @@ T.test('an ear waiting in standby takes over on the first strike; readiness is w
     f2._readyUpdate();
     T.eq(c2.ready, false); T.eq(c2.liveStatus, 'Getting ready…'); T.match(c2.gate.hearingText, /checking the browser can hear/);
     f2._nativeSaw('blocked');
-    T.match(c2.gate.hearingText, /can not reach its speech service/);
+    T.match(c2.gate.hearingText, /can't reach its speech service/);
     c2.ear.status = 'loading'; c2.ear.progress = 40; f2._readyUpdate();
-    T.match(c2.gate.hearingText, /loading my on-device ear 40%/);
+    T.match(c2.gate.hearingText, /downloading speech recognition, one time/);
     T.eq(c2.gate.open, false);
     c2.ear.on = true; c2.ear.status = 'on'; f2._readyUpdate();
     T.eq(c2.ready, true); T.eq(c2.gate.open, true, 'hearing + voice + brain: open'); T.eq(c2.liveStatus, 'Listening');
-    T.match(said2[0] || '', /I am Netra, and I am ready - just speak/, 'the ready signal a blind user hears');
+    T.match(said2[0] || '', /I'm Netra, and I'm listening\./, 'the ready signal a blind user hears');
 });
 
 T.test('no mic check at start, no nudges, the quickest defaults', function () {
@@ -279,7 +279,7 @@ T.test('the loading screen: nothing is accepted until Netra can hear, speak and 
     c.server = { get: function () { return { then: function (ok) { ok({ data: { ready: { ready: true, model: 'gemma-4-26b-a4b-it' } } }); } }; } };
     f._brainProbe('test');
     T.eq(c.gate.open, true);
-    T.match(said[said.length - 1], /^Good (morning|afternoon|evening)\. I am Netra, and I am ready - just speak\.$/, 'no "Guest" in the greeting');
+    T.match(said[said.length - 1], /^Good (morning|afternoon|evening)\. I'm Netra\. As a guest, I can answer questions, search the web, and tell you the time or a joke\. Sign in to use your tickets\. Just speak, or press Type\.$/, 'no "Guest" name in the greeting, and what a guest can do');
 });
 
 T.test('the brain busy mid-visit: the question is held, asked again once when it is back, and never loops', function () {

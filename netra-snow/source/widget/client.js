@@ -187,7 +187,7 @@ api.controller = function ($scope, $timeout, $window) {
     // renders the full-screen live voice stage instead of just
     // the floating orb. Same controller, same features - bigger canvas.
     c.liveMode = false;
-    c.liveStatus = 'Waking up…';
+    c.liveStatus = 'Getting ready…';
     try {
         c.liveMode = /[?&]id=netra_live(&|$)/.test(String($window.location.search || $window.location.href || ''));
         if (c.liveMode) document.body.classList.add('netra-live-body');
@@ -251,14 +251,10 @@ api.controller = function ($scope, $timeout, $window) {
     }
     c.installApp = function () { _installApp(); };
     c.appHelpClose = function () { _appHelpClose(); };
-    c.appHelpKey = function (ev) { _appHelpKey(ev); };
     var _appHelpOpener = null;
-    // Escape goes on to the page too, where it also stops her talking
-    function _appHelpKey(ev) {
-        if (ev && ev.key === 'Escape') { ev.preventDefault(); _appHelpClose(); }
-    }
-    // the iOS steps: VoiceOver lands on the title, Escape or Got it closes,
-    // and focus goes back to the button that opened them
+    // R28 - the iOS steps sit inside Settings > More: VoiceOver lands on
+    // their title, Got it closes them and focus goes back to the button
+    // that opened them (Escape closes the whole sheet)
     function _appHelpOpen() {
         c.app.showHelp = true;
         try { _appHelpOpener = document.activeElement; } catch (eF) { _appHelpOpener = null; }
@@ -269,7 +265,7 @@ api.controller = function ($scope, $timeout, $window) {
         c.app.showHelp = false;
         var back = _appHelpOpener; _appHelpOpener = null;
         $timeout(function () {
-            if (back && back.isConnected && back.focus) back.focus(); else _focusEl('.netra-app-btn');
+            if (back && back.isConnected && back.focus) back.focus(); else _focusEl('.netra-set-install');
         }, 30);
     }
     function _focusEl(sel) {
@@ -315,20 +311,28 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function _endHere() {
         c.labOn = false; c.setupOn = false; _appHelpClose();
+        c.lastFailed = false; c.canRetry = false;
         // ended from the loading card: the card goes, and nothing stays inert
         _gateInertRestore();
         stopSpeaking('ended');
         _micMute(true);
         c.ended = true;
         setState('dormant');
+        cue('end');
         logEvent('app', 'ended on the page (a Guest or the installed app has nowhere to go back to)');
-        speak('Goodbye. Press Start Netra again when you need me.');
-        $timeout(function () { _focusEl('.netra-ended-btn'); }, 60);
+        _hushState();
+        speak('Netra ended. The mic is off.');
+        // the way back in; the orb (named "Start Netra again") if the button is not there
+        $timeout(function () {
+            var btn = null;
+            try { btn = document.querySelector('.netra-ended-btn'); } catch (eQ) {}
+            _focusEl(btn ? '.netra-ended-btn' : '.netra-stage-blob-wrap');
+        }, 60);
     }
     function _liveRestart() {
         if (!c.ended) return;
         c.ended = false;
-        _micUnmute();
+        _micUnmute('Hi again \u2014 I\u2019m listening.');
         $timeout(function () { _focusEl('.netra-stage-blob-wrap'); }, 60);
     }
 
@@ -353,12 +357,12 @@ api.controller = function ($scope, $timeout, $window) {
         c.alert = false;
         setState('dormant');
         logEvent('mic', 'muted - not listening until Unmute');
-        if (!quiet) speak('Mic off. I will not listen until you press Unmute.');
+        if (!quiet) { _hushState(); speak('Mic off.'); }
     }
-    function _micUnmute() {
+    function _micUnmute(say) {
         c.micOff = false;
         _micGainApply();
-        _wakeUp();
+        _wakeUp(say || 'Mic on.');
     }
     function _micGainApply() {
         if (_micGainNode) { try { _micGainNode.gain.value = c.micOff ? 0 : c.micGain; } catch (eG) {} }
@@ -436,7 +440,8 @@ api.controller = function ($scope, $timeout, $window) {
         } catch (eU) {}
         _inertMade = []; _inertTabs = [];
     }
-    if (c.liveMode) { $timeout(_inertChrome, 500); $timeout(_inertChrome, 4000); }
+    // and once more for portal chrome that renders late
+    if (c.liveMode) { $timeout(_inertChrome, 500); $timeout(_inertChrome, 4000); $timeout(_inertChrome, 12000); }
     $scope.$on('$destroy', _uninertChrome);
 
     /* ============================================================
@@ -452,16 +457,28 @@ api.controller = function ($scope, $timeout, $window) {
      *  automatically on the very first boot in this browser.
      * ============================================================ */
     c.labOn = false;
-    c.labToggle = function () {
-        c.labOn = !c.labOn;
+    c.labToggle = function () { _labOpen(!c.labOn); };
+    c.labKey = function (ev) { _labKey(ev); };
+    // R28 - the Lab opens from Settings > More or Alt+D: its close button
+    // takes the focus, and closing it hands the focus to the Settings button
+    function _labOpen(on) {
+        c.labOn = !!on;
         if (c.labOn) {
             _labScopeEl = null;   // re-query canvas on open
             $timeout(_labRestorePos, 30);   // put the window back where it was
+            $timeout(function () { _focusEl('.netra-lab-x'); }, 40);
         } else {
-            $timeout(function () { _focusEl('.netra-ctl-lab'); }, 30);   // closed with its own x: focus is not lost
+            $timeout(function () { _focusEl('.netra-head-settings'); }, 30);   // focus is not lost to the page
         }
         logEvent('lab', c.labOn ? 'Netra Lab opened' : 'Netra Lab closed');
-    };
+    }
+    // Escape closes the Lab only: stopped here, so it does not also stop her talking
+    function _labKey(ev) {
+        if (!ev || ev.key !== 'Escape' || !c.labOn) return;
+        ev.preventDefault();
+        if (ev.stopPropagation) ev.stopPropagation();
+        _labOpen(false);
+    }
     c.labRestartMic = function () { _fullMicRecycle('manual (Netra Lab)'); };
 
     /* ============================================================
@@ -502,39 +519,335 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     /* ============================================================
-     *  R13 - NETRA SETUP (end-user preferences, docked LEFT)
-     *  The new-phone experience: everything you'd want to tune on
-     *  day one - the language you speak, the voice she answers in,
-     *  her pace and the mic meter - lives in one panel on the left
-     *  edge of the stage. Opens by itself the very first time so a
-     *  brand new user starts by making Netra theirs.
+     *  R28 - THE WAYS IN (Netra Live)
+     *  One bar of labelled controls (Mute, Type, Transcript, End), a
+     *  typing box above it, 'Try saying' starters on a first visit and
+     *  two sheets over the stage: the Transcript and Settings. A sheet
+     *  is a modal dialog: its heading takes the focus, Tab stays inside,
+     *  Escape closes it and the focus goes back to what opened it.
+     *  The rules live in hoisted functions (the tests reach only those);
+     *  the c.* wrappers stay thin.
      * ============================================================ */
-    c.setupOn = false;
+    c.sheet = null;       // 'log' | 'settings' | null
+    c.setupOn = false;    // the Settings sheet is up (the header button's aria-expanded)
+    var _sheetBack = '';
+    c.sheetKey = function (ev) { _sheetKey(ev); };
+    c.sheetClose = function () { _sheetClose(); };
     c.setupToggle = function () { _setupToggle(); };
-    c.setupKey = function (ev) { _setupKey(ev); };
-    function _setupToggle() {
-        c.setupOn = !c.setupOn;
-        logEvent('dev', c.setupOn ? 'setup panel opened' : 'setup panel closed');
-        // closed from inside the sheet: focus goes back to the Settings tab, not to the page
-        if (!c.setupOn) $timeout(function () { _focusEl('.netra-setup-tab'); }, 30);
+    c.logToggle = function (on) { if (on === false) _sheetClose(); else _sheetOpen('log', '.netra-ctl-log'); };
+    function _sheetOpen(name, openerSel) {
+        c.sheet = name;
+        c.logSaid = '';   // a reopened sheet does not say 'copied' again
+        c.setupOn = name === 'settings';
+        _sheetBack = openerSel || '';
+        $timeout(function () { _focusEl('#netra-' + name + '-h'); }, 30);
+        $scope.$applyAsync();
     }
-    // Escape closes the settings; on a phone the sheet covers the stage, so
-    // Tab wraps inside it instead of wandering to controls behind it
-    function _setupKey(ev) {
-        if (!ev || !c.setupOn) return;
-        // not stopped here: the page's Escape also stops her talking
-        if (ev.key === 'Escape') { ev.preventDefault(); _setupToggle(); return; }
-        if (ev.key !== 'Tab' || !_narrow()) return;
-        var body = document.querySelector('.netra-setup-body');
-        if (!body) return;
-        var list = Array.prototype.filter.call(body.querySelectorAll('button, select, input, [tabindex]'), function (el) {
+    // noFocus: the Lab takes the focus instead of the opener
+    function _sheetClose(noFocus) {
+        if (!c.sheet && !c.setupOn) return;
+        c.sheet = null; c.setupOn = false; c.logSaid = '';
+        var back = _sheetBack;
+        _sheetBack = '';
+        if (back && !noFocus) $timeout(function () { _focusEl(back); }, 30);
+        $scope.$applyAsync();
+    }
+    // the sheet that is really up: End closes Settings by c.setupOn alone
+    function _openSheet() {
+        return (c.sheet === 'settings' && !c.setupOn) ? null : (c.sheet || null);
+    }
+    // the header's Settings button (package A draws it) opens and closes the sheet
+    function _setupToggle() {
+        if (c.setupOn) _sheetClose(); else _sheetOpen('settings', '.netra-head-settings');
+        logEvent('dev', c.setupOn ? 'settings opened' : 'settings closed');
+    }
+    function _sheetKey(ev) {
+        if (!ev || !_openSheet()) return;
+        if (ev.key === 'Escape') {
+            // stopped here: Escape closes the sheet, it does not also stop her talking
+            ev.preventDefault();
+            if (ev.stopPropagation) ev.stopPropagation();
+            _sheetClose();
+            return;
+        }
+        if (ev.key !== 'Tab') return;
+        // Tab wraps inside the card instead of wandering to the stage behind it
+        var card = document.querySelector('.netra-sheet-card');
+        if (!card) return;
+        var list = Array.prototype.filter.call(card.querySelectorAll('a[href], button, select, input, textarea, [tabindex]'), function (el) {
             return !el.disabled && el.getAttribute('tabindex') !== '-1' && el.offsetParent !== null;
         });
         if (!list.length) return;
-        var at = document.activeElement, first = list[0], last = list[list.length - 1];
-        if (ev.shiftKey && (at === first || !body.contains(at))) { ev.preventDefault(); last.focus(); }
-        else if (!ev.shiftKey && (at === last || !body.contains(at))) { ev.preventDefault(); first.focus(); }
+        // the heading (where the sheet puts the focus) or anything outside the
+        // card counts as before the first control: Shift+Tab from it wraps too
+        var i = list.indexOf(document.activeElement), first = list[0], last = list[list.length - 1];
+        if (ev.shiftKey && i <= 0) { ev.preventDefault(); last.focus(); }
+        else if (!ev.shiftKey && (i < 0 || i === list.length - 1)) { ev.preventDefault(); first.focus(); }
     }
+
+    // ---- Type: the same pipeline as voice, minus the microphone ----
+    c.typeOn = false;
+    c.typeText = '';
+    c.typeToggle = function (on) { _typeToggle(on); };
+    // the box stays open with the focus in it, ready for a follow-up
+    c.typeSend = function () { if (_sendTyped(c.typeText, 'type')) c.typeText = ''; _focusEl('#netra-type-in'); };
+    c.typeKey = function (ev) {
+        if (!ev || ev.key !== 'Escape') return;
+        ev.preventDefault();
+        if (ev.stopPropagation) ev.stopPropagation();
+        _typeToggle(false);
+    };
+    // one way in for the typing box, the starters and the Lab: false keeps
+    // the text where it is (answers are not ready yet)
+    function _sendTyped(text, from) {
+        var t = String(text || '').trim();
+        if (!t) return false;
+        if (_typedRefused(t)) return false;
+        // typing over her: she stops, as a spoken barge-in would
+        if (c.state === 'speaking' || _speakingNow) {
+            _stopTalking('typed');
+        }
+        // the caption shows what was typed, as it shows what was heard
+        c.prevHeard = c.lastHeard; c.lastHeard = t; c.interim = '';
+        logEvent(from === 'lab' ? 'lab' : 'type', 'typed (' + (from || 'type') + '): "' + t + '"');
+        processCommand(t, 1.0);
+        return true;
+    }
+    var _vvResize = null;
+    function _typeToggle(on) {
+        var want = on === undefined ? !c.typeOn : !!on;
+        var was = !!c.typeOn;
+        c.typeOn = want;
+        if (want) {
+            _vvWatch(true);
+            $timeout(function () { _focusEl('#netra-type-in'); }, 30);
+        } else if (was) {
+            _vvWatch(false);
+            $timeout(function () { _focusEl('.netra-ctl-type'); }, 30);
+        }
+        $scope.$applyAsync();
+    }
+    // the on-screen keyboard shrinks the visual viewport, not the layout one:
+    // the stage follows it (--vvh), so the box never sits under the keyboard
+    function _vvWatch(on) {
+        var vv = $window && $window.visualViewport;
+        var stage = document.querySelector('.netra-stage');
+        if (_vvResize && vv && vv.removeEventListener) vv.removeEventListener('resize', _vvResize);
+        _vvResize = null;
+        if (!on) {
+            if (stage && stage.style && stage.style.removeProperty) stage.style.removeProperty('--vvh');
+            if (stage && stage.removeAttribute) stage.removeAttribute('data-kbd');
+            return;
+        }
+        if (!vv || !vv.addEventListener) return;
+        _vvResize = function () {
+            var s = document.querySelector('.netra-stage');
+            if (s && s.style && s.style.setProperty) s.style.setProperty('--vvh', Math.round(vv.height) + 'px');
+            // the keyboard is up (not a pinch-zoom): the orb's row is too small
+            // to tap, so the orb steps aside while typing, as Gemini's does
+            var full = +($window.innerHeight || 0), up = full > 0 && (vv.scale || 1) < 1.01 && vv.height < full - 120;
+            if (s && s.setAttribute) { if (up) s.setAttribute('data-kbd', ''); else s.removeAttribute('data-kbd'); }
+        };
+        vv.addEventListener('resize', _vvResize);
+        _vvResize();
+    }
+    $scope.$on('$destroy', function () { _vvWatch(false); });
+
+    // ---- the Transcript: what was said, turn by turn, in memory only ----
+    var _convoMemo = null;
+    c.convoView = function () { return _convoView(); };
+    c.logCopy = function () { _logCopy(); };
+    c.logSaid = '';
+    // the same array until c.convo changes: ng-repeat watches it every digest
+    function _convoView() {
+        var list = c.convo || [], last = list[list.length - 1];
+        if (_convoMemo && _convoMemo.src === list && _convoMemo.n === list.length && _convoMemo.last === last) return _convoMemo.out;
+        var out = [];
+        list.forEach(function (m) {
+            if (!m || (m.who !== 'you' && m.who !== 'netra')) return;
+            out.push({ k: out.length, who: m.who, text: String(m.text || ''), t: String(m.t || '').slice(0, 5), parts: _linkParts(m.text) });
+        });
+        _convoMemo = { src: list, n: list.length, last: last, out: out };
+        return out;
+    }
+    // web addresses in her words become real links; only http(s), and no
+    // HTML is ever bound, so nothing in a reply can run on the page
+    function _linkParts(text) {
+        var s = String(text || ''), out = [], re = /https?:\/\/[^\s<>"]+/g, m, at = 0;
+        while ((m = re.exec(s))) {
+            var url = m[0].replace(/[.,;:!?)]+$/, '');
+            if (m.index > at) out.push({ t: s.slice(at, m.index) });
+            out.push({ t: url, href: url });
+            at = m.index + url.length;
+            re.lastIndex = at;
+        }
+        if (at < s.length) out.push({ t: s.slice(at) });
+        return out;
+    }
+    function _transcriptText() {
+        return _convoView().map(function (m) { return (m.who === 'you' ? 'You: ' : 'Netra: ') + m.text; }).join('\n');
+    }
+    function _logCopy() {
+        var text = _transcriptText();
+        if (!text) return;
+        var done = function (ok) {
+            var msg = ok ? 'Transcript copied' : 'Could not copy the transcript';
+            // said in the sheet's own status line: the sheet is modal, and a screen
+            // reader may not read the stage's announcer outside it (emptied first,
+            // so a second Copy is said again rather than left unchanged)
+            c.logSaid = ''; $timeout(function () { c.logSaid = msg; }, 50);
+            logEvent('type', msg.toLowerCase());
+            $scope.$applyAsync();
+        };
+        var byHand = function () {
+            var ok = false, back = document.activeElement;
+            try {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                ok = !!document.execCommand('copy');
+                document.body.removeChild(ta);
+            } catch (eT) { ok = false; }
+            try { if (back && back.focus) back.focus(); } catch (eB) {}
+            done(ok);
+        };
+        try {
+            var cb = $window.navigator && $window.navigator.clipboard;
+            if (cb && cb.writeText) { cb.writeText(text).then(function () { done(true); }, byHand); return; }
+        } catch (eC) {}
+        byHand();
+    }
+
+    // ---- 'Try saying': what works, shown until the first question ----
+    c.starters = function () { return _starters(!!(c.data && c.data.is_guest)); };
+    c.showStarters = function () { return _showStarters(); };
+    c.tryStarter = function (s) { _tryStarter(s); };
+    // a Guest is never shown what only a signed-in user can do
+    function _starters(guest) {
+        return guest
+            ? ['What can you do?', 'Tell me a joke', 'What time is it in Tokyo?', 'Search the web for today’s news']
+            : ['What are my open tickets?', 'Anything waiting for my approval?', 'What can you do?', 'What time is it in Tokyo?'];
+    }
+    function _showStarters() {
+        if (!c.gate || !c.gate.open || c.ended || c.typeOn || _openSheet()) return false;
+        if (c.state !== 'idle' && c.state !== 'awaiting') return false;
+        var calib = c.labCalib && c.labCalib.stage;
+        if (calib === 'prompt' || calib === 'listening' || calib === 'done' || calib === 'timeout') return false;
+        return !(c.convo || []).some(function (m) { return m && m.who === 'you'; });
+    }
+    function _tryStarter(s) {
+        var ae = document.activeElement;
+        var fromChip = !!(ae && ae.getAttribute && / netra-try-chip /.test(' ' + (ae.getAttribute('class') || '') + ' '));
+        _sendTyped(s, 'chip');
+        // the chips go once something is asked: the focus goes to Netra, not the page
+        if (fromChip) $timeout(function () { _focusEl('.netra-stage-blob-wrap'); }, 60);
+    }
+
+    // ---- Settings, in plain words ----
+    var _langCache = null, _paceTimer = null;
+    c.langName = function (code) { return _langName(code); };
+    c.voiceLabel = function (id) { return _voiceName(id); };
+    c.paceText = function () { return _paceText(c.speechRate); };
+    c.setPace = function () { c.devSetRate(); _pacePreview(); };
+    c.openLab = function () { _labFromSettings(); };
+    c.setMicCheck = function () { _micCheckFromSettings(); };
+    c.shortcutsOn = true;
+    try { c.shortcutsOn = localStorage.getItem('netra_shortcuts') !== '0'; } catch (eSk) {}
+    c.setShortcuts = function () {
+        try { localStorage.setItem('netra_shortcuts', c.shortcutsOn ? '1' : '0'); } catch (eSk2) {}
+    };
+    // 'en-US' -> 'English (United States)'; the code itself where the browser can not name it
+    function _langName(code) {
+        var s = String(code || '');
+        if (_langCache && _langCache.hasOwnProperty(s)) return _langCache[s];
+        var name = s;
+        try {
+            if (typeof Intl !== 'undefined' && Intl.DisplayNames) {
+                var parts = s.split('-');
+                var lang = new Intl.DisplayNames(['en'], { type: 'language' }).of(parts[0]);
+                var reg = parts[1] ? new Intl.DisplayNames(['en'], { type: 'region' }).of(parts[1]) : '';
+                if (lang && lang !== parts[0]) name = reg && reg !== parts[1] ? lang + ' (' + reg + ')' : lang;
+            }
+        } catch (eL) { name = s; }
+        (_langCache = _langCache || {})[s] = name;
+        return name;
+    }
+    // 'en-US-AvaMultilingualNeural' -> 'Ava (US English)'
+    function _voiceName(id) {
+        var s = String(id || ''), m = /^([a-z]{2}-[A-Z]{2})-([A-Za-z]+?)(Multilingual)?Neural$/.exec(s);
+        var where = m && { 'en-US': 'US English', 'en-GB': 'British English', 'en-IN': 'Indian English', 'en-AU': 'Australian English', 'hi-IN': 'Hindi' }[m[1]];
+        return where ? m[2] + ' (' + where + ')' : s.replace(/Neural$/, '');
+    }
+    function _paceText(rate) {
+        var r = parseFloat(rate);
+        return r > 1.05 ? 'a bit faster' : (r < 0.95 ? 'a bit slower' : 'normal');
+    }
+    // one sample line once the slider rests, not one per step
+    function _pacePreview() {
+        if (_paceTimer) $timeout.cancel(_paceTimer);
+        _paceTimer = $timeout(function () { _paceTimer = null; speak('This is my new pace.'); }, 600);
+    }
+    function _labFromSettings() {
+        _sheetClose(true);
+        _labOpen(true);
+    }
+    // the mic check's card sits on the stage, under the sheet's scrim and
+    // outside its Tab trap: the sheet steps aside and Skip takes the focus
+    function _micCheckFromSettings() {
+        _sheetClose(true);
+        c.calibRetry();
+        $timeout(function () { _focusEl('.netra-calib-skip'); }, 60);
+    }
+
+    // ---- single keys on the stage (Settings > Keyboard turns them off) ----
+    // pure: which action a key press means, '' for none. Escape always counts
+    function _stageKeyAction(key, tag, editable, mods, sheet, typeOn, keysOn, inStage) {
+        if (mods) return '';
+        if (key === 'Escape') return sheet ? 'close-sheet' : (typeOn ? 'close-type' : 'stop');
+        // typing into a field, keys off, the portal page, or a sheet (a modal) has the focus
+        if (!keysOn || !inStage || sheet || editable || /^(INPUT|SELECT|TEXTAREA)$/i.test(String(tag || ''))) return '';
+        switch (key) {
+            case 'm': case 'M': return 'mute';
+            case '/': return 'type';
+            case 't': case 'T': return 'transcript';
+            case 's': case 'S': return 'settings';
+            case '?': return 'help';
+        }
+        return '';
+    }
+    function _stageKey(e) {
+        var t = e && e.target, inStage = false;
+        // the Lab is a dialog of its own: its keys are its own (Escape closes it there)
+        try { inStage = !!(t && t.closest && t.closest('.netra-stage') && !t.closest('.netra-lab')); } catch (eC) {}
+        var act = _stageKeyAction(e.key, t && t.tagName, !!(t && t.isContentEditable), !!(e.ctrlKey || e.metaKey || e.altKey),
+                                  _openSheet(), !!c.typeOn && !c.ended, c.shortcutsOn !== false, inStage);
+        if (!act) return false;
+        // the loading card is a modal: behind it only Escape (stop her) counts
+        if (_gateCardUp() && act !== 'stop') return false;
+        if (c.ended && (act === 'mute' || act === 'type')) return false;
+        switch (act) {
+            case 'mute': c.toggleMic(); break;
+            case 'type': _typeToggle(true); break;
+            case 'transcript': _sheetOpen('log', '.netra-ctl-log'); break;
+            case 'settings': _setupToggle(); break;
+            case 'close-sheet': _sheetClose(); break;
+            case 'close-type': _typeToggle(false); break;
+            case 'stop':
+                if (c.state === 'speaking' || _speakingNow) _stopTalking('Escape key');
+                else stopSpeaking('Escape key');
+                break;
+            case 'help':
+                speak('Shortcuts: M, mute. Slash, type. T, transcript. S, settings. Escape, stop Netra talking or close. Enter on Netra: pause or resume.');
+                break;
+        }
+        if (e.preventDefault) e.preventDefault();
+        return true;
+    }
+    // the loading card is on screen (the template's own ng-if)
+    function _gateCardUp() { return !!(c.gate && !c.gate.open && !c.gate.typing && !c.ended); }
     function _narrow() { return ($window.innerWidth || 1024) <= 600; }
 
     /* ============================================================
@@ -616,17 +929,9 @@ api.controller = function ($scope, $timeout, $window) {
     }
     if (c.liveMode) $timeout(function () { _maybeAwayDebrief(0); }, 9000);
 
-    // typed commands - same pipeline as voice, minus the microphone
+    // typed commands in the Lab - the same way in as the typing box (_sendTyped)
     c.labCmd = '';
-    c.labSendCmd = function () {
-        var t = String(c.labCmd || '').trim();
-        if (!t) return;
-        // R24 - the loading screen's own rule: typing needs answers, not ears
-        if (_typedRefused(t)) return;
-        c.labCmd = '';
-        logEvent('lab', 'typed command: "' + t + '"');
-        processCommand(t, 1.0);
-    };
+    c.labSendCmd = function () { if (_sendTyped(c.labCmd, 'lab')) c.labCmd = ''; };
     c.labCmdKey = function (ev) { if (ev && ev.keyCode === 13) c.labSendCmd(); };
 
     // NLP test: a real turn (its writes happen), result panel in the Lab;
@@ -905,11 +1210,8 @@ api.controller = function ($scope, $timeout, $window) {
                ' Your settings live on the left edge of the screen - pick the language you speak, my voice, and the mic level, just like setting up a brand new phone. ')
             : (micOk ? 'Quick mic check - say skip to jump straight in. '
                      : 'Heads up, I am not seeing a microphone stream. ');
-        // R13 - out-of-box experience: the very first visit opens the
-        // setup panel so a new user starts with their preferences
-        // (not for a Guest on the public page, and not on a phone, where the
-        // panel would cover the stage - the Settings tab is right there)
-        if (firstEver && !(c.data && c.data.is_guest) && !($window.innerWidth < 700)) { c.setupOn = true; $scope.$applyAsync(); }
+        // R28 - Settings never open by themselves: a modal nobody asked for is
+        // disorienting on arrival. The starters and the greeting show the way in
         // a mic that scored well recently is not checked again on every
         // load: the check read a sentence at the user each time and swallowed
         // their first command. "Mic check" or the Lab runs it any time.
@@ -1053,10 +1355,13 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function _prismTick() {
         var st = c.state || 'idle';
-        _prismTime += 0.016;
         var target = PRISM_STATE_HUE[st] !== undefined ? PRISM_STATE_HUE[st] : 152;
         var levelNow = 0;
-        if (st === 'speaking') {
+        // Calm visuals: one colour per state, no drift and no pulse with the voice
+        if (!c.calm) _prismTime += 0.016;
+        if (c.calm) {
+            // the state's own hue, held
+        } else if (st === 'speaking') {
             // spectral centroid 0..1 across the 24 log bands
             var bands = c.audioLevels, num = 0, den = 0;
             if (bands) {
@@ -1143,7 +1448,7 @@ api.controller = function ($scope, $timeout, $window) {
      * self-cleaning, so cost is negligible. */
     var _rippleHost = null, _rippleLast = 0, _rippleMean = 0, _rippleCount = 0;
     function _maybeRipple() {
-        if (!c.liveMode || c.state !== 'speaking') return;
+        if (c.calm || !c.liveMode || c.state !== 'speaking') return;   // Calm visuals: no rings
         var amp = _prismAmp;
         _rippleMean += (amp - _rippleMean) * 0.06;
         var now = Date.now();
@@ -1190,12 +1495,14 @@ api.controller = function ($scope, $timeout, $window) {
         var thinking = (st === 'thinking');
         var base  = speaking ? VOICE_RING_BASE_SPEAKING : VOICE_RING_BASE_IDLE;
         var gain  = speaking ? VOICE_RING_SPIKE_SPEAKING : VOICE_RING_GAIN_IDLE;
+        // Calm visuals: the blob settles into one still shape per state
+        var still = !!c.calm;
         // thinking gets a quicker, tighter churn - "working on it"
-        _blobPhase += thinking ? 0.085 : (speaking ? 0.055 : 0.022);
+        if (!still) _blobPhase += thinking ? 0.085 : (speaking ? 0.055 : 0.022);
         var ox = new Array(24), oy = new Array(24);
         var ix = new Array(24), iy = new Array(24);
         for (var i = 0; i < 24; i++) {
-            var bandLvl = (bands && bands[i] !== undefined) ? bands[i] : lvlAvg;
+            var bandLvl = still ? 0 : ((bands && bands[i] !== undefined) ? bands[i] : lvlAvg);
             var target = base + bandLvl * VOICE_RING_MULTIPLIERS[i] * gain;
             // travelling wobble: two slow sine waves moving in opposite
             // directions give the liquid surface-tension look
@@ -1582,7 +1889,7 @@ api.controller = function ($scope, $timeout, $window) {
             awaiting:  'listening - just speak',
             thinking:  'thinking',
             speaking:  'speaking',
-            dormant:   'asleep - say "Netra" or "Netra wake up" to resume',
+            dormant:   'paused - say Netra or tap to resume',
             error:     'error - check the event log',
             boot:      'getting ready'
         };
@@ -1839,6 +2146,56 @@ api.controller = function ($scope, $timeout, $window) {
     /* ============================================================
      *  LOCAL INTENT SHORTCUTS  (free, no API call)
      * ============================================================ */
+    // "Tokyo" or "Japan" to its time, spoken the way the local time is; null
+    // for a place not in the table (the question then goes on as usual)
+    function _placeTime(place, nowMs) {
+        var p = String(place || '').toLowerCase().replace(/^the /, '').replace(/ (right now|today|at the moment)$/, '').trim();
+        var zones = {
+            'tokyo': 'Asia/Tokyo', 'japan': 'Asia/Tokyo', 'osaka': 'Asia/Tokyo', 'seoul': 'Asia/Seoul', 'korea': 'Asia/Seoul', 'south korea': 'Asia/Seoul',
+            'beijing': 'Asia/Shanghai', 'shanghai': 'Asia/Shanghai', 'china': 'Asia/Shanghai', 'hong kong': 'Asia/Hong_Kong', 'taipei': 'Asia/Taipei',
+            'singapore': 'Asia/Singapore', 'kuala lumpur': 'Asia/Kuala_Lumpur', 'malaysia': 'Asia/Kuala_Lumpur', 'bangkok': 'Asia/Bangkok',
+            'jakarta': 'Asia/Jakarta', 'manila': 'Asia/Manila', 'philippines': 'Asia/Manila', 'hanoi': 'Asia/Bangkok', 'vietnam': 'Asia/Bangkok',
+            'india': 'Asia/Kolkata', 'delhi': 'Asia/Kolkata', 'new delhi': 'Asia/Kolkata', 'mumbai': 'Asia/Kolkata', 'bangalore': 'Asia/Kolkata',
+            'bengaluru': 'Asia/Kolkata', 'hyderabad': 'Asia/Kolkata', 'chennai': 'Asia/Kolkata', 'kolkata': 'Asia/Kolkata', 'pune': 'Asia/Kolkata',
+            'karachi': 'Asia/Karachi', 'pakistan': 'Asia/Karachi', 'dhaka': 'Asia/Dhaka', 'bangladesh': 'Asia/Dhaka', 'kathmandu': 'Asia/Kathmandu',
+            'nepal': 'Asia/Kathmandu', 'colombo': 'Asia/Colombo', 'sri lanka': 'Asia/Colombo', 'dubai': 'Asia/Dubai', 'abu dhabi': 'Asia/Dubai',
+            'uae': 'Asia/Dubai', 'riyadh': 'Asia/Riyadh', 'saudi arabia': 'Asia/Riyadh', 'doha': 'Asia/Qatar', 'qatar': 'Asia/Qatar',
+            'tel aviv': 'Asia/Jerusalem', 'jerusalem': 'Asia/Jerusalem', 'israel': 'Asia/Jerusalem', 'istanbul': 'Europe/Istanbul', 'turkey': 'Europe/Istanbul',
+            'moscow': 'Europe/Moscow', 'russia': 'Europe/Moscow', 'cairo': 'Africa/Cairo', 'egypt': 'Africa/Cairo', 'nairobi': 'Africa/Nairobi',
+            'kenya': 'Africa/Nairobi', 'lagos': 'Africa/Lagos', 'nigeria': 'Africa/Lagos', 'johannesburg': 'Africa/Johannesburg', 'cape town': 'Africa/Johannesburg',
+            'south africa': 'Africa/Johannesburg', 'london': 'Europe/London', 'uk': 'Europe/London', 'england': 'Europe/London', 'britain': 'Europe/London',
+            'dublin': 'Europe/Dublin', 'ireland': 'Europe/Dublin', 'lisbon': 'Europe/Lisbon', 'portugal': 'Europe/Lisbon', 'paris': 'Europe/Paris',
+            'france': 'Europe/Paris', 'berlin': 'Europe/Berlin', 'germany': 'Europe/Berlin', 'munich': 'Europe/Berlin', 'frankfurt': 'Europe/Berlin',
+            'amsterdam': 'Europe/Amsterdam', 'netherlands': 'Europe/Amsterdam', 'brussels': 'Europe/Brussels', 'madrid': 'Europe/Madrid', 'spain': 'Europe/Madrid',
+            'rome': 'Europe/Rome', 'milan': 'Europe/Rome', 'italy': 'Europe/Rome', 'zurich': 'Europe/Zurich', 'switzerland': 'Europe/Zurich',
+            'vienna': 'Europe/Vienna', 'stockholm': 'Europe/Stockholm', 'sweden': 'Europe/Stockholm', 'oslo': 'Europe/Oslo', 'copenhagen': 'Europe/Copenhagen',
+            'helsinki': 'Europe/Helsinki', 'warsaw': 'Europe/Warsaw', 'poland': 'Europe/Warsaw', 'athens': 'Europe/Athens', 'greece': 'Europe/Athens',
+            'new york': 'America/New_York', 'nyc': 'America/New_York', 'boston': 'America/New_York', 'washington': 'America/New_York',
+            'washington dc': 'America/New_York', 'miami': 'America/New_York', 'atlanta': 'America/New_York', 'toronto': 'America/Toronto',
+            'montreal': 'America/Toronto', 'chicago': 'America/Chicago', 'dallas': 'America/Chicago', 'houston': 'America/Chicago',
+            'denver': 'America/Denver', 'phoenix': 'America/Phoenix', 'los angeles': 'America/Los_Angeles', 'la': 'America/Los_Angeles',
+            'san francisco': 'America/Los_Angeles', 'seattle': 'America/Los_Angeles', 'california': 'America/Los_Angeles', 'vancouver': 'America/Vancouver',
+            'anchorage': 'America/Anchorage', 'alaska': 'America/Anchorage', 'honolulu': 'Pacific/Honolulu', 'hawaii': 'Pacific/Honolulu',
+            'mexico city': 'America/Mexico_City', 'mexico': 'America/Mexico_City', 'sao paulo': 'America/Sao_Paulo', 'rio de janeiro': 'America/Sao_Paulo',
+            'brazil': 'America/Sao_Paulo', 'buenos aires': 'America/Argentina/Buenos_Aires', 'argentina': 'America/Argentina/Buenos_Aires',
+            'bogota': 'America/Bogota', 'lima': 'America/Lima', 'santiago': 'America/Santiago', 'sydney': 'Australia/Sydney', 'melbourne': 'Australia/Melbourne',
+            'brisbane': 'Australia/Brisbane', 'perth': 'Australia/Perth', 'auckland': 'Pacific/Auckland', 'new zealand': 'Pacific/Auckland',
+            'utc': 'UTC', 'gmt': 'UTC'
+        };
+        var tz = zones[p];
+        if (!tz) return null;
+        try {
+            var parts = {};
+            new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hourCycle: 'h23', weekday: 'long' })
+                .formatToParts(new Date(nowMs)).forEach(function (x) { parts[x.type] = x.value; });
+            var hh = +parts.hour % 24, mm = +parts.minute;
+            if (isNaN(hh) || isNaN(mm)) return null;
+            var h12 = hh % 12 || 12, mmTxt = mm === 0 ? "o'clock" : (mm < 10 ? 'oh ' + mm : String(mm));
+            var here = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(nowMs).getDay()];
+            var name = p.length <= 3 ? p.toUpperCase() : p.replace(/\b[a-z]/g, function (ch) { return ch.toUpperCase(); });
+            return 'In ' + name + ' it is ' + h12 + ' ' + mmTxt + ' ' + (hh < 12 ? 'A M' : 'P M') + (parts.weekday && parts.weekday !== here ? ', on ' + parts.weekday : '') + '.';
+        } catch (eTz) { return null; }
+    }
     function matchLocal(s) {
         if (!s) return null;
         var lc = s.toLowerCase().trim();
@@ -1909,11 +2266,21 @@ api.controller = function ($scope, $timeout, $window) {
             return { intent: 'identity', reply: 'I am Netra, your voice assistant for ServiceNow. I can investigate tickets, raise and update them, chase approvals, watch things while you are away, and tell you what I did - all by voice.' };
         }
         // capabilities / help
-        if (/^(help|help me|what can you do|what are your capabilities|your capabilities|commands|what do you do|how do i use you|how can i use you|how to use you)$/.test(bare) && c.data && c.data.is_guest) {
+        // R28 - a Guest asking what Netra can help with gets the honest local
+        // answer, not a model promising tickets it can not reach
+        if (/^(help|help me|what can you do|what are your capabilities|your capabilities|commands|what do you do|how do i use you|how can i use you|how to use you|what can you help (me )?with|what can i ask( you)?|how can you help( me)?)$/.test(bare) && c.data && c.data.is_guest) {
             return { intent: 'help', reply: 'As a guest I can answer general questions and look things up on the web, tell you the time or the date, or tell a joke. Sign in to ServiceNow and reload this page, and I can work on your tickets, approvals and knowledge articles too.' };
         }
         if (/^(help|help me|what can you do|what are your capabilities|your capabilities|commands|what do you do|how do i use you|how can i use you|how to use you)$/.test(bare)) {
             return { intent: 'help', reply: 'You can ask me things like: what is the status of I N C zero zero one zero zero one three, list my tickets, what are my approvals, investigate that incident, watch it and nudge the assignee if nothing moves, what did you do while I was away, or what are you working on. Just speak naturally.' };
+        }
+        // R28 - the time somewhere else ("what time is it in Tokyo" is a
+        // starter): the browser's own time zones answer it at once and
+        // exactly, where a model can be busy and a web page is no answer
+        var inPlace = bare.match(/^(?:what(?:'s| is)?(?: the)? (?:current |local )?time(?: is it)?|what time is it|time) in ([a-z .'-]+)$/);
+        if (inPlace) {
+            var there = _placeTime(inPlace[1], Date.now());
+            if (there) return { intent: 'time', reply: there };
         }
         // time
         if (/^(what(\s+is|'s)?(\s+the)?\s+(current\s+)?time( is it)?( now)?|what time is it( now)?|tell\s+me\s+the\s+time|current\s+time|samay\s+kya\s+hai)$/.test(bare)) {
@@ -2523,12 +2890,9 @@ api.controller = function ($scope, $timeout, $window) {
         var stuck = !!(_micCtx && _micCtx.state !== 'running' && _micCtx.state !== 'closed');
         if (stuck === !!c.micNeedsTap) return;
         c.micNeedsTap = stuck;
-        if (stuck) {
-            logEvent('warn', 'mic audio is ' + _micCtx.state + ' - asking for a tap');
-            if (c.state === 'idle' || c.state === 'awaiting') c.liveStatus = 'Tap anywhere so I can hear you';
-        } else if (c.liveStatus === 'Tap anywhere so I can hear you') {
-            setState(c.state);
-        }
+        if (stuck) logEvent('warn', 'mic audio is ' + _micCtx.state + ' - asking for a tap');
+        // the status model reads c.micNeedsTap: "Tap anywhere so I can hear you"
+        _applyLiveStatus();
         $scope.$applyAsync();
     }
     /* R27 - what this device sees, for a developer who can not hold it: the
@@ -2716,23 +3080,54 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     c.tap = function () {
-        if (!booted) { tryBoot(true); return; }
         // If the user just finished dragging, swallow the click.
-        if (orbDragJustMoved) { orbDragJustMoved = false; return; }
-        // ended or muted: a tap is the user asking for her back
-        if (c.ended) { _liveRestart(); return; }
-        if (c.micOff) { _micUnmute(); return; }
-        // toggle sleep/wake by tap as a convenience for sighted helpers
-        if (c.alert) {
-            _cancelPlanContinue();
-            c.alert = false;
-            setState('dormant');
-            speak('Going to sleep. Say Netra to wake me.');
-        } else {
-            _wakeUp();
-        }
+        if (booted && orbDragJustMoved) { orbDragJustMoved = false; return; }
+        _tapOrb();
     };
-    function _wakeUp() {
+    c.orbLabel = function () { return _orbLabel(); };
+    // R28 - the orb does what its name says for the state she is in: a tap
+    // while she talks only stops her; it never puts her to sleep
+    function _orbAction() {
+        if (!booted) return 'boot';
+        if (c.ended) return 'restart';
+        if (c.micOff) return 'unmute';
+        if (c.state === 'speaking' || _speakingNow || _fillerChainActive) return 'stop';
+        if (c.alert) return 'pause';
+        return 'resume';
+    }
+    function _orbLabel() {
+        switch (_orbAction()) {
+            case 'boot':    return 'Netra is getting ready';
+            case 'restart': return 'Start Netra again';
+            case 'unmute':  return 'Turn the mic back on';
+            case 'stop':    return 'Stop Netra talking';
+            case 'pause':   return 'Pause Netra';
+            default:        return 'Resume Netra';
+        }
+    }
+    function _tapOrb() {
+        switch (_orbAction()) {
+            case 'boot':    tryBoot(true); return;
+            case 'restart': _liveRestart(); return;
+            case 'unmute':  _micUnmute(); return;
+            case 'stop':    _stopTalking('tap'); return;
+            case 'pause':
+                _cancelPlanContinue();
+                c.alert = false;
+                setState('dormant');
+                _hushState();
+                speak('Paused.');
+                return;
+            default: _wakeUp();
+        }
+    }
+    // tap, Escape and End: she stops and goes on listening (not paused)
+    function _stopTalking(reason) {
+        stopSpeaking(reason || 'tap');
+        c.alert = true;
+        setState('idle');
+    }
+    function _wakeUp(say) {
         c.alert = true;
         setState('idle');
         cue('resume');
@@ -2745,7 +3140,8 @@ api.controller = function ($scope, $timeout, $window) {
             try { if (contRec) contRec.stop(); } catch (e) {}
             $timeout(startContinuous, 150);
         }
-        speak('Yes, I am back.');
+        _hushState();
+        speak(say || 'I\u2019m listening.');
     }
 
     /* ============================================================
@@ -3178,16 +3574,40 @@ api.controller = function ($scope, $timeout, $window) {
         g.cantHear = !c.ready && _cantHear();
         if (g.cantHear) {
             g.hearingText = (c.hasSR ? 'the browser can not reach its speech service and my on-device ear did not load' : 'this browser can not listen') +
-                            (c.ear.error ? ' (' + c.ear.error + ')' : '') + (g.brain ? ' - you can type to me instead' : ' - you can type to me once answers are ready');
+                            (c.ear.error ? ' (' + c.ear.error + ')' : '') + (g.brain ? ' - you can type to Netra instead' : ' - you can type to Netra once answers are ready');
+        } else if (!g.hearing && g.micPrompt) {
+            g.hearingText = 'Your browser will ask to use the microphone. Choose Allow.';
+        } else if (!g.hearing && g.slowHear && c.ear.status !== 'loading') {
+            g.hearingText = 'Taking longer than usual.' + (g.brain ? ' You can type while you wait.' : '');
         }
+        var tapWas = !!g.needsTap;
         g.voice = _voiceReady();
+        // R28 - words on the card, not engine names or model IDs (those go to the log)
+        g.hearingText = _plainGateText(g.hearingText);
+        g.voiceText = _plainGateText(g.voiceText);
+        g.brainText = _plainGateText(g.brainText);
+        // Start is about to go (ng-if): the focus goes to the card's title, not the page
+        if (tapWas && !g.needsTap) {
+            try {
+                var doc = ($window && $window.document) || document, ae = doc.activeElement;
+                if (ae && ae.getAttribute && / netra-ready-start /.test(' ' + (ae.getAttribute('class') || '') + ' ')) {
+                    var title = doc.querySelector('#netra-ready-title');
+                    if (title && title.focus) title.focus();
+                }
+            } catch (eSF) {}
+        }
         var was = g.open;
         g.open = g.hearing && g.voice && g.brain;
-        if (g.open) { g.typing = false; g.statusKey = ''; }   // the next closed spell is announced afresh
+        // the next closed spell is announced afresh, and is only called slow
+        // once it has itself been closed for 45 s
+        if (g.open) { g.typing = false; g.statusKey = ''; g.slowHear = false; }
         if (g.open && !was) _gateOpened();
-        else if (!g.open && was) logEvent('gate', 'closed - ' + (!g.brain ? 'brain: ' + g.brainText : !g.hearing ? 'hearing: ' + g.hearingText : 'voice'));
+        else if (!g.open && was) {
+            logEvent('gate', 'closed - ' + (!g.brain ? 'brain: ' + g.brainText : !g.hearing ? 'hearing: ' + g.hearingText : 'voice'));
+            _gateSlowArm();
+        }
         if (c.state === 'idle' || c.state === 'awaiting') {
-            c.liveStatus = g.open ? 'Listening' : (g.typing ? TYPING_STATUS : 'Getting ready…');
+            _applyLiveStatus();
             c.stateLabel = _stateLabel(c.state);
         }
         _gateAnnounce();
@@ -3199,6 +3619,22 @@ api.controller = function ($scope, $timeout, $window) {
             $timeout(_gateModal, 30, false);
         }
         $scope.$applyAsync();
+    }
+    // R28 - what a check says, in plain words: no engine or model names, no
+    // "can not". Pure, and safe to run twice on the same text
+    function _plainGateText(raw) {
+        var s = String(raw == null ? '' : raw);
+        if (/^ready( \(.*\))?$/i.test(s)) return 'Ready';
+        var mb = (s.match(/about (\d+) MB/) || [])[1];
+        s = s.replace(/loading my on-device ear( \d+%)?( \(about \d+ MB, once\))?/, 'downloading speech recognition, one time' + (mb ? ' (about ' + mb + ' MB)' : ''))
+             .replace(/preparing my on-device ear( \(the first time can take a minute\))?/, 'setting up speech recognition$1')
+             .replace(/switching to my own ear/, 'switching to on-device listening')
+             .replace(/my on-device ear|on-device ear/g, 'on-device listening')
+             .replace(/^browser recognizer$/, 'Ready')
+             .replace(/press Enter or tap Start.*$/, 'Press Start so the browser lets Netra speak')
+             .replace(/^captions only.*$/, 'No voice on this device. Replies will be shown as text.')
+             .replace(/\bcan not\b/g, 'can\'t').replace(/\bCan not\b/g, 'Can\'t');
+        return s.replace(/^(downloading|setting up|on-device listening|the browser|this browser|loading voices)/, function (w) { return w.charAt(0).toUpperCase() + w.substring(1); });
     }
     // R24 - the browser recognizer failed or is missing, and the on-device
     // ear can not stand in (it failed, is switched off, or can not run here)
@@ -3215,7 +3651,7 @@ api.controller = function ($scope, $timeout, $window) {
         var g = c.gate;
         if (!g || g.open) return;
         var earLoading = !g.hearing && c.ear.status === 'loading';
-        var key = [g.hearing, g.voice, g.brain, g.cantHear, g.needsTap, earLoading, !g.brain && g.brainDown, g.typing].map(function (b) { return b ? 1 : 0; }).join('');
+        var key = [g.hearing, g.voice, g.brain, g.cantHear, g.needsTap, earLoading, !g.brain && g.brainDown, g.typing, g.micPrompt, g.slowHear].map(function (b) { return b ? 1 : 0; }).join('');
         if (key === g.statusKey) return;
         g.statusKey = key;
         if (g.typing) { g.status = TYPING_STATUS + '.'; return; }
@@ -3223,34 +3659,73 @@ api.controller = function ($scope, $timeout, $window) {
         [['hearing', g.hearing], ['voice', g.voice], ['answers', g.brain]].forEach(function (k) { (k[1] ? ready : waiting).push(k[0]); });
         var say = (ready.length ? _andList(ready).replace(/^./, function (ch) { return ch.toUpperCase(); }) + ' ready. ' : '') +
                   'Waiting for ' + _andList(waiting) + '.';
-        if (g.cantHear) say = 'I can not hear in this browser. ' + (g.brain ? 'Answers are ready - press Type instead to type to me.' : 'You can type to me once answers are ready.');
-        else if (earLoading) say += ' Loading my on-device ear, about ' + _earSizeMb() + ' MB, once - this can take a minute.';
-        if (g.needsTap && !g.cantHear) say += ' Press Start so I can speak.';
+        if (g.cantHear) say = 'Netra can\'t hear in this browser. ' + (g.brain ? 'Answers are ready. Press Type instead to type to Netra.' : 'You can type to Netra once answers are ready.');
+        else if (earLoading) say += ' Downloading speech recognition, about ' + _earSizeMb() + ' MB, one time. This can take a minute.';
+        else if (!g.hearing && g.micPrompt) say += ' Your browser will ask to use the microphone. Choose Allow.';
+        else if (!g.hearing && g.slowHear) say += ' Hearing is taking longer than usual.' + (g.brain ? ' You can type while you wait.' : '');
+        if (g.needsTap && !g.cantHear) say += ' Press Start so Netra can speak.';
         if (!g.brain && g.brainDown && g.brainText) say += ' Answers: ' + String(g.brainText).replace(/[.\s]+$/, '') + '.';
         g.status = say;
     }
     // where typing is, said to match what is on the screen right now
     function _typeHint() {
         var g = c.gate;
-        if (!g || g.open || g.typing) return 'You can still type to me in the Lab.';
+        if (!g || g.open || g.typing) return 'Press Type to type to me.';
         return g.brain ? 'Press Type instead to type to me.' : 'You can type to me once my answers are ready.';
     }
     function _andList(a) { return a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
-    // R24 - answers work, hearing never will here: the card steps aside and
-    // the Lab's typing box takes the focus
-    var TYPING_STATUS = 'Typing only - I can not hear you in this browser';
+    // R28 - answers work: the card steps aside whether or not hearing ever
+    // comes, and the typing box above the controls takes the focus
+    var TYPING_STATUS = 'Typing — Netra can’t listen yet';
     function _gateTypeInstead() {
         var g = c.gate;
-        if (!g || g.open) return;
+        if (!g || g.open || !g.brain) return;
         g.typing = true;
-        if (!c.labOn) c.labToggle();
-        logEvent('gate', 'typing instead - this browser can not hear');
+        g.typedFirst = true;   // the greeting, once she can hear, is "I can hear you now too"
+        logEvent('gate', 'typing instead - ' + (g.cantHear ? 'this browser can not hear' : 'hearing is not ready yet'));
         _gateUpdate();
-        $timeout(function () {
-            try { var box = $window.document.querySelector('.netra-lab-cmd input'); if (box) box.focus(); } catch (eF) {}
-        }, 60);
+        _typeToggle(true);
     }
     c.gateType = _gateTypeInstead;
+    // R28 - the browser's own microphone question, said before it pops up;
+    // and a hearing check that hangs says so after 45 s, with Type instead
+    var _micPermSt = null;
+    function _micPermHint() {
+        try {
+            var perms = $window.navigator && $window.navigator.permissions;
+            if (!perms || !perms.query) return;
+            perms.query({ name: 'microphone' }).then(function (st) {
+                if (_ctrlDestroyed) return;
+                var set = function () { if (c.gate && !_ctrlDestroyed) { c.gate.micPrompt = st.state === 'prompt'; _gateUpdate(); } };
+                set();
+                _micPermSt = st;
+                st.onchange = set;
+            }, function () {});
+        } catch (eP) {}
+    }
+    var _gateSlowTimer = null;
+    function _gateSlowArm() {
+        if (_gateSlowTimer) $timeout.cancel(_gateSlowTimer);
+        _gateSlowTimer = $timeout(_gateSlowCheck, 45000);
+    }
+    function _gateSlowCheck() {
+        _gateSlowTimer = null;
+        var g = c.gate;
+        if (!g || g.open || g.hearing || g.cantHear || _ctrlDestroyed) return;
+        g.slowHear = true;
+        logEvent('gate', 'hearing still not ready after 45 s');
+        _gateUpdate();
+    }
+    // leaving the page: no slow-hearing timer, and a mic prompt answered
+    // after leaving runs nothing on this dead controller
+    function _gateHintsStop() {
+        if (_gateSlowTimer) $timeout.cancel(_gateSlowTimer);
+        _gateSlowTimer = null;
+        if (_micPermSt) _micPermSt.onchange = null;
+        _micPermSt = null;
+    }
+    if (c.liveMode) { _micPermHint(); _gateSlowArm(); }
+    $scope.$on('$destroy', _gateHintsStop);
     // R24 - while the card is up it is a real modal: everything behind it
     // (the stage, the orb, the portal's own header and links) is inert and
     // the focus is in the card. All of it is given back when the card goes
@@ -3312,6 +3787,9 @@ api.controller = function ($scope, $timeout, $window) {
                 }
             } catch (eR) {}
         }
+        // _inertChrome skipped the portal chrome the card had made inert, and
+        // the lines above just gave it back: quiet it again while we are here
+        if (c.liveMode && !_inertFreed && !_ctrlDestroyed) _inertChrome();
     }
     function _gateOpened() {
         var g = c.gate, first = !g.everOpen;
@@ -3322,18 +3800,15 @@ api.controller = function ($scope, $timeout, $window) {
         var held = _gateHeld ? [].concat(_gateHeld) : [];
         _gateHeld = null;
         _gateNudged = false; _gateNudgedAt = 0;   // the next closed spell gets its own explanation
+        // R28 - typed while she could not hear: she was already talking to them
+        var typedFirst = !!g.typedFirst;
+        g.typedFirst = false;
+        if (typedFirst && !held.length) {
+            speak('I can hear you now too.', function () { if (c.alert) setState('idle'); });
+            return;
+        }
         if (first && !held.length) {
-            var guest = !!(c.data && c.data.is_guest);
-            var nm = String((c.data && c.data.user_name) || '').split(' ')[0];
-            if (guest || /^(system|guest)$/i.test(nm)) nm = '';
-            var h = new Date().getHours();
-            var tod = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
-            // R24 - a key or a switch is not "resting": the real reason, said plainly
-            var why = String(g.brainText || '').replace(/^answers from the web only - /, '');
-            var webOnly = g.brainMode !== 'web' ? ''
-                        : /key|administrator/i.test(why) ? ' ' + why.charAt(0).toUpperCase() + why.substring(1) + ', so I will answer from the web for now.'
-                        : ' My reasoning is resting right now, so I will answer from the web until it is back.';
-            speak(tod + (nm ? ', ' + nm : '') + '. I am Netra, and I am ready - just speak.' + webOnly, function () { if (c.alert) setState('idle'); });
+            speak(_greeting(), function () { if (c.alert) setState('idle'); });
             return;
         }
         var bare = function (t) { return String(t).replace(/[.?!\s]+$/, ''); };
@@ -3356,6 +3831,35 @@ api.controller = function ($scope, $timeout, $window) {
             return;
         }
         speak(lateSay ? 'I am ready again. ' + lateSay : 'I am ready again - just speak.', function () { if (c.alert) setState('idle'); });
+    }
+    // R28 - the first words: what a Guest can and can not do, and where
+    // Type is; a signed-in user just hears that Netra is listening
+    function _greeting() {
+        var g = c.gate || {};
+        var guest = !!(c.data && c.data.is_guest);
+        var nm = String((c.data && c.data.user_name) || '').split(' ')[0];
+        if (guest || /^(system|guest)$/i.test(nm)) nm = '';
+        var h = new Date().getHours();
+        var tod = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
+        // R24 - a key or a switch is not "resting": the real reason, said plainly
+        var why = String(g.brainText || '').replace(/^answers from the web only - /, '');
+        var webOnly = g.brainMode !== 'web' ? ''
+                    : /key|administrator/i.test(why) ? ' ' + why.charAt(0).toUpperCase() + why.substring(1) + ', so I will answer from the web for now.'
+                    : ' My reasoning is resting right now, so I will answer from the web until it is back.';
+        var say = guest
+            ? tod + '. I\'m Netra. As a guest, I can answer questions, search the web, and tell you the time or a joke. Sign in to use your tickets. Just speak, or press Type.'
+            : tod + (nm ? ', ' + nm : '') + '. I\'m Netra, and I\'m listening.';
+        return say + webOnly + (_introKeysDue() ? ' Press question mark for shortcuts.' : '');
+    }
+    // a keyboard and mouse, the first visit in this browser: the shortcuts, once
+    function _introKeysDue() {
+        try {
+            if (c.shortcutsOn === false || !$window || 'ontouchstart' in $window) return false;
+            if (!($window.matchMedia && $window.matchMedia('(pointer: fine)').matches)) return false;
+            if (localStorage.getItem('netra_intro_keys')) return false;
+            localStorage.setItem('netra_intro_keys', '1');
+            return true;
+        } catch (eK) { return false; }
     }
     // R24 - a question the brain could not take is kept in order, never
     // replaced by the next one; three at most
@@ -3409,7 +3913,8 @@ api.controller = function ($scope, $timeout, $window) {
             c.gate.brainMode = d.ready ? (d.mode || 'full') : '';
             c.gate.brainText = d.ready ? (d.mode === 'web' ? String(d.say || 'answers from the web only').replace(/[.\s]+$/, '') : 'ready' + (d.model ? ' (' + d.model + ')' : ''))
                                        : String(d.say || 'not answering yet').replace(/[.\s]+$/, '');
-            logEvent('gate', 'brain ' + (d.ready ? 'ready' : 'not ready (' + (d.reason || '?') + ')') + ' in ' + (Date.now() - t0) + ' ms' + (why ? ' - ' + why : ''));
+            // the model ID is for the log; the card says 'Ready'
+            logEvent('gate', 'brain ' + (d.ready ? 'ready' + (d.model ? ' (' + d.model + ')' : '') : 'not ready (' + (d.reason || '?') + ')') + ' in ' + (Date.now() - t0) + ' ms' + (why ? ' - ' + why : ''));
             if (!d.ready && !_ctrlDestroyed) {
                 _brainProbeTimer = $timeout(function () { _brainProbe('retry'); }, Math.max(5000, Math.min(d.wait_ms || 10000, 30000)));
             } else if (d.mode === 'web' && !_ctrlDestroyed) {
@@ -4004,7 +4509,8 @@ api.controller = function ($scope, $timeout, $window) {
                     // no waiting for the recognizer to finalize. One-word
                     // interims still duck her volume as an early tell.
                     var floorHeld = _speakingNow || _fillerChainActive || currentFillerAudio || currentFillerUtter;
-                    if (floorHeld) {
+                    // 'Talking interrupts Netra' off: a screen reader or TV must not cut her off
+                    if (floorHeld && _voiceBargeOn()) {
                         var itrim = t.trim();
                         var iwords = itrim ? itrim.split(/\s+/).length : 0;
                         var pastRamp = (Date.now() - _speakingSince) > BARGE_GUARD_MS;
@@ -4181,8 +4687,10 @@ api.controller = function ($scope, $timeout, $window) {
         var declareDenied = function () {
             logEvent('err', 'mic permission DENIED (' + kind + ') - recognition stopped');
             c.recRunning = false;
+            c.permission = 'denied';   // before the state: the status says what to do about it
             setState('error');
-            c.permission = 'denied';
+            cue('error');
+            _announce(_micBlockedText(), 'alert');
             $scope.$applyAsync();
         };
         try {
@@ -4858,6 +5366,8 @@ api.controller = function ($scope, $timeout, $window) {
 
     function processCommand(text, conf) {
         var lower = (text || '').toLowerCase();
+        // something new was said or typed: the failed turn is over
+        if (c.lastFailed) { c.lastFailed = false; _applyLiveStatus(); }
 
         // the mic check on request, since it no longer runs on every load
         if (/^((hey |ok |okay )?netra[,!.\s]*)?(run (a |the )?)?(mic|microphone|voice) (check|test|calibration)( please)?$|^(calibrate|recalibrate)( (the |my )?(mic|microphone))?( please)?$/i.test(lower.replace(/[.!?]+$/, '').trim())) {
@@ -4968,8 +5478,12 @@ api.controller = function ($scope, $timeout, $window) {
         _repliesPending++;
         _cancelReprompt();
 
+        // R28 - the caption shows the question and the status names the step
+        // (an automatic turn is not something the user said)
+        if (transcript !== '[continue plan]' && c._nextTurnAuto !== transcript) c.lastHeard = transcript;
+        c.activity = _activityLabel(transcript, !!(c.data && c.data.is_guest));
         setState('thinking');
-        cue('think');
+        _waitStart();
         logEvent('srv', 'sending: "' + transcript + '"');
         _lastSentText = transcript;
         logEvent('mem', 'carrying ' + c.mem.prompts + ' of your prompts (' + geminiHistory.length + ' turns, ~' + c.mem.kb + 'KB) to the brain');
@@ -5161,7 +5675,7 @@ api.controller = function ($scope, $timeout, $window) {
                 if (!r) {
                     logEvent('err', 'server returned but no response object');
                     c.stats.errors++;
-                    setState('error');
+                    _turnFailed();
                     stopFillerChain();
                     speak('Sorry, the server returned an empty response.', function () {
                         _drainQueuedUtterance();   // R6 - don't drop a barged request
@@ -5255,7 +5769,7 @@ api.controller = function ($scope, $timeout, $window) {
                     c.lastAnswer = String(r.message || 'Sorry, something went wrong.').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*_`#>]/g, '').trim();
                     c.lastAnswerAt = Date.now();
                     c.stats.errors++;
-                    setState('error');
+                    _turnFailed();
                     cue('error');
                     deliverServerReply(r.message || 'Sorry, something went wrong.', function () {
                         if (c.alert) setState('idle');
@@ -5270,7 +5784,7 @@ api.controller = function ($scope, $timeout, $window) {
                 _repliesPending = Math.max(0, _repliesPending - 1);
                 _labNlpCapture('(transport error)', [], null);
                 c.stats.errors++;
-                setState('error');
+                _turnFailed();
                 cue('error');
                 logEvent('err', 'transport error: ' + (err && (err.message || err.status) || err));
                 c.lastAnswer = 'Sorry, I could not reach the server.';
@@ -5623,7 +6137,9 @@ api.controller = function ($scope, $timeout, $window) {
         _convoPush('sys', '· you interrupted — Netra yielded ·');
         tone([440, 330], 0.07);                 // tiny falling blip: "go ahead" (dur is SECONDS)
         if (c.state === 'speaking' || c.state === 'thinking') {
-            setState(c.alert ? 'idle' : 'dormant');
+            // one sound per event: the blip, not the blip and the your-turn chime
+            _quietOpen = true;
+            try { setState(c.alert ? 'idle' : 'dormant'); } finally { _quietOpen = false; }
         }
         if (c.alert && !c.conversationOpen) openConversation('post barge-in');
         $scope.$applyAsync();
@@ -5654,6 +6170,12 @@ api.controller = function ($scope, $timeout, $window) {
     function _handleFinalWhileSpeaking(t, conf) {
         var trimmed = String(t || '').trim();
         if (!trimmed) return true;
+        // talking does not interrupt her (Settings): dropped like her own echo;
+        // tap, Escape and End still stop her
+        if (!_voiceBargeOn()) {
+            _heardLog(trimmed, conf, 'dropped: talking does not interrupt (switched off)');
+            return true;
+        }
         if (_looksLikeEcho(trimmed)) {
             logEvent('rec.echo', '"' + trimmed + '" (my own voice, overlap-matched)');
             _heardLog(trimmed, conf, 'dropped: my own voice');
@@ -5830,11 +6352,30 @@ api.controller = function ($scope, $timeout, $window) {
     // (captions only) until the next thing heard or said - the user's otherwise
     c.captionKeep = false;
     c.captionWho = function () { return _captionWho(); };
+    c.captionText = function () { return _captionText(); };
     function _captionWho() {
+        // while she works on it, the question - not the line she said before
+        if (c.state === 'thinking' && c.lastHeard) return 'you';
         if (c.spoken && (c.state === 'speaking' || (c.captionKeep && !c.interim))) return 'netra';
         if (c.state !== 'speaking' && (c.interim || c.lastHeard)) return 'you';
         return '';
     }
+    function _captionText() {
+        var who = _captionWho();
+        if (who === 'netra') return c.spoken || '';
+        if (who === 'you') return String(c.interim || c.lastHeard || '').replace(/^\(on-device\)\s*/, '');
+        return '';
+    }
+    // R28 - no voice will play this line: her words stay on screen, and a
+    // screen reader gets the whole line once (with a voice it never does)
+    var _keptSaid = '';
+    function _keepCaption() {
+        if (c.captionKeep && _keptSaid === c.spoken) return;
+        c.captionKeep = true;
+        _keptSaid = c.spoken;
+        _announce(c.spoken, 'reply');
+    }
+    function _captionsOnly() { return !!(c.labMute || c.captionKeep || !c.hasTTS); }
     function speak(text, done) {
         if (_ctrlDestroyed) return;   // a reply landing after navigation stays silent
         if (!text) {
@@ -5851,7 +6392,8 @@ api.controller = function ($scope, $timeout, $window) {
         // dry-runs and quiet dev sessions).
         if (c.labMute) {
             c.spoken = String(text).replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*_`#>]/g, '').trim();
-            c.captionKeep = true;   // no voice: her words stay on screen
+            c.captionKeep = false;
+            _keepCaption();   // no voice: her words stay on screen
             logEvent('tts', 'muted (lab): "' + c.spoken.substring(0, 60) + '"');
             $scope.$applyAsync();
             $timeout(function () { _afterTTS(done); }, 60);
@@ -7371,7 +7913,7 @@ api.controller = function ($scope, $timeout, $window) {
         _silenceCurrentAudio();
         if (!c.hasTTS) {
             logEvent('err', 'no browser TTS available');
-            c.captionKeep = true;   // captions only: her words stay on screen
+            _keepCaption();   // captions only: her words stay on screen
             if (done) done();
             return;
         }
@@ -7429,7 +7971,7 @@ api.controller = function ($scope, $timeout, $window) {
         u.onend = function () {
             $timeout.cancel(startWatchdog);
             _clearSpeaking();   // R6
-            if (!voiced) c.captionKeep = true;   // ended without a sound (no voice installed)
+            if (!voiced) _keepCaption();   // ended without a sound (no voice installed)
             logEvent('tts', 'onend');
             _resumeAudio('after speech');   // R27 - WebKit interrupts the mic's context while she speaks
             if (done) done();
@@ -7440,7 +7982,7 @@ api.controller = function ($scope, $timeout, $window) {
             // no voice played (none installed, or blocked): keep her words on
             // screen until the next thing heard or said; a barge-in is not that
             var err = ev && ev.error;
-            if (!voiced && err !== 'interrupted' && err !== 'canceled') c.captionKeep = true;
+            if (!voiced && err !== 'interrupted' && err !== 'canceled') _keepCaption();
             logEvent('err', 'TTS error: ' + (ev && ev.error));
             if (ev && ev.error === 'not-allowed' && c.gate) {
                 // R21 - the page has not been pressed or tapped yet: say so on
@@ -7556,21 +8098,34 @@ api.controller = function ($scope, $timeout, $window) {
         } catch (e) {}
     }
 
+    // R28 - one short sound per event, each always the same: got it, still
+    // working (tick), your turn (open), a problem, ended. Sounds: on, fewer, off
     function cue(kind) {
-        if (!audioCtx) return;
+        if (!audioCtx || !_cueAllowed(kind)) return;
         if (audioCtx.state === 'suspended') {
             try { audioCtx.resume(); } catch (e) {}
         }
         switch (kind) {
             case 'wake':   tone([660, 880], 0.06); break;
             case 'think':  tone([440],      0.04); break;
-            case 'error':  tone([440, 220], 0.10); break;
+            case 'got':    tone([880],      0.04); break;
+            case 'tick':   tone([1200],     0.025, 0.03); break;
+            case 'open':   tone([523, 784], 0.06, 0.03); break;
+            case 'error':  tone([220, 220], 0.09); break;
+            case 'end':    tone([660, 330], 0.09); break;
             case 'pause':  tone([330],      0.12); break;
             case 'resume': tone([440, 660], 0.08); break;
         }
     }
+    function _cueAllowed(kind) {
+        if (c.sounds === 'off' || _speakingNow) return false;
+        if (c.sounds === 'fewer' && /^(tick|got|open|think)$/.test(kind)) return false;
+        return true;
+    }
 
-    function tone(freqs, dur) {
+    // peak 0.06 by default: about 6 dB under the old 0.12, under her voice
+    function tone(freqs, dur, peak) {
+        if (c.sounds === 'off') return;
         try {
             var now = audioCtx.currentTime;
             freqs.forEach(function (f, idx) {
@@ -7582,7 +8137,7 @@ api.controller = function ($scope, $timeout, $window) {
                 g.connect(audioCtx.destination);
                 var start = now + idx * dur;
                 g.gain.setValueAtTime(0.0001, start);
-                g.gain.exponentialRampToValueAtTime(0.12, start + 0.01);
+                g.gain.exponentialRampToValueAtTime(peak || 0.06, start + 0.01);
                 g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
                 osc.start(start);
                 osc.stop(start + dur + 0.02);
@@ -7627,9 +8182,20 @@ api.controller = function ($scope, $timeout, $window) {
                 $scope.$applyAsync();
             }
             if (e.altKey && (e.key === 'd' || e.key === 'D')) {
+                // the loading card is a modal: the Lab would open on top of it,
+                // inert (it is behind the card) and covering Start and Type instead
+                if (c.liveMode && _gateCardUp()) return;
                 e.preventDefault();
-                c.toggleDev();
+                // R28 - on the stage Alt+D opens the Lab (diagnostics), as Settings > More does
+                if (c.liveMode) _labOpen(!c.labOn); else c.toggleDev();
                 $scope.$applyAsync();
+                return;
+            }
+            // R28 - on the stage: single keys (M, /, T, S, ?) and Escape, which
+            // closes a sheet or the typing box first and otherwise stops her
+            if (c.liveMode) {
+                if (_stageKey(e)) $scope.$applyAsync();
+                return;
             }
             if (e.key === 'Escape') {
                 // R6 - Escape now silences EVERYTHING (remote audio, browser
@@ -7943,31 +8509,266 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     /* ============================================================
+     *  R28 - THE LIVE STAGE: one status model, one announcer
+     *
+     *  Every state has one meaning, one line of text, one hint, one
+     *  look (window.__netraMode for the stage renderer) and one
+     *  announcement. The status row on the page is never a live
+     *  region: #netra-say (polite) and the stage's role=alert are the
+     *  only ones, written through _announce, so a screen reader hears
+     *  each thing once. Her words reach them only when no voice plays.
+     *  Everything here is a hoisted function so the tests can reach it.
+     * ============================================================ */
+    c.srSay = ''; c.srAlert = '';
+    c.liveKind = 'boot'; c.liveHint = '';
+    c.activity = ''; c.canRetry = false; c.lastFailed = false;
+    c.capSize = 'm'; c.capOn = true; c.bargeOn = true; c.sounds = 'on'; c.calm = false;
+    try {
+        var capPref = localStorage.getItem('netra_caption_size');
+        if (/^(s|m|l|xl)$/.test(capPref || '')) c.capSize = capPref;
+        c.capOn = localStorage.getItem('netra_captions') !== '0';
+        c.bargeOn = localStorage.getItem('netra_voice_barge') !== '0';
+        var sndPref = localStorage.getItem('netra_sounds');
+        if (/^(on|fewer|off)$/.test(sndPref || '')) c.sounds = sndPref;
+        var calmPref = localStorage.getItem('netra_calm');
+        c.calm = calmPref === null ? !!($window.matchMedia && $window.matchMedia('(prefers-reduced-motion: reduce)').matches) : calmPref === '1';
+    } catch (eStagePref) {}
+    try { window.__netraCalm = !!c.calm; } catch (eCalm) {}
+    c.loginUrl = _loginUrl();
+    c.setCapSize = function (v) { _setCapSize(v); };
+    c.setCapOn = function (v) { _setCapOn(v); };
+    c.setCalm = function (v) { _setCalm(v); };
+    c.setSounds = function (v) { _setSounds(v); };
+    c.setBarge = function (v) { _setBarge(v); };
+    c.retry = function () { _retryTurn(); };
+    c.retryFocus = function () { _focusOffRetry(); };
+    // the connection: said once each way, as an alert when it goes
+    if (c.liveMode) {
+        var _onOffline = function () { _announce('You’re offline. I’ll reconnect when you’re back.', 'alert'); $scope.$applyAsync(); };
+        var _onOnline = function () { _announce('Back online.', 'info'); $scope.$applyAsync(); };
+        try { $window.addEventListener('offline', _onOffline); $window.addEventListener('online', _onOnline); } catch (eNet) {}
+        $scope.$on('$destroy', function () {
+            try { $window.removeEventListener('offline', _onOffline); $window.removeEventListener('online', _onOnline); } catch (eNet2) {}
+        });
+    }
+
+    // what the status row says for a state: {kind, label, hint}
+    function _liveStatusFor(s) {
+        var g = c.gate, listen = s === 'idle' || s === 'awaiting' || s === 'boot';
+        // ended from the loading card too: the card is gone, she is at rest
+        if (c.ended) return { kind: 'ended', label: 'Ended', hint: 'The mic is off' };
+        if (listen && g && !g.open && !g.typing) return { kind: 'boot', label: 'Getting ready…', hint: '' };
+        if (listen && g && g.typing) return { kind: 'typing', label: 'Typing', hint: g.cantHear ? 'Netra can’t hear in this browser' : 'Listening is still loading' };
+        if (c.micOff && s === 'speaking') return { kind: 'speak', label: 'Speaking', hint: 'Mic off' };
+        if (c.micOff && s !== 'thinking' && s !== 'error') return { kind: 'muted', label: 'Mic off', hint: 'Press Mute or tap Netra to turn it on' };
+        switch (s) {
+            case 'dormant':  return { kind: 'paused', label: 'Paused', hint: 'Say “Netra” or tap to resume' };
+            case 'thinking': return { kind: 'work', label: c.activity || 'Thinking…', hint: '' };
+            case 'speaking': return { kind: 'speak', label: 'Speaking', hint: c.bargeOn !== false ? 'Talk or tap to interrupt' : 'Tap Netra or press Esc to stop her' };
+            case 'error':
+                if (c.permission === 'denied') return { kind: 'error', label: 'I can’t hear you', hint: _micBlockedText() };
+                return { kind: 'error', label: 'Couldn’t get an answer', hint: 'Say it again or press Try again' };
+        }
+        // iPhone: the mic's audio is still suspended - one tap wakes it
+        if (c.micNeedsTap) return { kind: 'tap', label: 'Tap anywhere so I can hear you', hint: '' };
+        // her apology is over: Try again is still there, and the hint says so
+        if (c.lastFailed) return { kind: 'listen', label: 'Listening', hint: 'Say it again or press Try again' };
+        return { kind: 'listen', label: 'Listening', hint: _voicePlays() ? '' : 'Replies shown as text — no voice on this device' };
+    }
+    // a voice will say her lines (a kept caption or the size sample is not "no voice")
+    function _voicePlays() { return !!(c.hasTTS && !c.labMute); }
+    // writes the status row from c.state; says it only when the kind changes
+    function _applyLiveStatus() {
+        var st = _liveStatusFor(c.state), was = c.liveKind;
+        c.liveStatus = st.label; c.liveHint = st.hint; c.liveKind = st.kind;
+        try { window.__netraMode = { muted: 'muted', paused: 'paused', ended: 'ended' }[st.kind] || ''; } catch (eMode) {}
+        if (st.kind === was) return;
+        // her turn is over: the 'open' earcon says so, unless she was cut off
+        // (the falling blip already said it); the greeting covers boot
+        if (was === 'speak' && st.kind === 'listen') { if (!_quietOpen) cue('open'); return; }
+        if (was === 'boot' && st.kind === 'listen') return;
+        // with a voice, her voice is the cue: 'Speaking' is never said over it,
+        // nor the mic off, pause or end she has just said out loud
+        if (_voicePlays() && (st.kind === 'speak' || (was === 'speak' && /^(muted|paused|ended)$/.test(st.kind)))) return;
+        // a blocked mic has its own alert with what to do
+        if (st.kind === 'error' && c.permission === 'denied') return;
+        _announce(st.label, 'state');
+    }
+    // pure: what to do with one announcement. The same text within 1.5 s
+    // is not said again; a state waits 500 ms so a quick run of states is
+    // said as the last one; an alert goes to the assertive region
+    function _announcePlan(last, text, kind, now) {
+        if (last && last.text === text && now - last.at < 1500) return { write: false, delay: 0, slot: 'srSay' };
+        if (kind === 'alert') return { write: true, delay: 0, slot: 'srAlert' };
+        return { write: true, delay: kind === 'state' ? 500 : 0, slot: 'srSay' };
+    }
+    var _annLast = null, _annTimer = null, _quietOpen = false;
+    // her voice is about to say what just changed ("Mic off.", "Paused."):
+    // the state waiting to be announced is dropped, so the two never overlap
+    function _hushState() {
+        if (!_voicePlays() || !_annTimer) return;
+        try { $timeout.cancel(_annTimer); } catch (eH) {}
+        _annTimer = null;
+    }
+    function _announce(text, kind) {
+        text = String(text || '').trim();
+        if (!text) return;
+        var plan = _announcePlan(_annLast, text, kind, Date.now());
+        if (!plan.write) return;
+        // a newer state, reply or note replaces a state not said yet
+        if (plan.slot === 'srSay' && _annTimer) { try { $timeout.cancel(_annTimer); } catch (eC) {} _annTimer = null; }
+        var put = function () {
+            _annTimer = null;
+            _annLast = { text: text, at: Date.now() };
+            // the same words again: empty the region first, or it is not re-read
+            if (c[plan.slot] === text) {
+                c[plan.slot] = '';
+                $timeout(function () { c[plan.slot] = text; $scope.$applyAsync(); }, 30);
+            } else {
+                c[plan.slot] = text;
+            }
+            $scope.$applyAsync();
+        };
+        if (plan.delay) _annTimer = $timeout(put, plan.delay);
+        else put();
+    }
+    function _micBlockedText() {
+        return "I can't hear you: the microphone is blocked. Allow the microphone for this site in your browser, then press Try again, or press Type.";
+    }
+    // where Sign in goes: the portal's own login link, else the portal's login page
+    function _loginUrl() {
+        try {
+            var links = document.querySelectorAll('a[href*="login"]');
+            for (var i = 0; i < links.length; i++) {
+                var href = String(links[i].getAttribute('href') || '');
+                if (links[i].closest && links[i].closest('.netra-root')) continue;
+                if (/^(\/|\?|https?:)/i.test(href)) return href;
+            }
+        } catch (eL) {}
+        return '/sp?id=login';
+    }
+
+    // ---- preferences (Settings), each kept in this browser -------------------
+    function _setCapSize(v) {
+        v = /^(s|m|l|xl)$/.test(String(v)) ? String(v) : 'm';
+        c.capSize = v;
+        try { localStorage.setItem('netra_caption_size', v); } catch (e) {}
+        // an empty box: a sample line shows the new size
+        if (!_captionWho()) { c.spoken = 'This is how captions will look.'; c.captionKeep = true; }
+    }
+    function _setCapOn(v) {
+        c.capOn = v !== false;
+        try { localStorage.setItem('netra_captions', c.capOn ? '1' : '0'); } catch (e) {}
+    }
+    // Calm visuals: the stage renderer holds a composed still
+    function _setCalm(v) {
+        c.calm = !!v;
+        try { window.__netraCalm = c.calm; } catch (eW) {}
+        try { localStorage.setItem('netra_calm', c.calm ? '1' : '0'); } catch (e) {}
+    }
+    function _setSounds(v) {
+        c.sounds = /^(on|fewer|off)$/.test(String(v)) ? String(v) : 'on';
+        try { localStorage.setItem('netra_sounds', c.sounds); } catch (e) {}
+    }
+    // Talking interrupts Netra: off for a screen reader or a TV that keeps cutting her off
+    function _setBarge(v) {
+        c.bargeOn = v !== false;
+        try { localStorage.setItem('netra_voice_barge', c.bargeOn ? '1' : '0'); } catch (e) {}
+        _applyLiveStatus();
+    }
+    function _voiceBargeOn() { return c.bargeOn !== false; }
+
+    // ---- while she works on it ------------------------------------------------
+    // pure: the step named in the status while she works
+    function _activityLabel(text, guest) {
+        var t = String(text || ''), id = t.match(/\b(INC|RITM|REQ|CHG|PRB|SCTASK|TASK|KB)\d{5,}\b/i);
+        if (id && !guest) return 'Looking up ' + id[0].toUpperCase() + '…';
+        if (/\b(search|look up|google|latest|news|who is|what is)\b/i.test(t)) return 'Searching the web…';
+        if (/\b(time|date|what day)\b/i.test(t)) return 'Checking the time…';
+        if (/\bjoke\b/i.test(t)) return 'Finding a joke…';
+        if (!guest && /\b(my tickets|approvals?|my requests?)\b/i.test(t)) return 'Checking your work…';
+        return 'Thinking…';
+    }
+    // pure: what a long wait is called
+    function _waitStep(ms) {
+        if (ms < 8000) return null;
+        return ms < 20000 ? 'Still working on it…' : 'This is taking too long';
+    }
+    // the wait ladder: 'got it' at once, a soft tick every 1.5 s from 2 s,
+    // a named step at 8 s and Try again at 20 s. It ends with the turn: a
+    // reply, a barge-in, a stop or a newer turn (the hung timer stays the
+    // hard stop for the wire)
+    var _waitLadder = null;
+    function _waitStart() {
+        _waitStop();
+        cue('got');
+        _waitLadder = { epoch: _turnEpoch, at: Date.now(), step: null, timer: null };
+        _waitLadder.timer = $timeout(_waitTick, 2000);
+    }
+    function _waitTick() {
+        var w = _waitLadder;
+        if (!w) return;
+        w.timer = null;
+        if (w.epoch !== _turnEpoch || c.state !== 'thinking' || _ctrlDestroyed) { _waitStop(); return; }
+        var ms = Date.now() - w.at;
+        if (ms < 1900) return;   // a timer that fired early is not a wait
+        if (!(_speakingNow || _fillerChainActive || currentFillerAudio || currentFillerUtter)) cue('tick');
+        var step = _waitStep(ms);
+        if (step && step !== w.step) {
+            w.step = step;
+            c.liveStatus = step;
+            if (ms >= 20000) { c.canRetry = true; c.liveHint = 'Press Try again or type your question'; }
+            _announce(step, 'info');
+            $scope.$applyAsync();
+        }
+        w.timer = $timeout(_waitTick, 1500);
+    }
+    function _waitStop() {
+        if (_waitLadder && _waitLadder.timer) { try { $timeout.cancel(_waitLadder.timer); } catch (e) {} }
+        _waitLadder = null;
+        c.canRetry = false;
+    }
+    // a turn that failed: Try again stays up through her apology and after it,
+    // until something new is heard or typed (setState does not clear it)
+    function _turnFailed() {
+        setState('error');
+        c.lastFailed = true;
+    }
+    // the row goes with the turn: focus on its buttons moves to the orb (the
+    // stable control, named for what a tap does), never to <body>
+    function _focusOffRetry() {
+        try {
+            var a = document.activeElement;
+            if (a && a.closest && a.closest('.netra-retry-row')) _focusEl('.netra-stage-blob-wrap');
+        } catch (eR) {}
+    }
+    // Try again: the last question once more; a blocked mic listens again
+    function _retryTurn() {
+        _focusOffRetry();
+        c.canRetry = false; c.lastFailed = false;
+        if (c.permission === 'denied') {
+            c.permission = 'prompt';
+            _notAllowedStrikes = 0;
+            setState('idle');
+            startContinuous();
+            return;
+        }
+        if (c.lastHeard) processCommand(c.lastHeard, 1.0);
+    }
+
+    /* ============================================================
      *  STATE
      * ============================================================ */
-    // R8 - friendly status line for the Live stage
-    var LIVE_STATUS = {
-        idle:     'Listening',
-        awaiting: 'Listening',
-        thinking: 'Thinking…',
-        speaking: 'Speaking — just talk to interrupt',
-        dormant:  'Asleep — say Netra or tap to wake me',
-        error:    'Hmm, hit a snag — say that again?',
-        boot:     'Waking up…'
-    };
     function setState(s) {
-        var prev = c.state;
         c.state = s;
         window.__netraState = s;   // R10 - 3D stage reads this per frame
         c.stateLabel = _stateLabel(s);
-        c.liveStatus = LIVE_STATUS[s] || 'Listening';
-        if ((s === 'idle' || s === 'awaiting') && c.gate && !c.gate.open) c.liveStatus = c.gate.typing ? TYPING_STATUS : 'Getting ready…';
-        // muted or ended is not asleep: her name does not wake her. While she
-        // speaks the status stays put - talking cannot interrupt her then
-        if (c.ended && (s === 'dormant' || s === 'speaking')) c.liveStatus = 'Ended — press Start Netra again';
-        else if (c.micOff && (s === 'dormant' || s === 'speaking')) c.liveStatus = 'Mic off — press Unmute to talk';
+        // muted or ended is not paused: her name does not wake her
         if (s === 'dormant' && c.ended) c.stateLabel = 'ended - press Start Netra again to talk to me';
-        else if (s === 'dormant' && c.micOff) c.stateLabel = 'mic off - press Unmute to talk to me';
+        else if (s === 'dormant' && c.micOff) c.stateLabel = 'mic off - press Mute or tap Netra to turn it on';
+        // the turn is over: its step name and its wait go with it
+        if (s !== 'thinking') { c.activity = ''; _waitStop(); }
+        _applyLiveStatus();
         $scope.$applyAsync();
         // R3.7 - filler chain is now started explicitly from handleHeard()
         // when the server call is dispatched. setState no longer triggers

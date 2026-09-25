@@ -128,7 +128,7 @@ T.test('the loading screen never sticks: a failed ear lets a working recognizer 
     c3.gate = { open: false, everOpen: false, hearing: false, voice: false, brain: true, hearingText: '', voiceText: '', brainText: 'ready' };
     f3._readyUpdate();
     T.eq(c3.gate.open, false);
-    T.match(c3.gate.hearingText, /this browser can not listen.*type to me/);
+    T.match(c3.gate.hearingText, /This browser can't listen.*type to Netra/);
     T.eq(f3._typedRefused('who founded servicenow'), false, 'typed questions need answers, not ears');
     c3.gate.brain = false;
     T.eq(f3._typedRefused('who founded servicenow'), true, 'but they do need answers');
@@ -144,13 +144,13 @@ T.test('no voice plays before a key press or tap: the loading screen asks for on
     c.gate = { open: false, everOpen: false, hearing: true, voice: false, brain: true, hearingText: '', voiceText: '', brainText: 'ready' };
     f._gateUpdate();
     T.eq(c.gate.open, false); T.eq(c.gate.needsTap, true);
-    T.match(c.gate.voiceText, /press Enter or tap Start/);
+    T.eq(c.gate.voiceText, 'Press Start so the browser lets Netra speak');
     T.eq(said, [], 'nothing said into a browser that would refuse it');
     f._onPageActivated({ type: 'keydown', key: 'Shift' });
     T.eq(c.gate.open, false, 'a modifier key is no activation');
     f._onPageActivated({ type: 'button' });   // what the Start button's c.gateActivate() does
     T.eq(c.gate.open, true); T.eq(c.gate.needsTap, false);
-    T.match(said[0], /I am Netra, and I am ready/);
+    T.match(said[0], /I'm Netra\. As a guest/);
     // the browser voice refused later: the loading screen comes back until the next press
     cl.set('_voiceBlocked', true); f._gateUpdate();
     T.eq(c.gate.open, false);
@@ -221,7 +221,7 @@ T.test('answers from the web during a long outage: the gate opens, the greeting 
     f._brainProbe('boot');
     T.eq(c.gate.open, true);
     T.eq(c.gate.brainText, "answers from the web only - my reasoning models are out of today's free quota until about 12:30 PM");
-    T.match(said[0], /I am ready - just speak\. My reasoning is resting right now, so I will answer from the web until it is back\.$/);
+    T.match(said[0], /Just speak, or press Type\. My reasoning is resting right now, so I will answer from the web until it is back\.$/);
     T.ok(timers.indexOf(120000) >= 0, 'probes again in two minutes: ' + timers.join(','));
 });
 
