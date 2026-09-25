@@ -9336,7 +9336,7 @@
         "    att.addQuery('table_name', rec.getTableName());",
         "    att.addQuery('table_sys_id', rec.getUniqueValue());",
         "    // the platform refuses a .mjs attachment, so the runtime's modules are kept",
-        "    // as .mjs.js; and it refuses an upload past about 200 MB, so a big model",
+        "    // as .mjs.js; and it refuses an upload past 150 MiB, so a big model",
         "    // file is kept as .part1, .part2, ... and streamed back as one",
         "    var stored = /\\.mjs$/.test(name) ? name + '.js' : name;",
         "    att.addQuery('file_name', 'STARTSWITH', stored);",

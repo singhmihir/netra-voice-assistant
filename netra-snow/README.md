@@ -270,8 +270,8 @@ test: a path ending in .json, .js or .wasm is read as a response format and
 never reaches the resource, so the worker asks for `config-json`,
 `transformers.min-js` and `…jsep-wasm`; a .mjs attachment is refused, so the
 runtime's modules are kept as `.mjs.js`; an upload past about 200 MB is
-refused, so a big file is kept as `.part1`, `.part2`, … and streamed back as
-one. The size header is dropped by the platform, so the loading card shows
+refused (the limit is 150 MiB), so a big file is kept in 100 MiB parts,
+`.part1`, `.part2`, …, and streamed back as one. The size header is dropped by the platform, so the loading card shows
 the MB so far. Verified live as a Guest with the browser recognizer blocked:
 every file came from the instance (no request to the hub or the CDN), the
 small model loaded in 61 s and both spoken phrases were heard exactly; with

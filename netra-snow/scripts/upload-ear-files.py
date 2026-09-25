@@ -14,9 +14,9 @@ not these files (about 390 MB).
 usage:  SN_URL=https://<instance>.service-now.com SN_USER=admin SN_PASS=... \
         python3 scripts/upload-ear-files.py [work-dir]
 
-The attachment API refuses an upload past about 200 MB, so a bigger file
+The attachment API refuses an upload past 150 MiB, so a bigger file
 (the GPU pair of whisper-small.en: the fp32 encoder and the q4 decoder) is
-sent in 150 MB parts named .part1, .part2, ... and the resource streams
+sent in 100 MiB parts named .part1, .part2, ... and the resource streams
 them back as one file. Re-running skips files already there at the same
 size. About 950 MB in all.
 """
@@ -29,7 +29,7 @@ if not SN or not PASS:
 AUTH = base64.b64encode((USER + ':' + PASS).encode()).decode()
 CTX = ssl.create_default_context(cafile=os.environ['SSL_CERT_FILE']) if os.environ.get('SSL_CERT_FILE') else ssl.create_default_context()
 TABLE = 'x_196061_netra_v1_ear_file'
-PART = 150 * 1048576
+PART = 100 * 1048576   # the platform refuses an upload past 150 MiB
 WORK = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.ear-files')
 HUB = 'https://huggingface.co/onnx-community/'
 CDN = 'https://cdn.jsdelivr.net/npm/'

@@ -202,7 +202,7 @@ SN_URL=https://<instance>.service-now.com SN_USER=admin SN_PASS=... \
 ```
 
 It downloads the files, creates one `ear_file` record per model and uploads
-each file as an attachment (files past 150 MB in parts). Re-running skips
+each file as an attachment (files past 100 MiB in parts). Re-running skips
 what is already there. Check with an anonymous GET of
 `/api/x_196061_netra_v1/voice/ear/whisper-tiny.en/config-json`.
 
