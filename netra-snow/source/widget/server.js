@@ -225,9 +225,10 @@
         // R21 - the page's loading screen: can Netra answer right now?
         try { data.ready = _readyCheck(); }
         catch (eRc) { data.ready = { ready: false, reason: 'error', detail: String(eRc.message || eRc).substring(0, 200), wait_ms: 10000 }; }
-    } else if (action === 'poll' && _isGuest()) {
-        data.notifications = [];   // R21 - the shared Guest user has no inbox to read or ack
-    } else if ((action === 'gemini_tts' || action === 'rewind_mem' || action === 'save_training' || action === 'clear_training') && _isGuest()) {
+    } else if (action === 'poll' && _sharedAccount()) {
+        data.notifications = [];   // R21 - the shared Guest user (or a shared read-only reviewer) has no inbox to read or ack
+    } else if ((action === 'gemini_tts' && _isGuest()) ||
+               ((action === 'rewind_mem' || action === 'save_training' || action === 'clear_training') && _sharedAccount())) {
         // R21 - not for the shared Guest user: an open TTS proxy on the key,
         // and state every public visitor would share
         data.guest_refused = action;
@@ -937,7 +938,7 @@
             // Not for a Guest: every visitor is the one Guest user, so that
             // row would be shared by everyone who opens the public page
             try {
-                if (!_isGuest()) new NetraContext().setLastUtterance(finalText);
+                if (!_sharedAccount()) new NetraContext().setLastUtterance(finalText);
             } catch (eC) {}
 
             // Re-read pause state in case a tool toggled it
@@ -1319,6 +1320,38 @@
             return n > 40;
         } catch (e) { return false; }
     }
+    // R26 - a read-only reviewer account (ServiceNow's snc_read_only role):
+    // the platform blocks every write it makes; Netra says so up front, and
+    // keeps no memory for it, since reviewers share the one account
+    function _readOnlyAccount() {
+        if (_isGuest()) return false;
+        if (_brainTurn.readOnly !== undefined) return _brainTurn.readOnly;
+        var ro = false;
+        try {
+            var hr = new GlideRecord('sys_user_has_role');
+            hr.addQuery('user', gs.getUserID());
+            hr.addQuery('role.name', 'snc_read_only');
+            hr.setLimit(1);
+            hr.query();
+            ro = hr.hasNext();
+        } catch (e) {}
+        _brainTurn.readOnly = ro;
+        return ro;
+    }
+    // an account many people use: its state lives for the request only
+    function _sharedAccount() { return _isGuest() || _readOnlyAccount(); }
+    // what a read-only reviewer is not offered: every write, and the drafts,
+    // plans, orders and missions that lead to one
+    function _reviewerRefused(name) {
+        return !!(_gatedWriteTools()[name] || { decide_approval: 1, start_record_draft: 1, set_record_field: 1, review_draft: 1,
+            confirm_and_create: 1, make_plan: 1, execute_plan: 1, mission: 1, create_standing_order: 1, reindex_incidents: 1 }[name]);
+    }
+    function _reviewerLine() {
+        return _readOnlyAccount() ? ' This is a READ-ONLY reviewer account: find, read and explain anything it can see, and never offer to create, change, approve or delete anything. ' : '';
+    }
+    function _readOnlyRefusal() {
+        return { ok: false, read_only: true, error: 'This is a read-only reviewer account: I can find and read anything it can see, but I do not change anything.' };
+    }
     function _guestNeedsSignIn(lc, norm) {
         // R21 - only unambiguous record asks; a general question that shares
         // a word ("what problems does Kubernetes solve", "what is an SLA",
@@ -1448,7 +1481,7 @@
             var fn = dn.split(' ')[0] || '';
             who = (/^system$/i.test(fn) || !fn) ? 'You are speaking with the instance admin; do not invent a name for them.'
                 : 'You are speaking with ' + dn + '; use their first name "' + fn + '" now and then.';
-            who += ' CURRENT FOCUS TICKET: ' + (_focusNumber() || 'none') + ' - "it" / "that ticket" mean this one.';
+            who += ' CURRENT FOCUS TICKET: ' + (_focusNumber() || 'none') + ' - "it" / "that ticket" mean this one.' + _reviewerLine();
         }
         return 'You are Netra, a female voice assistant for ServiceNow, built for blind and visually-impaired users. ' + who + '\n' +
 'VOICE: every reply is spoken aloud. One to three short, warm, plain sentences. No markdown, no lists, no URLs, no emoji. Never mention the screen or anything visual. Read the first two or three items of a list and offer the rest.\n' +
@@ -3840,7 +3873,7 @@ _timeLine();
         return 'You are speaking with the instance admin. Do NOT invent a name for them and never call them "System" - just speak warmly without a name. ';
     }
     return 'You are speaking with ' + dn + '. Call them by their first name "' + fn + '" naturally in conversation - not in every sentence, but at the start of replies and at transitions. ';
-})() +
+})() + _reviewerLine() +
 'PERSONALITY (R7 - witty companion): you are quick-witted, playful and a little cheeky - a sharp friend who happens to run ServiceNow. Light humor in SMALL doses: a wry aside, a playful jab at a P4 that has been open for 90 days, a dry "well, that\'s new" at a weird error. Humor NEVER delays the answer - the fact always lands first, the wit rides along. Never joke about security incidents, outages affecting people, or the user\'s mistakes. Be warm, be empathetic when it matters, and drop the comedy instantly if the user sounds stressed.\n' +
 '\n' +
 'CRITICAL - ACCESSIBILITY CONTEXT:\n' +
@@ -5143,6 +5176,8 @@ _timeLine();
 
     // a write that can not happen is said now - not after a read-back and a yes
     function _writePreflight(name, args) {
+        // a read-only reviewer hears it now, not after a read-back and a yes
+        if (_readOnlyAccount() && _reviewerRefused(name)) return _readOnlyRefusal();
         try {
             if (name === 'undo_last_action') {
                 var la = _ctxReadBlob().last_action;
@@ -5268,6 +5303,7 @@ _timeLine();
             if (_isGuest() && !_guestTools()[name]) {
                 return { ok: false, needs_sign_in: true, error: 'That needs you to sign in to ServiceNow first. As a guest I can search the web, tell the time and chat.' };
             }
+            if (_readOnlyAccount() && _reviewerRefused(name)) return _readOnlyRefusal();
             // R8 - writes are on by default; the gate only fires when the
             // admin kill-switch (<scope>.ticket_writes = 'false') is set.
             if (!_ticketWritesEnabled() &&
@@ -6280,6 +6316,7 @@ _timeLine();
         if (!num) return { ok: false, error: 'ticket number required' };
         // the Guest user's row would be every visitor's: a Guest keeps no focus
         if (_isGuest()) return { ok: false, needs_sign_in: true, error: 'That needs you to sign in to ServiceNow first.' };
+        if (_readOnlyAccount()) return { ok: false, read_only: true, error: 'A shared reviewer account keeps no focus ticket.' };
         try {
             var table = _tableForNumber(num);
             if (!table) return { ok: false, error: 'Unrecognised number prefix: ' + num };
@@ -6825,7 +6862,7 @@ _timeLine();
         // R21 - every public visitor is the ONE Guest user: a shared row would
         // hand one visitor's memory, training, drafts and focus to the next.
         // A Guest's state lives for the request only (the page carries history)
-        if (_isGuest()) return { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
+        if (_sharedAccount()) return { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
         var ctx = _ctxLoadGr();
         var raw = String(ctx.last_utterance || '');
         var blob = { draft: null, mem: [], vocab: {}, aliases: {}, sentiment: null };
@@ -6857,7 +6894,7 @@ _timeLine();
     function _ctxWriteBlob(blob) {
         _ctxBlobCache = blob;   // write-through: later reads in this request see it
         _brainTurn.blobWritten = true;
-        if (_isGuest()) return;   // R21 - never persisted for the shared Guest user
+        if (_sharedAccount()) return;   // R21 - never persisted for the shared Guest user (or a shared reviewer)
         var ctx = _ctxLoadGr();
         // serialise EVERY key the callers put on the blob (see note in
         // _ctxReadBlob), just guarantee the core ones exist
@@ -10595,7 +10632,7 @@ _timeLine();
     function _ensurePrefAndPause() {
         data.paused = false;
         data.paused_until = '';
-        if (_isGuest()) return;   // R21 - no notification inbox for the shared Guest user
+        if (_sharedAccount()) return;   // R21 - no notification inbox for the shared Guest user (or a shared reviewer)
         var pref = new GlideRecord(SCOPE + '_user_pref');
         pref.addQuery('user', user);
         pref.setLimit(1);
