@@ -360,7 +360,7 @@ T.test('a browser that can not hear offers Type instead once answers are ready, 
     var block = TEMPLATE.substring(TEMPLATE.indexOf('<div class="netra-ready"'), TEMPLATE.indexOf('<div class="netra-stage-center">'));
     T.match(block, /ng-if="c\.gate\.cantHear && c\.gate\.brain" ng-click="c\.gateType\(\)">Type instead</);
     T.match(block, /ng-click="c\.liveExit\(\)"[^>]*>Leave</);
-    T.match(block, /ng-if="c\.gate && !c\.gate\.open && !c\.gate\.typing"/);
+    T.match(block, /ng-if="c\.gate && !c\.gate\.open && !c\.gate\.typing( && !c\.ended)?"/);
     T.match(CLIENT_SRC, /c\.gateType = _gateTypeInstead;/);
     f._gateTypeInstead();
     T.eq(c.gate.typing, true, 'the card steps aside');

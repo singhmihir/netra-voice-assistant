@@ -1862,8 +1862,12 @@
     box-shadow: none;
     -webkit-tap-highlight-color: transparent;
 }
+/* keyboard focus: a real ring (the glow alone vanished in 3D mode, where
+   the blob's filter is dropped); the template adds a dark halo under it */
 .netra-stage-blob-wrap:focus-visible {
-    outline: none !important;
+    outline: 3px solid #ffffff !important;
+    outline-offset: 6px;
+    border-radius: 50%;
     filter: drop-shadow(0 18px 60px var(--eye-glow, rgba(139,61,240,0.45)))
             drop-shadow(0 0 26px var(--iris-bright, rgba(216,200,255,0.8)));
 }
@@ -1981,29 +1985,31 @@
     padding-bottom: 46px;
     z-index: 2;
 }
+/* solid dark fills: a translucent button over the pastel mesh left the
+   icons near 2.4:1; on these they are well above 3:1 whatever blooms behind */
 .netra-ctl {
     width: 62px; height: 62px;
     border-radius: 50%;
-    border: 1px solid rgba(216,200,255,0.25);
-    background: rgba(255,255,255,0.06);
-    color: #efe7ff;
+    border: 1.5px solid rgba(255,255,255,0.55);
+    background: #1d1830;
+    color: #ffffff;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer;
     transition: transform 0.14s ease, background 0.18s ease, border-color 0.18s ease;
-    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
-.netra-ctl:hover { transform: translateY(-2px); background: rgba(255,255,255,0.12); border-color: var(--eye-glow, rgba(216,200,255,0.5)); box-shadow: 0 4px 24px var(--netra-glow-soft, rgba(139,61,240,0.25)); }
-.netra-ctl-muted { background: rgba(255,90,90,0.16); border-color: rgba(255,120,120,0.5); color: #ffb3b3; }
-.netra-ctl-end { background: rgba(255,90,90,0.10); border-color: rgba(255,120,120,0.35); }
-.netra-ctl-end:hover { background: rgba(255,90,90,0.22); }
+.netra-ctl:hover { transform: translateY(-2px); background: #2c2545; border-color: #ffffff; box-shadow: 0 4px 24px var(--netra-glow-soft, rgba(139,61,240,0.25)); }
+.netra-ctl:focus-visible { outline: 3px solid #ffffff; outline-offset: 3px; }
+.netra-ctl-muted { background: #4a1c24; border-color: #ff9d9d; color: #ffc9c9; }
+.netra-ctl-end { background: #3a1a22; border-color: rgba(255,157,157,0.7); }
+.netra-ctl-end:hover { background: #52222c; }
 
 /* ============================================================
  *  R8.1 - NETRA LAB (diagnostics console on the Live stage)
  * ============================================================ */
 .netra-ctl-lab-on {
-    background: var(--netra-glow-soft, rgba(139,61,240,0.25));
-    border-color: var(--eye-glow, rgba(216,200,255,0.6));
-    color: var(--iris-bright, #d8c8ff);
+    background: #3a2a63;
+    border-color: #ffffff;
+    color: #ffffff;
 }
 /* R8.2 - the .netra-lab window frame (position:fixed glass slab) and its
    entrance keyframes live in a literal <style> tag inside template.html:
@@ -2034,9 +2040,13 @@
 }
 .netra-lab-sub { flex: 1; font-size: 9px; letter-spacing: 0.12em; color: #8f83b5; }
 .netra-lab-x {
-    background: none; border: none; color: #b4a9d6;
-    font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px;
+    background: none; border: none; color: #d9d0f0;
+    font-size: 20px; line-height: 1; cursor: pointer; padding: 0;
+    min-width: 32px; min-height: 32px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    align-self: center;
 }
+.netra-lab-x:focus-visible { outline: 2px solid #ffffff; outline-offset: 1px; }
 .netra-lab-x:hover { color: #ffffff; }
 .netra-lab-sec {
     border: 1px solid rgba(216, 200, 255, 0.10);
@@ -2196,6 +2206,13 @@
     cursor: pointer;
 }
 .netra-lab-cmd button[disabled] { opacity: 0.45; cursor: default; }
+.netra-lab-answer {
+    margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff; font-size: 13px; line-height: 1.45;
+    max-height: 30vh; overflow-y: auto; overflow-wrap: anywhere;
+}
+.netra-lab-answer b { color: #b9a8ee; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; margin-right: 6px; }
 .netra-lab-swatch {
     width: 22px; height: 22px;
     border-radius: 50%;
@@ -2208,7 +2225,6 @@
     .netra-stage-blob-wrap { width: 72vmin; height: 72vmin; }
     .netra-stage-status { font-size: 15px; }
     .netra-stage-controls { padding-bottom: 34px; }
-    .netra-lab { top: 56px; right: 10px; width: calc(100vw - 20px); max-height: calc(100vh - 70px); }
 }
 
 
@@ -2231,7 +2247,7 @@
     right: calc(12px + env(safe-area-inset-right, 0px));
     z-index: 5;
     display: inline-flex; align-items: center; gap: 6px;
-    min-height: 40px; padding: 8px 14px;
+    min-height: 44px; padding: 8px 14px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.22);
     background: rgba(20, 18, 28, 0.72);
@@ -2244,7 +2260,8 @@
 .netra-app-help {
     position: absolute;
     top: calc(62px + env(safe-area-inset-top, 0px));
-    right: 12px; left: 12px;
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    left: calc(12px + env(safe-area-inset-left, 0px));
     margin-left: auto;
     max-width: 360px;
     z-index: 95;
@@ -2257,23 +2274,57 @@
     font-size: 15px; line-height: 1.5;
 }
 .netra-app-help-title { font-size: 17px; font-weight: 700; color: #ffffff; margin-bottom: 6px; }
+.netra-app-help-title:focus { outline: none; }
 .netra-app-help ol { margin: 0 0 8px; padding-left: 20px; }
 .netra-app-help li { margin: 4px 0; }
 .netra-app-help svg { vertical-align: -3px; color: #8ab4f8; }
 .netra-app-help p { margin: 0 0 12px; color: #bdc1c6; }
+/* #1967d2 under white is 5.4:1 (#4285f4 was 3.6:1) */
 .netra-app-help-ok {
     width: 100%; min-height: 44px;
     border: 0; border-radius: 12px;
-    background: #4285f4; color: #ffffff;
+    background: #1967d2; color: #ffffff;
     font-size: 15px; font-weight: 600; cursor: pointer;
 }
-/* a phone held sideways: a smaller blob, everything still on screen */
+.netra-app-help-ok:focus-visible { outline: 3px solid #ffffff; outline-offset: 2px; }
+/* phones (320-480 px): the header's pills fill the middle of the top row,
+   so the install button drops to the second row, right of the Settings tab */
+@media (max-width: 480px) {
+    .netra-app-btn { top: calc(64px + env(safe-area-inset-top, 0px)); }
+    .netra-app-help { top: calc(116px + env(safe-area-inset-top, 0px)); }
+}
+/* End for a Guest or the installed app: the way back in */
+.netra-ended-btn {
+    min-height: 48px; padding: 12px 28px;
+    border: 0; border-radius: 999px;
+    background: #1967d2; color: #ffffff;
+    font-size: 17px; font-weight: 700; cursor: pointer;
+}
+.netra-ended-btn:focus-visible { outline: 3px solid #ffffff; outline-offset: 3px; }
+/* a phone held sideways: a smaller blob, everything still on screen (the
+   compact caption lives in the template's style tag) */
 @media (max-height: 520px) and (orientation: landscape) {
     .netra-stage-blob-wrap { width: 46vh; height: 46vh; }
     .netra-stage-center { gap: 10px; }
     .netra-stage-status { font-size: 14px; padding: 6px 16px; }
     .netra-stage-controls { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
     .netra-ctl { width: 52px; height: 52px; }
-    .netra-stage-caption { display: none; }
     .netra-stage-head { top: calc(8px + env(safe-area-inset-top, 0px)); }
+}
+/* the Lab on a phone: rows wrap instead of running off the side */
+@media (max-width: 600px) {
+    .netra-lab-selects { flex-wrap: wrap; }
+    .netra-lab-selects select { min-width: 0; flex: 1 1 130px; }
+    .netra-lab-ear-status { flex-basis: 100%; margin-left: 0; }
+    .netra-lab-kv em, .netra-lab-heard-row em { overflow-wrap: anywhere; }
+    .netra-lab-hue-row { flex-wrap: wrap; }
+}
+/* touch screens: every control is at least 44 x 44 px */
+@media (pointer: coarse) {
+    .netra-lab-x { min-width: 44px; min-height: 44px; font-size: 26px; }
+    .netra-setup-tab, .netra-setup-check, .netra-lab-check,
+    .netra-lab-btns button, .netra-lab-cmd button, .netra-lab-cmd input,
+    .netra-lab-selects select, .netra-calib-actions button { min-height: 44px; }
+    .netra-lab-btns button, .netra-lab-cmd button, .netra-calib-actions button { min-width: 44px; font-size: 13px; }
+    .netra-setup input[type=range], .netra-lab-slider input { min-height: 44px; }
 }

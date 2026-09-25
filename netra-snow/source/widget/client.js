@@ -200,7 +200,7 @@ api.controller = function ($scope, $timeout, $window) {
      *  the Home Screen. The install button shows only where it works;
      *  on iOS it explains Share > Add to Home Screen instead.
      * ============================================================ */
-    c.app = { canInstall: false, standalone: false, ios: false, showHelp: false, installed: false };
+    c.app = { canInstall: false, standalone: false, ios: false, showHelp: false, installed: false, fromApp: false, shareWhere: 'Safari\'s toolbar' };
     var _installEvt = null;
     function _appShell() {
         if (!c.liveMode) return;
@@ -222,10 +222,15 @@ api.controller = function ($scope, $timeout, $window) {
             put('meta', 'name', 'apple-mobile-web-app-status-bar-style', { content: 'black-translucent' });
             put('meta', 'name', 'apple-mobile-web-app-title', { content: 'Netra' });
             put('link', 'rel', 'apple-touch-icon', { href: '/netra-app-180.png' });
-            // the notch and the home bar: let the stage reach the edges, the
-            // controls keep clear of them (env(safe-area-inset-*) in the CSS)
-            var vp = head.querySelector('meta[name="viewport"]');
-            if (vp && !/viewport-fit/.test(vp.getAttribute('content') || '')) vp.setAttribute('content', vp.getAttribute('content') + ', viewport-fit=cover');
+            // pinch-zoom stays on: the theme's meta turns it off, and a low-vision
+            // user must be able to zoom. viewport-fit lets the stage reach the
+            // notch and the home bar (the controls keep clear: env(safe-area-inset-*))
+            put('meta', 'name', 'viewport', {});
+            Array.prototype.forEach.call(document.querySelectorAll('meta[name="viewport"]'), function (vp) {
+                vp.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
+            });
+            c.app.fromApp = /[?&]netra_app=1(&|$)/.test(String(($window.location && $window.location.search) || ''));
+            c.app.shareWhere = _shareWhere(ua);
             if (base && nav.serviceWorker && $window.isSecureContext !== false) {
                 nav.serviceWorker.register(base + '/sw', { scope: '/sp' }).then(function () { logEvent('app', 'app service worker ready'); },
                     function (eR) { logEvent('warn', 'app service worker not registered: ' + (eR && eR.message || eR)); });
@@ -238,7 +243,38 @@ api.controller = function ($scope, $timeout, $window) {
         $scope.$on('$destroy', function () { $window.removeEventListener('beforeinstallprompt', onPrompt); $window.removeEventListener('appinstalled', onInstalled); });
         if (c.app.standalone) logEvent('app', 'running as the installed app');
     }
+    // where the Share button is in the iOS browser in use
+    function _shareWhere(ua) {
+        if (/CriOS/.test(ua)) return 'Chrome\'s address bar';
+        if (/FxiOS|EdgiOS|OPiOS/.test(ua)) return 'the browser\'s menu';
+        return 'Safari\'s toolbar';
+    }
     c.installApp = function () { _installApp(); };
+    c.appHelpClose = function () { _appHelpClose(); };
+    c.appHelpKey = function (ev) { _appHelpKey(ev); };
+    var _appHelpOpener = null;
+    // Escape goes on to the page too, where it also stops her talking
+    function _appHelpKey(ev) {
+        if (ev && ev.key === 'Escape') { ev.preventDefault(); _appHelpClose(); }
+    }
+    // the iOS steps: VoiceOver lands on the title, Escape or Got it closes,
+    // and focus goes back to the button that opened them
+    function _appHelpOpen() {
+        c.app.showHelp = true;
+        try { _appHelpOpener = document.activeElement; } catch (eF) { _appHelpOpener = null; }
+        $timeout(function () { _focusEl('#netra-app-help-title'); }, 30);
+    }
+    function _appHelpClose() {
+        if (!c.app.showHelp) return;
+        c.app.showHelp = false;
+        var back = _appHelpOpener; _appHelpOpener = null;
+        $timeout(function () {
+            if (back && back.isConnected && back.focus) back.focus(); else _focusEl('.netra-app-btn');
+        }, 30);
+    }
+    function _focusEl(sel) {
+        try { var el = document.querySelector(sel); if (el && el.focus) el.focus(); } catch (eF) {}
+    }
     function _installApp() {
         if (_installEvt) {
             var ev = _installEvt;
@@ -253,12 +289,21 @@ api.controller = function ($scope, $timeout, $window) {
             } catch (eP) { logEvent('warn', 'install prompt: ' + (eP && eP.message || eP)); }
             return;
         }
-        c.app.showHelp = !c.app.showHelp;   // iOS: Share > Add to Home Screen
+        // iOS: Share > Add to Home Screen
+        if (c.app.showHelp) _appHelpClose(); else _appHelpOpen();
     }
     _appShell();
 
-    c.liveExit = _liveExit;
+    /* End: a signed-in desktop user goes back to the portal. A Guest, or
+     * the installed app (no back button on an iOS home-screen app), would
+     * land on the login page with no way back - so End puts Netra to rest
+     * on this page, with a button to start her again. */
+    c.ended = false;
+    c.liveExit = function () { _liveExit(); };
+    c.liveRestart = function () { _liveRestart(); };
     function _liveExit() {
+        if ((c.data && c.data.is_guest) || (c.app && (c.app.standalone || c.app.fromApp))) { _endHere(); return; }
+        _uninertChrome();   // the page we go back to keeps this header and footer
         _stage3dOn = false;
         // the portal's header and footer outlive this widget: give them back first
         _gateInertRestore();
@@ -267,6 +312,56 @@ api.controller = function ($scope, $timeout, $window) {
             if ($window.history && $window.history.length > 1) $window.history.back();
             else $window.location.assign('/sp');
         } catch (e) { $window.location.assign('/sp'); }
+    }
+    function _endHere() {
+        c.labOn = false; c.setupOn = false; _appHelpClose();
+        // ended from the loading card: the card goes, and nothing stays inert
+        _gateInertRestore();
+        stopSpeaking('ended');
+        _micMute(true);
+        c.ended = true;
+        setState('dormant');
+        logEvent('app', 'ended on the page (a Guest or the installed app has nowhere to go back to)');
+        speak('Goodbye. Press Start Netra again when you need me.');
+        $timeout(function () { _focusEl('.netra-ended-btn'); }, 60);
+    }
+    function _liveRestart() {
+        if (!c.ended) return;
+        c.ended = false;
+        _micUnmute();
+        $timeout(function () { _focusEl('.netra-stage-blob-wrap'); }, 60);
+    }
+
+    /* Mute mic: she does not listen at all - the browser recognizer is
+     * stopped (no audio goes to its cloud service), the on-device ear drops
+     * what it was holding and the mic's audio is zeroed for the meter and
+     * the ear - until the user presses Unmute (or taps her). Saying her
+     * name does not wake her; that is what "stop listening" (asleep) is for. */
+    c.micOff = false;
+    c.toggleMic = function () { if (c.micOff) _micUnmute(); else _micMute(); };
+    function _micMute(quiet) {
+        c.micOff = true;
+        _cancelPlanContinue();
+        closeConversation();
+        _dropFinalBuffer('mic muted');
+        c.interim = '';
+        _micGainApply();
+        // startContinuous will not start it again while muted
+        try { if (contRec) contRec.abort(); } catch (eA) {}
+        c.recRunning = false;
+        _earForget();
+        c.alert = false;
+        setState('dormant');
+        logEvent('mic', 'muted - not listening until Unmute');
+        if (!quiet) speak('Mic off. I will not listen until you press Unmute.');
+    }
+    function _micUnmute() {
+        c.micOff = false;
+        _micGainApply();
+        _wakeUp();
+    }
+    function _micGainApply() {
+        if (_micGainNode) { try { _micGainNode.gain.value = c.micOff ? 0 : c.micGain; } catch (eG) {} }
     }
 
     /* ============================================================
@@ -300,6 +395,50 @@ api.controller = function ($scope, $timeout, $window) {
     var _stage3dOn = false;
     if (c.liveMode) $timeout(function () { _init3D(0); }, 400);
 
+    // the live stage covers the whole page, so the portal chrome under it
+    // (skip link, logo, Log in) must not take focus or be read: everything
+    // outside the widget is made inert. Run again later for chrome the
+    // portal renders after us. Every change is recorded, because the portal
+    // is a single-page app: leaving Netra keeps the same header and footer.
+    var _inertMade = [], _inertTabs = [], _inertFreed = false;
+    function _inertChrome() {
+        if (!c.liveMode || _inertFreed) return;
+        try {
+            var stage = document.querySelector('.netra-stage');
+            var node = stage && stage.closest ? (stage.closest('.netra-root') || stage) : stage;
+            var noInert = !('inert' in (document.body || {}));
+            for (; node && node.parentNode && node !== document.body; node = node.parentNode) {
+                var sibs = node.parentNode.children || [];
+                for (var i = 0; i < sibs.length; i++) {
+                    var el = sibs[i];
+                    if (el === node || /^(SCRIPT|STYLE|LINK|META|TEMPLATE)$/.test(el.tagName)) continue;
+                    // already inert: ours from the first run, or the portal's own
+                    if (el.hasAttribute('inert')) continue;
+                    _inertMade.push({ el: el, hidden: el.getAttribute('aria-hidden') });
+                    el.setAttribute('inert', '');
+                    el.setAttribute('aria-hidden', 'true');
+                    // an older browser without inert: at least take it out of the Tab order
+                    if (noInert) Array.prototype.forEach.call(el.querySelectorAll('a[href], button, input, select, textarea, [tabindex]'), function (f) {
+                        _inertTabs.push({ el: f, tab: f.getAttribute('tabindex') });
+                        f.setAttribute('tabindex', '-1');
+                    });
+                }
+            }
+        } catch (eI) { logEvent('warn', 'could not quiet the page under the stage: ' + (eI && eI.message || eI)); }
+    }
+    // gives the portal back exactly as it was, when Netra leaves the page
+    function _uninertChrome() {
+        _inertFreed = true;
+        function put(el, k, v) { if (v === null) el.removeAttribute(k); else el.setAttribute(k, v); }
+        try {
+            _inertTabs.forEach(function (r) { put(r.el, 'tabindex', r.tab); });
+            _inertMade.forEach(function (r) { r.el.removeAttribute('inert'); put(r.el, 'aria-hidden', r.hidden); });
+        } catch (eU) {}
+        _inertMade = []; _inertTabs = [];
+    }
+    if (c.liveMode) { $timeout(_inertChrome, 500); $timeout(_inertChrome, 4000); }
+    $scope.$on('$destroy', _uninertChrome);
+
     /* ============================================================
      *  R8.1 - NETRA LAB (advanced diagnostics console on the Live
      *  stage) + FIRST-RUN CALIBRATION
@@ -318,6 +457,8 @@ api.controller = function ($scope, $timeout, $window) {
         if (c.labOn) {
             _labScopeEl = null;   // re-query canvas on open
             $timeout(_labRestorePos, 30);   // put the window back where it was
+        } else {
+            $timeout(function () { _focusEl('.netra-ctl-lab'); }, 30);   // closed with its own x: focus is not lost
         }
         logEvent('lab', c.labOn ? 'Netra Lab opened' : 'Netra Lab closed');
     };
@@ -353,7 +494,7 @@ api.controller = function ($scope, $timeout, $window) {
     };
     c.labSetGain = function () {
         try { localStorage.setItem('netra_mic_gain', String(c.micGain)); } catch (e) {}
-        if (_micGainNode) { try { _micGainNode.gain.value = c.micGain; } catch (e2) {} }
+        _micGainApply();   // muted stays at zero
     };
     c.labSetMute = function () {
         try { localStorage.setItem('netra_lab_mute', c.labMute ? '1' : '0'); } catch (e) {}
@@ -369,10 +510,32 @@ api.controller = function ($scope, $timeout, $window) {
      *  brand new user starts by making Netra theirs.
      * ============================================================ */
     c.setupOn = false;
-    c.setupToggle = function () {
+    c.setupToggle = function () { _setupToggle(); };
+    c.setupKey = function (ev) { _setupKey(ev); };
+    function _setupToggle() {
         c.setupOn = !c.setupOn;
         logEvent('dev', c.setupOn ? 'setup panel opened' : 'setup panel closed');
-    };
+        // closed from inside the sheet: focus goes back to the Settings tab, not to the page
+        if (!c.setupOn) $timeout(function () { _focusEl('.netra-setup-tab'); }, 30);
+    }
+    // Escape closes the settings; on a phone the sheet covers the stage, so
+    // Tab wraps inside it instead of wandering to controls behind it
+    function _setupKey(ev) {
+        if (!ev || !c.setupOn) return;
+        // not stopped here: the page's Escape also stops her talking
+        if (ev.key === 'Escape') { ev.preventDefault(); _setupToggle(); return; }
+        if (ev.key !== 'Tab' || !_narrow()) return;
+        var body = document.querySelector('.netra-setup-body');
+        if (!body) return;
+        var list = Array.prototype.filter.call(body.querySelectorAll('button, select, input, [tabindex]'), function (el) {
+            return !el.disabled && el.getAttribute('tabindex') !== '-1' && el.offsetParent !== null;
+        });
+        if (!list.length) return;
+        var at = document.activeElement, first = list[0], last = list[list.length - 1];
+        if (ev.shiftKey && (at === first || !body.contains(at))) { ev.preventDefault(); last.focus(); }
+        else if (!ev.shiftKey && (at === last || !body.contains(at))) { ev.preventDefault(); first.focus(); }
+    }
+    function _narrow() { return ($window.innerWidth || 1024) <= 600; }
 
     /* ============================================================
      *  R14 - MORNING BRIEFING, AUTOMATICALLY.
@@ -541,6 +704,7 @@ api.controller = function ($scope, $timeout, $window) {
         _labDrag = null;
     }
     function _labRestorePos() {
+        if (_narrow()) return;   // a phone: the Lab is a bottom sheet, never dragged
         try {
             var pos = JSON.parse(sessionStorage.getItem('netra_lab_pos') || 'null');
             if (!pos || !pos.left) return;
@@ -1987,6 +2151,9 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     function _installPWA() {
+        // the live page has the R23 app shell (_appShell); a second manifest,
+        // icon and theme colour here would fight it
+        if (c.liveMode) return;
         try {
             if (document.querySelector('link[data-netra-pwa]')) return;
             var manifest = {
@@ -2212,7 +2379,7 @@ api.controller = function ($scope, $timeout, $window) {
             // for ambient room noise. The mic stream itself stays clean
             // for SpeechRecognition; we only boost if AGC is OFF later.
             var gainNode = _micCtx.createGain();
-            gainNode.gain.value = c.micGain || 1.0;   // R9 - mic sensitivity slider
+            gainNode.gain.value = c.micOff ? 0 : (c.micGain || 1.0);   // R9 - mic sensitivity slider; muted stays muted across a rebuild
             _micGainNode = gainNode;
             _earProc = null; _earSink = null;
             if (c.ear.on) _earTapAttach();
@@ -2476,6 +2643,9 @@ api.controller = function ($scope, $timeout, $window) {
         if (!booted) { tryBoot(true); return; }
         // If the user just finished dragging, swallow the click.
         if (orbDragJustMoved) { orbDragJustMoved = false; return; }
+        // ended or muted: a tap is the user asking for her back
+        if (c.ended) { _liveRestart(); return; }
+        if (c.micOff) { _micUnmute(); return; }
         // toggle sleep/wake by tap as a convenience for sighted helpers
         if (c.alert) {
             _cancelPlanContinue();
@@ -2483,21 +2653,24 @@ api.controller = function ($scope, $timeout, $window) {
             setState('dormant');
             speak('Going to sleep. Say Netra to wake me.');
         } else {
-            c.alert = true;
-            setState('idle');
-            cue('resume');
-            // R1.1 - ALSO force a recognition restart on wake, in case mic
-            // silently died while sleeping. Clears any stale TTS guard too.
-            ignoreFinalsUntil = Date.now();
-            if (!c.recRunning || (Date.now() - recLastActivityAt) > 15000) {
-                logEvent('rec', 'wake: forcing recognition restart');
-                recRestartCount = 0;
-                try { if (contRec) contRec.stop(); } catch (e) {}
-                $timeout(startContinuous, 150);
-            }
-            speak('Yes, I am back.');
+            _wakeUp();
         }
     };
+    function _wakeUp() {
+        c.alert = true;
+        setState('idle');
+        cue('resume');
+        // R1.1 - ALSO force a recognition restart on wake, in case mic
+        // silently died while sleeping. Clears any stale TTS guard too.
+        ignoreFinalsUntil = Date.now();
+        if (!c.recRunning || (Date.now() - recLastActivityAt) > 15000) {
+            logEvent('rec', 'wake: forcing recognition restart');
+            recRestartCount = 0;
+            try { if (contRec) contRec.stop(); } catch (e) {}
+            $timeout(startContinuous, 150);
+        }
+        speak('Yes, I am back.');
+    }
 
     /* ============================================================
      *  R1 - DRAGGABLE FLOATING EYE
@@ -3396,6 +3569,11 @@ api.controller = function ($scope, $timeout, $window) {
         _readyUpdate();   // R21 - the browser recognizer's clean start counts again now
         $scope.$applyAsync();
     }
+    // speech the ear heard before Mute is never delivered
+    function _earForget() {
+        _earSeg = []; _earSegMs = 0; _earVoiceMs = 0; _earSilenceMs = 0; _earInSpeech = false;
+        _earRing = []; _earRingMs = 0; _earSegHerMs = 0; _earSegSpoken = []; _earQueue = [];
+    }
     function _earStop(why) {
         if (!c.ear.on && c.ear.status !== 'loading') return;
         c.ear.on = false; c.ear.why = ''; _earEngageOnLoad = false;
@@ -3445,7 +3623,7 @@ api.controller = function ($scope, $timeout, $window) {
             // only, never a command; a slow device stops asking for them
             _earBusy = false; _earPartialMs = d.ms; _earPartialOk = d.ms < 1800;
             var ptext = String(d.text).replace(/\s+/g, ' ').trim();
-            if (_earInSpeech && !_speakingNow && !EAR_HALLUCINATION_RE.test(ptext)) { c.interim = '(on-device) ' + ptext; $scope.$applyAsync(); }
+            if (_earInSpeech && !_speakingNow && !c.micOff && !EAR_HALLUCINATION_RE.test(ptext)) { c.interim = '(on-device) ' + ptext; $scope.$applyAsync(); }
             _earNext();
             return;
         }
@@ -3480,6 +3658,8 @@ api.controller = function ($scope, $timeout, $window) {
     // the same road a browser final travels: barge-in scoring, aliases, the buffer
     function _earDeliver(text, meta) {
         var t = text, conf = 0.85;
+        // a segment in the worker when Mute was pressed: not for her, not even a barge-in
+        if (c.micOff) { _heardLog(t, conf, 'ignored: mic muted'); return; }
         recLastActivityAt = Date.now();
         _lastFinalAt = Date.now(); c.micHealth.lastFinalAt = _lastFinalAt;
         if (Date.now() < ignoreFinalsUntil) { _heardLog(t, conf, 'dropped: right after my own voice'); return; }
@@ -3664,6 +3844,8 @@ api.controller = function ($scope, $timeout, $window) {
     };
 
     function startContinuous() {
+        // muted: onend, the watchdogs and a wake all come through here
+        if (c.micOff) return;
         if (!_ctrlDestroyed && !c.ear.on) {
             if (!c.hasSR) _earStart('this browser has no speech recognizer', true);
             else if (c.ear.mode === 'on') _earStart('switched on in the Lab', true);
@@ -3700,6 +3882,7 @@ api.controller = function ($scope, $timeout, $window) {
 
         contRec.onresult = function (ev) {
             recLastActivityAt = Date.now();   // R1.1 - silent-rec heartbeat
+            if (c.micOff) return;   // muted: nothing heard is for her, not even a barge-in
             _notAllowedStrikes = 0;           // R8.1 - real results = mic healthy
             if (_netErrStreak) { _netErrStreak = 0; c.micHealth.speechService = 'ok'; }
             if (_deafStrikes && !c.ear.on) _deafStrikes = 0;
@@ -4131,7 +4314,7 @@ api.controller = function ($scope, $timeout, $window) {
 
             // Recognition health: if mic permission is granted but recognition
             // is not running for 3 consecutive checks (~15s), force a restart.
-            if (c.permission === 'granted' && !c.recRunning) {
+            if (c.permission === 'granted' && !c.recRunning && !c.micOff) {
                 watchdogStrikes++;
                 if (watchdogStrikes >= 3) {
                     logEvent('warn', 'watchdog: recognition down for ~15s - force restart');
@@ -4408,6 +4591,8 @@ api.controller = function ($scope, $timeout, $window) {
         // (the server now accepts 16000).
         var clean = (text || '').trim().substring(0, 12000);
         if (!clean) return;
+        // muted: not even her name wakes her - only Unmute does
+        if (c.micOff) { _heardLog(clean, conf, 'ignored: mic muted - press Unmute'); return; }
         // R8.1 - calibration read-back has priority over command routing
         if (_calibConsume(clean)) { _heardLog(clean, conf, 'mic check read-back'); return; }
         // R21 - nothing is accepted before Netra can hear, speak AND answer
@@ -4422,6 +4607,7 @@ api.controller = function ($scope, $timeout, $window) {
         c._hushed = false;   // "quiet" lasts until the user speaks again
         c.prevHeard  = c.lastHeard;   // what "I said X" / "no, I meant X" corrects
         c.lastHeard  = clean;
+        c.captionKeep = false;   // her kept caption gives way to what was heard
         c.confidence = conf ? conf.toFixed(2) : '-';
         if (typeof conf === 'number') _pushConfidence(conf);   // R1 chart
         logEvent('rec.f', '"' + clean + '" conf=' + c.confidence);
@@ -5561,6 +5747,15 @@ api.controller = function ($scope, $timeout, $window) {
      *  Indian female voice). On any failure, falls back to browser
      *  SpeechSynthesis (Heera / Neerja / OS voices).
      * ============================================================ */
+    // the stage caption: her words while she speaks - and when no voice plays
+    // (captions only) until the next thing heard or said - the user's otherwise
+    c.captionKeep = false;
+    c.captionWho = function () { return _captionWho(); };
+    function _captionWho() {
+        if (c.spoken && (c.state === 'speaking' || (c.captionKeep && !c.interim))) return 'netra';
+        if (c.state !== 'speaking' && (c.interim || c.lastHeard)) return 'you';
+        return '';
+    }
     function speak(text, done) {
         if (_ctrlDestroyed) return;   // a reply landing after navigation stays silent
         if (!text) {
@@ -5577,6 +5772,7 @@ api.controller = function ($scope, $timeout, $window) {
         // dry-runs and quiet dev sessions).
         if (c.labMute) {
             c.spoken = String(text).replace(/\*\*([^*]+)\*\*/g, '$1').replace(/[*_`#>]/g, '').trim();
+            c.captionKeep = true;   // no voice: her words stay on screen
             logEvent('tts', 'muted (lab): "' + c.spoken.substring(0, 60) + '"');
             $scope.$applyAsync();
             $timeout(function () { _afterTTS(done); }, 60);
@@ -5593,6 +5789,7 @@ api.controller = function ($scope, $timeout, $window) {
             .replace(/\s+/g, ' ')
             .trim();
         c.spoken = clean.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*/g, '');
+        c.captionKeep = false;   // set again below if no voice plays this line
         $scope.$applyAsync();
 
         // R6 - register what she is about to say for the echo-scorer and
@@ -6135,7 +6332,7 @@ api.controller = function ($scope, $timeout, $window) {
             openConversation('post-TTS auto');
         }
         // If recognition somehow stopped, kick it back up.
-        if (c.hasSR && !c.recRunning && c.permission !== 'denied') {
+        if (c.hasSR && !c.recRunning && !c.micOff && c.permission !== 'denied') {
             logEvent('rec', 'auto-restart after TTS (was not running)');
             $timeout(startContinuous, 200);
         }
@@ -7095,6 +7292,7 @@ api.controller = function ($scope, $timeout, $window) {
         _silenceCurrentAudio();
         if (!c.hasTTS) {
             logEvent('err', 'no browser TTS available');
+            c.captionKeep = true;   // captions only: her words stay on screen
             if (done) done();
             return;
         }
@@ -7141,20 +7339,28 @@ api.controller = function ($scope, $timeout, $window) {
             }
         }, 2000);
 
+        var voiced = false;
         u.onstart = function () {
             $timeout.cancel(startWatchdog);
+            voiced = true;
+            c.captionKeep = false;
             setState('speaking');
             logEvent('tts', 'onstart');
         };
         u.onend = function () {
             $timeout.cancel(startWatchdog);
             _clearSpeaking();   // R6
+            if (!voiced) c.captionKeep = true;   // ended without a sound (no voice installed)
             logEvent('tts', 'onend');
             if (done) done();
         };
         u.onerror = function (ev) {
             $timeout.cancel(startWatchdog);
             _clearSpeaking();   // R6
+            // no voice played (none installed, or blocked): keep her words on
+            // screen until the next thing heard or said; a barge-in is not that
+            var err = ev && ev.error;
+            if (!voiced && err !== 'interrupted' && err !== 'canceled') c.captionKeep = true;
             logEvent('err', 'TTS error: ' + (ev && ev.error));
             if (ev && ev.error === 'not-allowed' && c.gate) {
                 // R21 - the page has not been pressed or tapped yet: say so on
@@ -7665,7 +7871,7 @@ api.controller = function ($scope, $timeout, $window) {
         awaiting: 'Listening',
         thinking: 'Thinking…',
         speaking: 'Speaking — just talk to interrupt',
-        dormant:  'Muted — tap the blob to wake me',
+        dormant:  'Asleep — say Netra or tap to wake me',
         error:    'Hmm, hit a snag — say that again?',
         boot:     'Waking up…'
     };
@@ -7676,6 +7882,12 @@ api.controller = function ($scope, $timeout, $window) {
         c.stateLabel = _stateLabel(s);
         c.liveStatus = LIVE_STATUS[s] || 'Listening';
         if ((s === 'idle' || s === 'awaiting') && c.gate && !c.gate.open) c.liveStatus = c.gate.typing ? TYPING_STATUS : 'Getting ready…';
+        // muted or ended is not asleep: her name does not wake her. While she
+        // speaks the status stays put - talking cannot interrupt her then
+        if (c.ended && (s === 'dormant' || s === 'speaking')) c.liveStatus = 'Ended — press Start Netra again';
+        else if (c.micOff && (s === 'dormant' || s === 'speaking')) c.liveStatus = 'Mic off — press Unmute to talk';
+        if (s === 'dormant' && c.ended) c.stateLabel = 'ended - press Start Netra again to talk to me';
+        else if (s === 'dormant' && c.micOff) c.stateLabel = 'mic off - press Unmute to talk to me';
         $scope.$applyAsync();
         // R3.7 - filler chain is now started explicitly from handleHeard()
         // when the server call is dispatched. setState no longer triggers

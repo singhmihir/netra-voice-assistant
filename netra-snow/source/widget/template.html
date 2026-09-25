@@ -22,7 +22,7 @@
   .netra-lab {
     position: fixed;
     top: 72px;
-    right: 26px;
+    right: calc(26px + env(safe-area-inset-right, 0px));
     width: 400px;
     max-width: 92vw;
     max-height: calc(100vh - 100px);
@@ -149,7 +149,7 @@
   /* R13 - NETRA SETUP panel, docked to the LEFT edge of the stage */
   .netra-setup {
     position: fixed;
-    left: 14px;
+    left: calc(14px + env(safe-area-inset-left, 0px));
     top: 50%;
     transform: translateY(-50%);
     z-index: 60;
@@ -239,23 +239,55 @@
   }
   .netra-setup-check input { accent-color: #8b3df0; width: 15px; height: 15px; }
   @media (max-width: 900px) {
-    .netra-setup { left: 8px; }
+    .netra-setup { left: calc(8px + env(safe-area-inset-left, 0px)); }
     .netra-setup-body { width: 210px; }
   }
   /* R23 - phones: the tab sits under the header, the panel opens as a
      bottom sheet over the stage and scrolls on its own */
   @media (max-width: 600px) {
-    .netra-stage .netra-setup { top: calc(64px + env(safe-area-inset-top, 0px)); left: 8px; transform: none; max-height: none; }
+    .netra-stage .netra-setup { top: calc(64px + env(safe-area-inset-top, 0px)); left: calc(8px + env(safe-area-inset-left, 0px)); transform: none; max-height: none; }
     .netra-stage .netra-setup-body {
       position: fixed; left: 0; right: 0; bottom: 0; width: auto;
       max-height: 76vh; max-height: 76dvh;
       border-radius: 20px 20px 0 0;
-      padding: 16px 18px calc(18px + env(safe-area-inset-bottom, 0px));
+      padding: 16px calc(18px + env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) calc(18px + env(safe-area-inset-left, 0px));
       background: rgba(18, 16, 26, 0.97);
       box-shadow: 0 -14px 40px rgba(0, 0, 0, 0.55);
       z-index: 90;
     }
     .netra-stage .netra-setup select, .netra-stage .netra-setup-btn { min-height: 44px; font-size: 15px; }
+    /* the Lab: a sheet across the width, above the round controls so they
+       stay reachable, scrolling on its own. Up to 600 px the controls sit
+       46 px up: 46 + 62 px buttons + 6 px focus ring = 114 */
+    .netra-stage .netra-lab {
+      top: auto; width: auto; max-width: none;
+      left: calc(8px + env(safe-area-inset-left, 0px));
+      right: calc(8px + env(safe-area-inset-right, 0px));
+      bottom: calc(116px + env(safe-area-inset-bottom, 0px));
+      max-height: calc(100vh - 236px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+      max-height: calc(100dvh - 236px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+      overflow-x: hidden;
+      border-radius: 18px;
+      padding: 0 12px 12px;
+      font-size: 12px;
+      animation: none;
+    }
+  }
+  /* 480 px and less: the controls sit 30 px up, 30 + 62 + 6 = 98 */
+  @media (max-width: 480px) {
+    .netra-stage .netra-lab {
+      bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+      max-height: calc(100vh - 224px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+      max-height: calc(100dvh - 224px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    }
+  }
+  /* a phone held sideways: the Lab stops above the round controls */
+  @media (max-height: 520px) and (orientation: landscape) {
+    .netra-stage .netra-lab { top: calc(56px + env(safe-area-inset-top, 0px)); max-height: calc(100vh - 150px); }
+  }
+  /* touch screens: a checkbox big enough to hit */
+  @media (pointer: coarse) {
+    .netra-setup-check input { width: 24px; height: 24px; }
   }
 
   /* R9 - interactive calibration card */
@@ -296,6 +328,36 @@
     padding: 5px 16px; cursor: pointer;
   }
   .netra-calib-actions button:hover { background: rgba(139, 61, 240, 0.34); }
+
+  /* keyboard focus on the blob: a white ring with a dark halo, visible on
+     the dark room and the pastel mesh alike, and in 3D mode too (the
+     3D rule above drops the blob's drop-shadow glow) */
+  .netra-stage .netra-stage-blob-wrap:focus-visible,
+  .netra-stage.netra-3d-on .netra-stage-blob-wrap:focus-visible {
+    outline: 3px solid #ffffff !important;
+    outline-offset: 6px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 12px rgba(8, 6, 14, 0.85);
+  }
+  /* a phone held sideways: a short caption instead of none */
+  @media (max-height: 520px) and (orientation: landscape) {
+    .netra-stage .netra-stage-caption {
+      font-size: 13px;
+      line-height: 1.35;
+      padding: 4px 12px;
+      max-width: min(640px, calc(100vw - 32px));
+      max-height: 22vh;
+    }
+  }
+  /* reduced motion: the room holds still - no drifting mesh, spinning
+     rings, pulsing dots or sliding panels (stage3d.js honours it too) */
+  @media (prefers-reduced-motion: reduce) {
+    .netra-stage *, .netra-stage *::before, .netra-stage *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+    .netra-stage .netra-ripple { display: none; }
+  }
 </style>
 <div class="netra-root"
      ng-class="['netra-state-' + c.state, {'netra-barged': c.bargeFlash}]"
@@ -584,7 +646,7 @@
   </div>
 
   <!-- Dev toggle badge - shown when dev panel is hidden -->
-  <button class="netra-dev-badge" ng-show="!c.devOn" ng-click="c.toggleDev()"
+  <button class="netra-dev-badge" ng-show="!c.devOn && !(c.data && c.data.is_guest)" ng-click="c.toggleDev()"
           aria-label="Show Netra developer panel"
           title="Alt+D to toggle">DEV</button>
 
@@ -605,20 +667,22 @@
 
     <!-- R23 - install Netra as an app (Android/desktop prompt; iOS: how to add it) -->
     <button type="button" class="netra-app-btn" ng-if="!c.app.standalone && (c.app.canInstall || c.app.ios)"
-            ng-click="c.installApp()" aria-label="Install Netra as an app on this device">
+            ng-click="c.installApp()" aria-controls="netra-app-help"
+            ng-attr-aria-expanded="{{c.app.canInstall ? undefined : (c.app.showHelp ? 'true' : 'false')}}">
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1zm-7 14a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1z"/></svg>
       <span>Install app</span>
     </button>
-    <div class="netra-app-help" ng-if="c.app.showHelp" role="dialog" aria-modal="false" aria-labelledby="netra-app-help-title">
-      <div class="netra-app-help-title" id="netra-app-help-title">Add Netra to your Home Screen</div>
+    <div class="netra-app-help" id="netra-app-help" ng-if="c.app.showHelp" role="dialog" aria-modal="false" aria-labelledby="netra-app-help-title"
+         ng-keydown="c.appHelpKey($event)">
+      <div class="netra-app-help-title" id="netra-app-help-title" tabindex="-1">Add Netra to your Home Screen</div>
       <ol>
         <li>Tap the <b>Share</b> button
           <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M12 2.5a1 1 0 0 1 .7.3l3.5 3.5a1 1 0 0 1-1.4 1.4L13 5.9V15a1 1 0 1 1-2 0V5.9L9.2 7.7a1 1 0 0 1-1.4-1.4l3.5-3.5a1 1 0 0 1 .7-.3zM6 10a1 1 0 0 1 1 1v8h10v-8a1 1 0 1 1 2 0v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/></svg>
-          in Safari's toolbar.</li>
+          in {{c.app.shareWhere}}.</li>
         <li>Choose <b>Add to Home Screen</b>, then <b>Add</b>.</li>
       </ol>
       <p>Netra then opens full screen from her own icon, like any app.</p>
-      <button type="button" class="netra-app-help-ok" ng-click="c.app.showHelp = false">Got it</button>
+      <button type="button" class="netra-app-help-ok" ng-click="c.appHelpClose()">Got it</button>
     </div>
     <header class="netra-stage-head">
       <span class="netra-stage-brand">Netra</span>
@@ -648,7 +712,7 @@
          polite status line inside changes only when a check passes or a real
          problem shows up (never for a download percentage). Everything behind
          it is made inert by client.js while it is up -->
-    <div class="netra-ready" ng-if="c.gate && !c.gate.open && !c.gate.typing" role="dialog" aria-modal="true"
+    <div class="netra-ready" ng-if="c.gate && !c.gate.open && !c.gate.typing && !c.ended" role="dialog" aria-modal="true"
          aria-labelledby="netra-ready-title" aria-describedby="netra-ready-status">
       <div class="netra-ready-card">
         <h2 class="netra-ready-title" id="netra-ready-title" tabindex="-1">{{c.gate.everOpen ? 'One moment - Netra is catching up' : 'Netra is getting ready'}}</h2>
@@ -674,7 +738,7 @@
         <div class="netra-stage-ripples"></div>
       </div>
       <button class="netra-stage-blob-wrap" ng-click="c.tap()"
-              aria-label="Netra is {{c.stateLabel}}. Tap to mute or wake.">
+              aria-label="Netra is {{c.stateLabel}}. {{c.ended ? 'Tap to start her again.' : (c.micOff ? 'Tap to unmute.' : (c.alert ? 'Tap to put her to sleep.' : 'Tap to wake her.'))}}">
         <svg class="netra-stage-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <defs>
             <!-- state-tinted 3D shading, driven by CSS stop-color classes -->
@@ -690,10 +754,12 @@
         </svg>
       </button>
       <div class="netra-stage-status" role="status" aria-live="polite">{{c.liveStatus}}</div>
+      <!-- End for a Guest or the installed app: she rests here, there is nowhere to go back to -->
+      <button type="button" class="netra-ended-btn" ng-if="c.ended" ng-click="c.liveRestart()">Start Netra again</button>
       <!-- R8.1 - live captions: her own words while speaking, yours while listening -->
       <div class="netra-stage-caption netra-stage-caption-netra"
-           ng-show="c.state === 'speaking' && c.spoken">{{c.spoken}}</div>
-      <div class="netra-stage-caption" ng-show="c.state !== 'speaking' && (c.interim || c.lastHeard)">
+           ng-show="c.captionWho() === 'netra'">{{c.spoken}}</div>
+      <div class="netra-stage-caption" ng-show="c.captionWho() === 'you'">
         {{c.interim || c.lastHeard}}
       </div>
 
@@ -726,22 +792,23 @@
       </div>
     </div>
 
-    <footer class="netra-stage-controls">
-      <button class="netra-ctl" ng-click="c.tap()"
-              ng-class="{'netra-ctl-muted': !c.alert}"
-              aria-label="{{c.alert ? 'Mute Netra' : 'Unmute Netra'}}"
-              title="{{c.alert ? 'Mute' : 'Unmute'}}">
-        <svg ng-show="c.alert" viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-4.08A7 7 0 0 0 19 11z"/></svg>
-        <svg ng-show="!c.alert" viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M19 11h-1.7c0 .58-.1 1.13-.27 1.64l1.27 1.27c.44-.88.7-1.87.7-2.91zM4.41 2.86 3 4.27l6 6V11a3 3 0 0 0 4.24 2.74l1.46 1.46A4.98 4.98 0 0 1 12 16a5 5 0 0 1-5-5H5a7 7 0 0 0 6 6.92V22h2v-4.08c.91-.13 1.77-.45 2.54-.9l4.19 4.18 1.41-1.41L4.41 2.86zM15 11V5a3 3 0 0 0-6 0v.18l6 6V11z"/></svg>
+    <footer class="netra-stage-controls" ng-if="!c.ended">
+      <button class="netra-ctl netra-ctl-mic" ng-click="c.toggleMic()"
+              ng-class="{'netra-ctl-muted': c.micOff}"
+              aria-label="{{c.micOff ? 'Unmute mic' : 'Mute mic'}}"
+              title="{{c.micOff ? 'Unmute mic' : 'Mute mic'}}">
+        <svg ng-show="!c.micOff" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-4.08A7 7 0 0 0 19 11z"/></svg>
+        <svg ng-show="c.micOff" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19 11h-1.7c0 .58-.1 1.13-.27 1.64l1.27 1.27c.44-.88.7-1.87.7-2.91zM4.41 2.86 3 4.27l6 6V11a3 3 0 0 0 4.24 2.74l1.46 1.46A4.98 4.98 0 0 1 12 16a5 5 0 0 1-5-5H5a7 7 0 0 0 6 6.92V22h2v-4.08c.91-.13 1.77-.45 2.54-.9l4.19 4.18 1.41-1.41L4.41 2.86zM15 11V5a3 3 0 0 0-6 0v.18l6 6V11z"/></svg>
       </button>
       <button class="netra-ctl netra-ctl-lab" ng-click="c.labToggle()"
               ng-class="{'netra-ctl-lab-on': c.labOn}"
-              aria-label="Toggle the Netra Lab diagnostics panel" title="Netra Lab">
-        <svg viewBox="0 0 24 24" width="21" height="21"><path fill="currentColor" d="M9 2v2h1v4.35L4.5 18.4A2 2 0 0 0 6.24 21h11.52a2 2 0 0 0 1.74-2.6L14 8.35V4h1V2H9zm3 8.5 3.5 6H8.5l3.5-6z"/></svg>
+              aria-expanded="{{c.labOn}}"
+              aria-label="Netra Lab: diagnostics and typing" title="Netra Lab">
+        <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><path fill="currentColor" d="M9 2v2h1v4.35L4.5 18.4A2 2 0 0 0 6.24 21h11.52a2 2 0 0 0 1.74-2.6L14 8.35V4h1V2H9zm3 8.5 3.5 6H8.5l3.5-6z"/></svg>
       </button>
       <button class="netra-ctl netra-ctl-end" ng-click="c.liveExit()"
-              aria-label="Leave Netra Live" title="End">
-        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              aria-label="End" title="End">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
       </button>
     </footer>
 
@@ -756,7 +823,7 @@
           mic level in one place, like setting up a new phone.
           Opens automatically on the very first visit.
           ==================================================== -->
-    <aside class="netra-setup" role="region" aria-label="Netra settings - language, voice and microphone">
+    <aside class="netra-setup" role="region" aria-label="Netra settings - language, voice and microphone" ng-keydown="c.setupKey($event)">
       <button class="netra-setup-tab" ng-click="c.setupToggle()"
               aria-expanded="{{c.setupOn}}"
               aria-label="{{c.setupOn ? 'Close' : 'Open'}} Netra settings">
@@ -781,8 +848,8 @@
         <input id="netra-set-gain" type="range" min="0.5" max="3" step="0.1"
                ng-model="c.micGain" ng-change="c.labSetGain()" aria-label="Microphone meter sensitivity"/>
         <div class="netra-setup-meter" aria-hidden="true"><i ng-style="{width: (c.micLevel || 0) + '%'}"></i></div>
-        <!-- R14 - morning briefing preference -->
-        <label class="netra-setup-check">
+        <!-- R14 - morning briefing preference (a Guest has no queue to brief) -->
+        <label class="netra-setup-check" ng-if="!(c.data && c.data.is_guest)">
           <input type="checkbox" ng-model="c.prefBrief" ng-change="c.setBrief()"/>
           <span>Morning briefing on my first visit of the day</span>
         </label>
@@ -797,7 +864,7 @@
         <span class="netra-lab-grip" aria-hidden="true">⋮⋮</span>
         <span class="netra-lab-title">NETRA LAB</span>
         <span class="netra-lab-sub">audio · recognition · brain</span>
-        <button class="netra-lab-x" ng-click="c.labToggle()" aria-label="Close Netra Lab">×</button>
+        <button type="button" class="netra-lab-x" ng-click="c.labToggle()" aria-label="Close Netra Lab"><span aria-hidden="true">×</span></button>
       </header>
 
       <section class="netra-lab-sec">
@@ -874,6 +941,8 @@
                  aria-label="Type a command for Netra" />
           <button ng-click="c.labSendCmd()" ng-disabled="!c.labCmd">Send</button>
         </div>
+        <!-- her answer, right here: on a phone the Lab covers the stage caption -->
+        <div class="netra-lab-answer" ng-show="c.spoken"><b>Netra</b> {{c.spoken}}</div>
       </section>
 
       <section class="netra-lab-sec">
@@ -1057,7 +1126,7 @@
         beneath, inner rim shadow, rim light on the lower-right
         edge - the classic four-light setup.
         ==================================================== -->
-  <button class="netra-orb"
+  <button class="netra-orb" ng-if="!c.liveMode"
           ng-mousedown="c.dragStart($event)"
           ng-click="c.tap()"
           aria-label="Netra is {{c.stateLabel}}. Drag to move, double-click to shrink."
@@ -1317,7 +1386,7 @@
 
   <!-- Initial-gesture gate -->
   <button class="netra-gate"
-          ng-show="c.needsTap"
+          ng-show="c.needsTap && !c.liveMode"
           ng-click="c.tap()"
           aria-label="Press here to start Netra. Press once and Netra will begin listening.">
     <span class="netra-gate-icon" aria-hidden="true">

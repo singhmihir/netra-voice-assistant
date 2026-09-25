@@ -115,6 +115,20 @@ T.test('Leave, a single-page navigation and a late timer never leave the portal 
     T.ok(p3.doc.activeElement !== p3.start, 'and the focus is not pulled into a card that is gone');
 });
 
+T.test('a Guest pressing Leave on the loading card stays on the page: the card goes, nothing stays inert, and Start again is offered', function () {
+    var cl = page(), p = shut(cl), c = cl.c, said = [];
+    c.data = { is_guest: true }; c.app = { standalone: false };
+    ['_micMute', 'stopSpeaking', 'setState', '_appHelpClose'].forEach(function (n) { cl.set(n, noop); });
+    cl.set('speak', function (t) { said.push(t); });
+    cl.fn._liveExit();
+    T.ok(!p.back, 'no navigation to the login page');
+    T.eq(c.ended, true, 'the ended state, whose button starts her again');
+    givenBack(p, 'Guest Leave');
+    T.match(said[0] || '', /Start Netra again/);
+    var TEMPLATE = require('fs').readFileSync(require('path').join(N.SRC, 'widget', 'template.html'), 'utf8');
+    T.match(TEMPLATE, /class="netra-ready" ng-if="[^"]*!c\.ended/, 'the card is not shown once ended');
+});
+
 /* ---- 3. a refused key: answered from the web, as promised ---- */
 
 function webWorks(P) {
