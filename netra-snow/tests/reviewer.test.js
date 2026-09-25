@@ -143,7 +143,10 @@ T.test('the model is told this is a read-only reviewer account', function () {
     var s = reviewer(new S.Session());
     s.model(gem.text('Sure.'));
     s.say('what can you do for me here');
-    T.match(JSON.stringify(s.gemini.generate[0].systemInstruction || s.gemini.generate[0].system_instruction || ''), /READ-ONLY reviewer account/);
+    var sys = JSON.stringify(s.gemini.generate[0].systemInstruction || s.gemini.generate[0].system_instruction || '');
+    T.match(sys, /READ-ONLY reviewer account/);
+    T.notMatch(sys, /Netra Reviewer|first name/, 'a shared account is many people: no name');
+    T.match(sys, /do not use a name/);
 });
 
 T.run(__filename);

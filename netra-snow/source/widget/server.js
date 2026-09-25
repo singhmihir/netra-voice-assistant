@@ -1485,7 +1485,8 @@
         } else {
             var dn = gs.getUserDisplayName() || '';
             var fn = dn.split(' ')[0] || '';
-            who = (/^system$/i.test(fn) || !fn) ? 'You are speaking with the instance admin; do not invent a name for them.'
+            who = _readOnlyAccount() ? 'You are speaking with a reviewer on a shared account; do not use a name.'
+                : (/^system$/i.test(fn) || !fn) ? 'You are speaking with the instance admin; do not invent a name for them.'
                 : 'You are speaking with ' + dn + '; use their first name "' + fn + '" now and then.';
             who += ' CURRENT FOCUS TICKET: ' + (_focusNumber() || 'none') + ' - "it" / "that ticket" mean this one.' + _reviewerLine();
         }
@@ -3887,6 +3888,8 @@ _timeLine();
 (function () {
     var dn = gs.getUserDisplayName() || '';
     var fn = dn.split(' ')[0] || '';
+    // a shared reviewer account is many people: no name
+    if (_readOnlyAccount()) return 'You are speaking with a reviewer on a shared account; do not use a name. ';
     if (/^system$/i.test(fn) || !fn) {
         return 'You are speaking with the instance admin. Do NOT invent a name for them and never call them "System" - just speak warmly without a name. ';
     }
