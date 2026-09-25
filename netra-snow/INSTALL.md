@@ -187,3 +187,22 @@ To remove Netra entirely:
 1. **System Applications → All Available Applications → My Apps → Netra Voice Assistant**
 2. Click **Delete** on the row. ServiceNow removes every record in the `x_196061_netra` scope automatically — tables, script includes, business rules, scheduled jobs, REST API, widget.
 3. Remove the widget instance from any portal pages.
+
+## The on-device ear's files (optional, recommended on corporate networks)
+
+Where the browser's own speech service is blocked, Netra listens with Whisper
+in the browser. The page fetches the model, the ONNX runtime and
+transformers.js from **this instance** when they are there, and from
+huggingface.co and jsdelivr.net otherwise. To put them on the instance
+(about 950 MB, once; they are not in the update set):
+
+```
+SN_URL=https://<instance>.service-now.com SN_USER=admin SN_PASS=... \
+  python3 netra-snow/scripts/upload-ear-files.py
+```
+
+It downloads the files, creates one `ear_file` record per model and uploads
+each file as an attachment (files past 150 MB in parts). Re-running skips
+what is already there. Check with an anonymous GET of
+`/api/x_196061_netra_v1/voice/ear/whisper-tiny.en/config-json`.
+

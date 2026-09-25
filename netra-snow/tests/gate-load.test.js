@@ -592,3 +592,69 @@ T.test('v7.9 - a proxy that strips the size: the MB so far are shown, and a stal
     f._earStallCheck();
     T.eq(c.ear.status, 'loading');
 });
+
+/* ---- v7.9: the ear's files from this instance first, the hub second ---- */
+T.test('v7.9 - the worker loads from this instance first and falls back to the hub; .json/.js/.wasm asked for as -json/-js/-wasm', function () {
+    var at = CLIENT_SRC.indexOf('var EAR_WORKER_SRC ='), end = CLIENT_SRC.indexOf('    c.earSummary', at);
+    var expr = CLIENT_SRC.substring(at + 'var EAR_WORKER_SRC ='.length, end).replace(/;\s*$/, '');
+    var src = vm.runInNewContext('(' + expr + ')', {}).replace(/^import[^\n]*\n/, '');
+    T.match(CLIENT_SRC, /import \{ pipeline, env \} from '__EAR_LIB__'/, 'the library address is filled in when the worker is made');
+    var run = function (pdiFails) {
+        var posted = [], loads = [], fetched = [], env = { backends: { onnx: { wasm: {} } } };
+        var self = { postMessage: function (m) { posted.push(m); }, fetch: function (u) { fetched.push(String(u)); return Promise.resolve({}); } };
+        var pipeline = function (task, model, opts) {
+            loads.push([model, env.remoteHost, env.remotePathTemplate, env.backends.onnx.wasm.wasmPaths]);
+            self.fetch(env.remoteHost + 'x/config.json'); self.fetch(env.backends.onnx.wasm.wasmPaths + 'ort.wasm'); self.fetch(env.remoteHost + 'x/onnx/encoder_model.onnx');
+            if (pdiFails && /service-now/.test(env.remoteHost)) return Promise.reject(new Error('404'));
+            return Promise.resolve(function () { return Promise.resolve({ text: '' }); });
+        };
+        new Function('self', 'pipeline', 'env', src)(self, pipeline, env);
+        return self.onmessage({ data: { cmd: 'load', model: 'onnx-community/whisper-small.en', device: 'wasm', pdi: 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/', hub: 'https://cdn/ort/' } })
+            .then(function () { return { posted: posted, loads: loads, fetched: fetched }; });
+    };
+    return run(false).then(function (r) {
+        T.eq(r.loads, [['whisper-small.en', 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/', '{model}/', 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/ort/']], 'this instance: the model by its short name, the runtime from ort/');
+        T.eq(r.fetched, ['https://x.service-now.com/api/x_196061_netra_v1/voice/ear/x/config-json', 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/ort/ort-wasm', 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/x/onnx/encoder_model.onnx'], 'the suffixes the platform eats are rewritten; .onnx is not');
+        T.eq(r.posted.filter(function (m) { return m.source; }).map(function (m) { return m.source; }), ['this instance']);
+        return run(true);
+    }).then(function (r) {
+        T.eq(r.loads.length, 2); T.eq(r.loads[1][0], 'onnx-community/whisper-small.en'); T.eq(r.loads[1][1], 'https://huggingface.co/'); T.eq(r.loads[1][2], '{model}/resolve/{revision}/'); T.eq(r.loads[1][3], 'https://cdn/ort/');
+        T.eq(r.fetched[3], 'https://huggingface.co/x/config.json', 'the hub\'s paths are left alone');
+        T.eq(r.posted.filter(function (m) { return m.note; }).length, 1, 'the page is told why');
+        T.eq(r.posted.filter(function (m) { return m.source; }).map(function (m) { return m.source; }), ['the hub']);
+        T.ok(r.posted.some(function (m) { return m.downloaded; }) && r.posted.some(function (m) { return m.loaded; }));
+    });
+});
+
+T.test('v7.9 - the page: the instance base from boot data, the library address, and the ladder instance -> hub -> WebAssembly -> failed', function () {
+    var cl = page(), f = cl.fn, c = cl.c;
+    cl.set('$window', { navigator: { userAgent: DESKTOP }, location: { origin: 'https://x.service-now.com' } });
+    T.eq(f._earBase(), '', 'no base without boot data');
+    c.data = { ear_base: '/api/x_196061_netra_v1/voice/ear' };
+    T.eq(f._earBase(), 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/');
+    T.eq(f._earLib('pdi'), 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/lib/transformers.min-js');
+    T.match(f._earLib('hub'), /^https:\/\/cdn\.jsdelivr\.net\/npm\/@huggingface\/transformers@3\.7\.1\/dist\/transformers\.min\.js$/);
+    var spawned = [], posted = [], made = [];
+    global.Worker = function (url) { made.push(url); this.postMessage = function (m) { posted.push(m); }; this.terminate = noop; };
+    global.URL = global.URL || {}; var oldCreate = global.URL.createObjectURL; global.URL.createObjectURL = function (b) { return 'blob:' + b.size; };
+    global.Blob = global.Blob || function (parts) { this.size = String(parts[0]).length; this.src = String(parts[0]); };
+    cl.set('_nativeVerdict', 'blocked'); c.ear.size = 'small'; c.ear.src = '';
+    f._earPickModel(); c.ear.status = 'loading';
+    f._earSpawn();
+    T.eq(c.ear.src, 'pdi'); T.eq(posted[0].pdi, 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/'); T.match(posted[0].hub, /onnxruntime-web/);
+    // the instance's library would not load: the hub, same model and device
+    f._earLoadFailed('worker: import failed');
+    T.eq(c.ear.src, 'hub'); T.eq(posted[1].pdi, ''); T.eq(c.ear.status, 'loading'); T.eq(c.ear.model, posted[0].model); T.eq(c.ear.device, posted[0].device);
+    // the hub on the GPU failed: WebAssembly (the same size, v7.8)
+    c.ear.device = 'webgpu'; f._earLoadFailed('gpu');
+    T.eq(c.ear.device, 'wasm'); T.eq(c.ear.src, 'hub', 'not back to the instance'); T.eq(posted.length, 3);
+    // and that failed: done
+    f._earLoadFailed('wasm too'); T.eq(c.ear.status, 'error'); T.eq(posted.length, 3);
+    // a fresh load starts from the instance again
+    cl.set('_earWorker', null); c.ear.status = 'off'; c.ear.mode = 'auto';
+    f._earLoad(false); T.eq(c.ear.src, 'pdi'); T.eq(posted[3].pdi, 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/');
+    // no base (an older server): the hub from the start
+    cl.set('_earWorker', null); c.ear.status = 'off'; c.data = {};
+    f._earLoad(false); T.eq(c.ear.src, 'hub'); T.eq(posted[4].pdi, '');
+    global.URL.createObjectURL = oldCreate;
+});

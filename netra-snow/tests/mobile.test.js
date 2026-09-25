@@ -68,6 +68,7 @@ T.test('an unknown app file is a 404', function () {
 T.test('the page learns where the app files are', function () {
     new S.Session();
     T.eq(N.request({}).app_base, '/api/x_196061_netra_v1/voice/app');
+    T.eq(N.request({}).ear_base, '/api/x_196061_netra_v1/voice/ear', 'v7.9 - the ear\'s files from this instance');
 });
 
 function page() {

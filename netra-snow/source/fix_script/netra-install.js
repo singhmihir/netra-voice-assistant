@@ -393,6 +393,12 @@
         { name: 'last_err',    type: 'string', length: 500, label: 'Last Error' },
         { name: 'avg_ms',      type: 'integer',             label: 'Avg Latency ms' }
     ]);
+    // v7.9 - the on-device ear's files (one record per model, the files as
+    // attachments; served by the public ear resource, uploaded by
+    // scripts/upload-ear-files.py - about 950 MB, not part of this installer)
+    upsertTable(scope + '_ear_file', 'Netra Ear File', scopeSysId, [
+        { name: 'name', type: 'string', length: 100, label: 'Name' }
+    ]);
     // R18 - one row per ticket in a background mission (NOT the task table:
     // NT numbers count every task row)
     upsertTable(scope + '_mission_item', 'Netra Mission Item', scopeSysId, [
@@ -452,6 +458,8 @@
     upsertScriptedRestOp(svc, 'notifications', 'GET',  '/notifications', scopeSysId, scope, SRC.notifications);
     upsertScriptedRestOp(svc, 'ping',          'GET',  '/ping',          scopeSysId, scope, SRC.ping);
     upsertScriptedRestOp(svc, 'app',           'GET',  '/app/{file}',    scopeSysId, scope, SRC.app, true);
+    upsertScriptedRestOp(svc, 'ear',           'GET',  '/ear/{model}/{file}',       scopeSysId, scope, SRC.ear, true);   // v7.9 - the ear's files from this instance
+    upsertScriptedRestOp(svc, 'ear_dir',       'GET',  '/ear/{model}/{dir}/{file}', scopeSysId, scope, SRC.ear, true);
     say('  Base path: /api/' + scope + '/voice');
 
     /* ---- System properties ---- */
@@ -556,6 +564,25 @@
             if (privGr.insert()) privCreated++;
         }
     }
+    // v7.9 - the ear resource streams attachments: three scriptable API privileges
+    ['GlideSysAttachment.getContentStream', 'ScriptableServiceResultStreamWriter.writeStream', 'ScriptableServiceResultBuilder.setBody'].forEach(function (api) {
+        var apiEx = new GlideRecord('sys_scope_privilege');
+        apiEx.addQuery('source_scope', scopeSysId);
+        apiEx.addQuery('target_type', 'scriptable');
+        apiEx.addQuery('target_name', api);
+        apiEx.setLimit(1); apiEx.query();
+        if (apiEx.next()) { privSkipped++; return; }
+        var apiGr = new GlideRecord('sys_scope_privilege');
+        apiGr.initialize();
+        apiGr.setValue('source_scope', scopeSysId);
+        apiGr.setValue('target_scope', 'global');
+        apiGr.setValue('target_type', 'scriptable');
+        apiGr.setValue('target_name', api);
+        apiGr.setValue('operation', 'execute');
+        apiGr.setValue('status', 'allowed');
+        apiGr.setValue('sys_scope', scopeSysId);
+        if (apiGr.insert()) privCreated++;
+    });
     say('  privileges: created=' + privCreated + ' existing=' + privSkipped);
 
     /* ---- Widget ---- */

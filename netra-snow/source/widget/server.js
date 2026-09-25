@@ -151,6 +151,7 @@
     data.user_name   = gs.getUserDisplayName();
     data.is_guest    = _isGuest();   // R21 - the public page: a visitor who is not signed in
     data.app_base    = '/api/' + SCOPE + '/voice/app';   // R23 - the installable app's manifest + service worker (public)
+    data.ear_base    = '/api/' + SCOPE + '/voice/ear';   // v7.9 - the on-device ear's files, served from this instance (public)
     data.user_sys_id = user;
     data.error       = null;
     data.has_api_key = !!gs.getProperty(SCOPE + '.gemini_api_key');

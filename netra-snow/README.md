@@ -256,6 +256,28 @@ size still shows the MB so far, and a download that does not start or
 stops for 45 s gives way - the GPU model to the smaller one on
 WebAssembly, and that one to "type instead" with the reason.
 
+**The ear's files come from the instance (v7.9).** No visitor has to reach
+huggingface.co or a CDN, both blocked on many corporate networks: the Whisper
+models (small, base and tiny: their JSON and ONNX weights, the GPU pair of
+small included), the ONNX runtime and transformers.js are attachments on the
+app's `ear_file` records, served by the public resource
+`GET /api/<scope>/voice/ear/{model}/{file}` (and `/{model}/{dir}/{file}`),
+about 950 MB in all, uploaded once by `scripts/upload-ear-files.py`. The
+page's worker asks the instance first and the hub only when the instance has
+no copy (a per-load fallback, logged); a library the instance cannot serve
+falls back to the CDN the same way. Three platform quirks, each held by a
+test: a path ending in .json, .js or .wasm is read as a response format and
+never reaches the resource, so the worker asks for `config-json`,
+`transformers.min-js` and `…jsep-wasm`; a .mjs attachment is refused, so the
+runtime's modules are kept as `.mjs.js`; an upload past about 200 MB is
+refused, so a big file is kept as `.part1`, `.part2`, … and streamed back as
+one. The size header is dropped by the platform, so the loading card shows
+the MB so far. Verified live as a Guest with the browser recognizer blocked:
+every file came from the instance (no request to the hub or the CDN), the
+small model loaded in 61 s and both spoken phrases were heard exactly; with
+the instance's files blocked the ear loaded from the hub in 39 s; with both
+blocked the card offered typing within 6 s.
+
 **Hearing, accuracy first (v7.8).** "It fails to catch simple phrases I
 speak" - so the on-device ear now takes the most accurate Whisper its
 device runs, and says what that costs. On a desktop with WebGPU the ear is

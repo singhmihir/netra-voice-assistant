@@ -3713,7 +3713,18 @@ api.controller = function ($scope, $timeout, $window) {
      *  at all. Browsers without a recognizer get the ear from the start;
      *  the Lab can force it on or off.
      * ============================================================ */
+    // v7.9 - the ear's files come from this instance first (see the ear
+    // REST resource: no visitor has to reach huggingface.co or a CDN), and
+    // from the hub and the CDN when the instance has no copy
     var EAR_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1/dist/transformers.min.js';
+    var EAR_ORT_HUB = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0-dev.20250409-89f8206ba4/dist/';
+    function _earBase() {
+        var b = c.data && c.data.ear_base;
+        if (!b) return '';
+        try { return String($window.location.origin || '') + b + '/'; } catch (e) { return ''; }
+    }
+    // (a .js path never reaches the instance's resource either: -js)
+    function _earLib(src) { return src === 'pdi' ? _earBase() + 'lib/transformers.min-js' : EAR_LIB; }
     // v7.8 - accuracy first: the ladder is tiny (a phone: its own recognizer
     // is primary), base (a desktop on WebAssembly, ~80 MB, no real errors on
     // Indian English) and small (a desktop GPU, or chosen: slow on a CPU but
@@ -3733,7 +3744,7 @@ api.controller = function ($scope, $timeout, $window) {
     var DEAF_WINDOW_MS = 10000;   // judged every ten seconds
     var DEAF_LOUD_MS = 1500;      // this much speech with no words is a strike
     var EAR_HALLUCINATION_RE = /^[\s\W]*$|^\[.*\]$|^\(.*\)$|^(you|thank you|thanks|thanks for watching|bye|so|the end|okay)[.!]?$/i;
-    c.ear = { mode: 'auto', size: 'small', on: false, status: 'off', progress: 0, prepared: false, model: EAR_MODEL_TINY, device: 'wasm', error: '', heard: 0, why: '', lastMs: 0 };
+    c.ear = { mode: 'auto', size: 'small', on: false, status: 'off', progress: 0, loadedMb: 0, src: '', prepared: false, model: EAR_MODEL_TINY, device: 'wasm', error: '', heard: 0, why: '', lastMs: 0 };
     try { c.ear.mode = localStorage.getItem('netra_ear') || 'auto'; c.ear.size = localStorage.getItem('netra_ear_size') || 'small'; } catch (eEM) {}
     if (c.ear.mode !== 'on' && c.ear.mode !== 'off') c.ear.mode = 'auto';
     // v7.9 - Best (small) for everyone by default; a Guest is always on Best
@@ -4304,23 +4315,42 @@ api.controller = function ($scope, $timeout, $window) {
     // the worker: transformers.js from the CDN, the model from the hub,
     // both cached by the browser after the first load
     var EAR_WORKER_SRC =
-        "import { pipeline, env } from '" + EAR_LIB + "';\n" +
+        "import { pipeline, env } from '__EAR_LIB__';\n" +
         "env.allowLocalModels = false;\n" +
         "let asr = null;\n" +
+        // v7.9 - a .json, .js or .wasm path never reaches the instance's
+        // resource (the platform reads it as a response format): -json, -js,
+        // -wasm instead, for the instance's files only
+        "let pdiBase = '';\n" +
+        "if (self.fetch) { const realFetch = self.fetch.bind(self); self.fetch = (url, opts) => { let u = String(url && url.url || url); if (pdiBase && u.indexOf(pdiBase) === 0) u = u.replace(/\\.(json|js|wasm)$/, '-$1'); return realFetch(u, opts); }; }\n" +
         "self.onmessage = async (e) => {\n" +
         "  try {\n" +
         "    if (e.data.cmd === 'load') {\n" +
         "      const dtype = e.data.device === 'webgpu' ? { encoder_model: 'fp32', decoder_model_merged: 'q4' } : 'q8';\n" +
         // one figure for all the model files together (bytes so far over
         // bytes known), never 100 before the download is really done
-        "      const files = {};\n" +
-        "      asr = await pipeline('automatic-speech-recognition', e.data.model, { dtype, device: e.data.device,\n" +
         // (v7.9: a proxy that strips the size still shows the MB so far)
-        "        progress_callback: (p) => { if (p.status === 'progress' && p.file && /\\.onnx$/.test(p.file)) {\n" +
+        "      const files = {};\n" +
+        "      const progress_callback = (p) => { if (p.status === 'progress' && p.file && /\\.onnx$/.test(p.file)) {\n" +
         "          files[p.file] = [p.loaded || 0, p.total || 0]; let got = 0, all = 0, known = true;\n" +
         "          for (const k in files) { got += files[k][0]; all += files[k][1]; if (!files[k][1]) known = false; }\n" +
         "          const mb = Math.floor(got / 1048576);\n" +
-        "          self.postMessage(known && all ? { progress: Math.min(99, Math.floor(got / all * 100)), mb } : { mb }); } } });\n" +
+        "          self.postMessage(known && all ? { progress: Math.min(99, Math.floor(got / all * 100)), mb } : { mb }); } };\n" +
+        // v7.9 - this instance first (its own copy of the model and the
+        // runtime), the hub and the CDN when it has none
+        "      const load = async (src) => {\n" +
+        "        for (const k in files) delete files[k];\n" +
+        "        pdiBase = src === 'pdi' ? e.data.pdi : '';\n" +
+        "        if (src === 'pdi') { env.remoteHost = e.data.pdi; env.remotePathTemplate = '{model}/'; }\n" +
+        "        else { env.remoteHost = 'https://huggingface.co/'; env.remotePathTemplate = '{model}/resolve/{revision}/'; }\n" +
+        "        try { env.backends.onnx.wasm.wasmPaths = src === 'pdi' ? e.data.pdi + 'ort/' : e.data.hub; } catch (eW) {}\n" +
+        "        const model = src === 'pdi' ? e.data.model.replace(/^.*\\//, '') : e.data.model;\n" +
+        "        return await pipeline('automatic-speech-recognition', model, { dtype, device: e.data.device, progress_callback });\n" +
+        "      };\n" +
+        "      if (e.data.pdi) {\n" +
+        "        try { asr = await load('pdi'); self.postMessage({ source: 'this instance' }); }\n" +
+        "        catch (err) { self.postMessage({ note: 'this instance: ' + String(err && err.message || err) + ' - trying the hub' }); asr = await load('hub'); self.postMessage({ source: 'the hub' }); }\n" +
+        "      } else { asr = await load('hub'); self.postMessage({ source: 'the hub' }); }\n" +
         "      self.postMessage({ downloaded: true });\n" +
         "      const w = Date.now(); await asr(new Float32Array(16000)); self.postMessage({ loaded: true, warmMs: Date.now() - w });\n" +
         "    } else if (e.data.cmd === 'run') {\n" +
@@ -4390,7 +4420,7 @@ api.controller = function ($scope, $timeout, $window) {
     function _earLoad(background) {
         if (c.ear.mode === 'off' || _earWorker || c.ear.status === 'loading') return;
         if (typeof Worker === 'undefined' || typeof Blob === 'undefined') return;
-        c.ear.status = 'loading'; c.ear.progress = 0; c.ear.error = ''; c.ear.background = !!background;
+        c.ear.status = 'loading'; c.ear.progress = 0; c.ear.error = ''; c.ear.background = !!background; c.ear.src = '';
         logEvent('rec', 'on-device ear loading in standby' + (background ? ' (in the background)' : ''));
         try {
             _earPickModel();
@@ -4415,6 +4445,7 @@ api.controller = function ($scope, $timeout, $window) {
         c.ear.status = 'loading'; c.ear.progress = 0;
         try {
             if (!_earWorker) {
+                c.ear.src = '';
                 _earPickModel();
                 _earSpawn();
             } else {
@@ -4426,11 +4457,12 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function _earSpawn() {
         c.ear.progress = 0; c.ear.prepared = false; c.ear.loadedMb = 0;   // a new download counts from zero once
-        _earWorker = new Worker(URL.createObjectURL(new Blob([EAR_WORKER_SRC], { type: 'text/javascript' })), { type: 'module' });
+        if (!c.ear.src) c.ear.src = _earBase() ? 'pdi' : 'hub';   // v7.9 - the library from this instance, else the CDN
+        _earWorker = new Worker(URL.createObjectURL(new Blob([EAR_WORKER_SRC.replace('__EAR_LIB__', _earLib(c.ear.src))], { type: 'text/javascript' })), { type: 'module' });
         _earWorker.onmessage = _earOnMessage;
         _earWorker.onerror = function (ev) { _earLoadFailed('worker: ' + (ev && ev.message || 'failed')); };
-        logEvent('rec', 'on-device ear loading ' + c.ear.model + ' on ' + c.ear.device);
-        _earWorker.postMessage({ cmd: 'load', model: c.ear.model, device: c.ear.device });
+        logEvent('rec', 'on-device ear loading ' + c.ear.model + ' on ' + c.ear.device + ' (files from ' + (c.ear.src === 'pdi' ? 'this instance' : 'the hub') + ')');
+        _earWorker.postMessage({ cmd: 'load', model: c.ear.model, device: c.ear.device, pdi: c.ear.src === 'pdi' ? _earBase() : '', hub: EAR_ORT_HUB });
         _earWatchArm();
     }
     // v7.9 - a download that never starts, or stops, used to leave the card
@@ -4457,6 +4489,18 @@ api.controller = function ($scope, $timeout, $window) {
     // the GPU model would not load or run: WebAssembly instead - base for
     // auto (v7.8: a desktop never drops to tiny), a chosen size as chosen
     function _earLoadFailed(msg) {
+        // v7.9 - the library from this instance would not load (the worker
+        // itself failed to start on it), or its files stalled: the same model
+        // from the hub and the CDN
+        if (c.ear.src === 'pdi') {
+            logEvent('warn', 'on-device ear: ' + c.ear.model + ' from this instance failed (' + msg + ') - trying the hub');
+            try { if (_earWorker) _earWorker.terminate(); } catch (e) {}
+            _earWorker = null; _earBusy = false; _earQueue = [];
+            c.ear.src = 'hub'; c.ear.progress = 0; c.ear.loadedMb = 0;
+            if (c.ear.status !== 'loading') c.ear.status = 'loading';
+            try { _earSpawn(); } catch (e2) { _earFail(String(e2 && e2.message || e2)); }
+            return;
+        }
         if (c.ear.device === 'webgpu') {
             var next = _earModelFor(c.ear.size, false);
             logEvent('warn', 'on-device ear: ' + c.ear.model + ' on webgpu failed (' + msg + ') - trying ' + next + ' on wasm');
@@ -4521,6 +4565,8 @@ api.controller = function ($scope, $timeout, $window) {
             if (!c.ear.prepared && pct > c.ear.progress) { c.ear.progress = pct; _readyUpdate(); }
             return;
         }
+        if (d.source) { logEvent('rec', 'on-device ear: files from ' + d.source); return; }
+        if (d.note) { logEvent('warn', 'on-device ear: ' + d.note); c.ear.progress = 0; c.ear.loadedMb = 0; return; }
         if (d.downloaded) { c.ear.prepared = true; c.ear.progress = 100; _readyUpdate(); return; }
         if (d.loaded) {
             if (d.warmMs) logEvent('rec', 'on-device ear warmed up in ' + d.warmMs + ' ms');

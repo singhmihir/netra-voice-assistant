@@ -106,15 +106,23 @@ T.test('every widget action a public page can send changes nothing for a Guest',
     T.eq(changes(before, platform()), [], 'every record as it was');
 });
 
-T.test('the only REST resource open without a login is the read-only app manifest and service worker', function () {
+T.test('the only REST resources open without a login are the read-only app manifest and service worker, and the ear\'s files (v7.9)', function () {
     var inst = fs.readFileSync(path.join(N.SRC, 'fix_script', 'netra-install.js'), 'utf8');
     var ops = inst.match(/upsertScriptedRestOp\(svc,[^\n]*\);/g) || [];
-    T.ok(ops.length >= 4, 'the voice API operations: ' + ops.length);
-    var open = ops.filter(function (o) { return /,\s*true\);$/.test(o); });
-    T.eq(open.length, 1);
+    T.ok(ops.length >= 6, 'the voice API operations: ' + ops.length);
+    var open = ops.filter(function (o) { return /,\s*true\);/.test(o); });
+    T.eq(open.length, 3);
     T.match(open[0], /'app',\s*'GET'/);
+    T.match(open[1], /'ear',\s*'GET',\s*'\/ear\/\{model\}\/\{file\}'/);
+    T.match(open[2], /'ear_dir',\s*'GET',\s*'\/ear\/\{model\}\/\{dir\}\/\{file\}'/);
+    T.ok(open.every(function (o) { return /'GET'/.test(o); }), 'all GET');
     var app = fs.readFileSync(path.join(N.SRC, 'scripted_rest', 'app.js'), 'utf8');
     T.notMatch(app, /GlideRecord|\.insert\(|\.update\(|deleteRecord|setValue/, 'it reads and writes no records');
+    // the ear resource reads the app's own ear_file records and their attachments, nothing else, and writes nothing
+    var ear = fs.readFileSync(path.join(N.SRC, 'scripted_rest', 'ear.js'), 'utf8');
+    var tables = (ear.match(/new GlideRecord\('([^']+)'\)/g) || []).map(function (m) { return m.replace(/.*\('|'\)/g, ''); });
+    T.eq(tables, ['__NETRA_SCOPE___ear_file', 'sys_attachment']);
+    T.notMatch(ear, /\.insert\(|\.update\(|deleteRecord|setValue|gs\.getUser/, 'it writes nothing and looks at no user');
 });
 
 T.run(__filename);
