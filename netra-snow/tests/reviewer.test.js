@@ -89,6 +89,40 @@ T.test('a write is refused before any read-back, in so many words', function () 
     T.notMatch(tr, /needs_confirmation/);
 });
 
+T.test('the fast lane offers a reviewer no change either: an order gets the read-only line, not a read-back', function () {
+    var s = reviewer(new S.Session());
+    var before = platform();
+    ['resolve incident INC0010013, it is fixed', 'assign INC0010013 to the database team', 'set the priority of INC0010013 to 1',
+     'add a work note to INC0010013 saying checked', 'create a ticket for my laptop', 'undo that', 'yes'].forEach(function (u) {
+        s.model(gem.text('I can not change anything here.'));
+        var r = s.say(u);
+        T.notMatch(String(r.message || ''), /Shall I\?/, u + ': ' + String(r.message || '').substring(0, 80));
+    });
+    T.eq(changes(before, platform()), [], 'nothing changed');
+    // basic mode (no model at all) parks its one write straight from the fast lane
+    g.P.PROPS['x_196061_netra_v1.brain_offline'] = 'true';
+    var r = s.say('create a ticket for the broken printer on floor 3');
+    T.match(r.message, /read-only reviewer account/);
+    T.notMatch(r.message, /Shall I\?/);
+});
+
+T.test('the model is offered no write tool, and its rules say read-only instead of "read back every write"', function () {
+    var s = reviewer(new S.Session());
+    s.model(gem.text('This is a read-only account.'));
+    s.say('resolve incident INC0010013, it is fixed');
+    var req = s.gemini.generate[0], names = [];
+    ((req.tools && req.tools[0] && req.tools[0].functionDeclarations) || []).forEach(function (d) { names.push(d.name); });
+    var f = N.loadServer({ input: { action: 'chat' } }).fn;
+    T.eq(names.filter(function (n) { return f._reviewerRefused(n); }), [], 'no write offered: ' + names.join(','));
+    T.ok(names.indexOf('summarize_ticket') >= 0 || names.indexOf('get_ticket_status') >= 0, 'reads still offered');
+    var sys = JSON.stringify(req.systemInstruction || req.system_instruction || '');
+    T.match(sys, /READ-ONLY/);
+    T.notMatch(sys, /ask \\"Shall I\?\\"/, 'no read-back rule');
+    // the full prompt too
+    var full = JSON.stringify(f._systemPrompt(true));
+    T.match(full, /READ-ONLY REVIEWER ACCOUNT/);
+});
+
 T.test('reviewers share the account, so it keeps no memory, focus, inbox or training rows', function () {
     var s = reviewer(new S.Session());
     var sv = N.loadServer({ input: { action: 'chat' } });
