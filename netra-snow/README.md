@@ -284,15 +284,41 @@ voice, no CDN: a neural voice (Piper, en_GB "Cori", medium quality) runs in
 a module worker from the instance's own files - the ONNX runtime, the
 phonemizer (espeak-ng in WebAssembly, 18 MB of language data) and the 63 MB
 voice model, all under the ear resource's `voice/` and `ort/`. It is the
-default engine for everyone: the loading card waits up to 25 s for it, and
-this device's own voice speaks a line while hers loads or if she fails. Each
-sentence group is synthesized in the worker in order and played back to back
-(a barge-in abandons the queue; a failed group hands the rest to the device
-voice). Settings lists "Netra's own voice (Cori, British English)" first; a
-device voice can still be picked, and the Lab's engine cycle includes hers.
-Measured in Chromium (one WebAssembly thread): the voice ready in about 3 s
-once cached, a 6-second sentence synthesized in 2.3 s; her own ear
-transcribed her own voice's audio word for word.
+default engine for everyone, and once it is there it is the only voice
+heard: a line spoken while it loads waits for it, up to 90 s; a sentence it
+cannot make (tried twice, 5 s a try) is left out, never said in another
+voice; a worker that dies at any point in the visit is started again (four
+times at most, after a pause that doubles from 1.5 s to 12 s) and lines
+wait up to 25 s for it to come back, since its files are cached by then; a
+load that goes quiet for 45 s (no bytes landing, no start step begun) is
+started again too; a worker that gives no answer for 30 s to the sentence
+it is on is stuck and is started again - and that watch is not moved by new
+lines or by a barge-in, so a stuck worker is caught while the user keeps
+talking. The thinking cues are four short lines made in her voice once she
+is ready, and on her engine the device's speech synthesis is never used for
+a cue (silence keeps the pacing instead). This device's own voice speaks
+only when the instance has no voice files at all, or when hers died and
+would not come back in time - and then for the rest of the line she had
+begun, so nothing is lost. Each sentence is its own group: synthesized in
+the worker in order and played back to back; a barge-in or a new line drops
+what is still queued and lets the cut clip's memory go. Leaving the page
+ends the worker. Settings lists "Netra's own voice (Cori, British English)"
+first; a device voice can still be picked, and the Lab's engine cycle
+includes hers.
+
+She loads fast: the worker starts the moment the page has its data (before
+any tap), fetches the config, the phonemizer, the voice, its language data
+and both WebAssembly binaries together through Cache storage (the second
+visit needs no network; the bytes so far show on the loading card), hands
+the language data to the phonemizer instead of letting it fetch it again,
+builds the ONNX session and the phonemizer in parallel and warms up once;
+the on-device ear's 250 MB download waits for her files to come down (up to
+45 s when it is needed, her whole load when it is only standby). Measured
+in Chromium (one WebAssembly thread, the browser recognizer blocked): first
+visit, ready 12 s after the page's data (16 s after navigation); next
+visit, 3.7 s (7 s after navigation), the greeting in her voice, the
+thinking cue in her voice, the device's synthesis called zero times. Her
+own ear transcribed her own voice's audio word for word.
 
 **Hearing, accuracy first (v7.8).** "It fails to catch simple phrases I
 speak" - so the on-device ear now takes the most accurate Whisper its

@@ -1,6 +1,9 @@
 /* v7.9 - Netra's own voice, from this instance: a neural voice (Piper, Cori)
  * run in a module worker from the instance's files; her own voice is the
- * default engine, this device's voice speaks while hers loads or if she fails. */
+ * default engine, and once it is there it is the only one heard: a line
+ * waits for her while she loads, a sentence she cannot make is left out,
+ * a dead worker is started again; this device's voice only when she is not
+ * on the instance at all, or would not come back. */
 var T = require('./lib/t.js'), N = require('./lib/netra.js');
 var fs = require('fs'), path = require('path'), vm = require('vm');
 var CLIENT = fs.readFileSync(path.join(N.SRC, 'widget', 'client.js'), 'utf8');
@@ -12,12 +15,19 @@ function page() {
     c.gate = { open: false, everOpen: false, hearing: false, voice: false, brain: true, hearingText: '', voiceText: '', brainText: 'ready' };
     cl.set('$window', { location: { origin: 'https://x.service-now.com' }, navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0) Chrome/141' } });
     cl.set('$scope', { $applyAsync: noop, $on: noop });
-    cl.set('$timeout', Object.assign(function () { return {}; }, { cancel: noop }));
+    // a timeout stub that runs at once (the page's own delays are not what is tested here)
+    // short delays run at once (a restart, a cue's gap); long ones (a 30 s stall, the cues 6 s after ready) never fire here
+    cl.set('$timeout', Object.assign(function (fn, delay) { if (typeof fn === 'function' && (delay || 0) <= 1500) fn(); return {}; }, { cancel: noop }));
     cl.set('logEvent', function (l, m) { c.events.push(l + ': ' + m); });
     ['_readyUpdate', '_silenceCurrentAudio', 'attachOutputAnalyser', 'detachOutputAnalyser', '_clearSpeaking', 'setState', '_hushState', '_markSpeaking', '_cancelReprompt', '_keepCaption'].forEach(function (n) { cl.set(n, noop); });
     cl.set('_speakSessionId', 0); cl.set('_duckedForBarge', false); cl.set('_ctrlDestroyed', false);
-    cl.set('VOICE_MODEL', 'en_GB-cori-medium'); cl.set('VOICE_NAME', 'Cori'); cl.set('VOICE_WORKER_SRC', '/* worker */');   // set by the controller body, which the harness does not run
+    // set by the controller body, which the harness does not run
+    cl.set('VOICE_MODEL', 'en_GB-cori-medium'); cl.set('VOICE_NAME', 'Cori'); cl.set('VOICE_WORKER_SRC', '/* worker */');
     cl.set('_voiceWorker', null); cl.set('_voiceJobs', {}); cl.set('_voiceJobId', 0); cl.set('_voiceLoadStart', 0); cl.set('_voiceWaitSaid', false);
+    cl.set('_voiceHeld', []); cl.set('_voiceRestarts', 0); cl.set('_voiceRestartAt', 0); cl.set('VOICE_WAIT_MS', 90000); cl.set('_voiceFirstStart', 0); cl.set('_voiceWaitTimer', null); cl.set('_voiceStallTimer', null);
+    cl.set('_voiceEverReady', false); cl.set('_voiceOut', []); cl.set('_voiceHeadSince', 0); cl.set('_voiceLastMsg', 0); cl.set('_voiceLoadTimer', null);
+    cl.set('VOICE_RESTART_WAIT_MS', 25000); cl.set('VOICE_RESTARTS', 4); cl.set('VOICE_LOAD_STALL_MS', 45000); cl.set('VOICE_STALL_MS', 30000);
+    cl.set('VOICE_FILLERS', ['One moment, please.', 'Checking on that now.']); cl.set('_fillersPrepared', false); cl.set('fillerCache', []);
     return cl;
 }
 // a worker that answers like the real one
@@ -33,65 +43,121 @@ function fakeWorker(cl, behaviour) {
     if (!global.URL.revokeObjectURL) global.URL.revokeObjectURL = noop;
     return made;
 }
-
-T.test('the worker: the runtime, the phonemizer and the voice from this instance (-json/-js/-wasm where the platform eats a suffix); phonemes -> the model\'s feeds -> PCM', function () {
+function workerSrc() {
     var at = CLIENT.indexOf('var VOICE_WORKER_SRC ='), end = CLIENT.indexOf("    c.voice = { status: 'off'", at);
     var expr = CLIENT.substring(at + 'var VOICE_WORKER_SRC ='.length, end).replace(/;\s*$/, '');
-    var src = vm.runInNewContext('(' + expr + ')', {}).replace(/await import\(/g, 'await __import(');
-    var fetched = [], posted = [], runs = [], created = 0, mains = [];
-    var self = { postMessage: function (m) { posted.push(m); }, fetch: function (u) {
-        fetched.push(String(u));
-        return Promise.resolve({ json: function () { return Promise.resolve({ audio: { sample_rate: 22050 }, espeak: { voice: 'en' }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 }, num_speakers: 1 }); },
-            text: function () { return Promise.resolve('var createPiperPhonemize = function (opts) { self.__phonOpts = opts; return Promise.resolve({ callMain: function (args) { self.__mains.push(args); opts.print(JSON.stringify({ phoneme_ids: [1, 2, 3, 4] })); } }); };'); },
-            arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(8)); } });
-    } };
+    return vm.runInNewContext('(' + expr + ')', {}).replace(/import\(/g, '__import(');
+}
+
+T.test('the worker: the runtime, the phonemizer and the voice from this instance, together and into Cache storage; the language data handed over; a warm-up; phonemes -> the model\'s feeds -> PCM; an empty sentence is silence', function () {
+    var src = workerSrc();
+    var fetched = [], posted = [], runs = [], created = 0, mains = [], putInCache = [];
+    var self = {
+        caches: { open: function () { return Promise.resolve({ match: function () { return Promise.resolve(undefined); }, put: function (u) { putInCache.push(String(u)); return Promise.resolve(); } }); } },
+        postMessage: function (m) { posted.push(m); },
+        fetch: function (u) {
+            fetched.push(String(u));
+            return Promise.resolve({ ok: true, clone: function () { return this; },
+                json: function () { return Promise.resolve({ audio: { sample_rate: 22050 }, espeak: { voice: 'en' }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 }, num_speakers: 1 }); },
+                text: function () { return Promise.resolve('var createPiperPhonemize = function (opts) { self.__phonOpts = opts; return Promise.resolve({ callMain: function (args) { self.__mains.push(args); var t = JSON.parse(args[3])[0].text; opts.print(JSON.stringify({ phoneme_ids: t ? [1, 2, 3, 4] : [] })); } }); };'); },
+                arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(8)); } });
+        }
+    };
     self.__mains = mains;
     var Tensor = function (type, data, dims) { this.type = type; this.data = data; this.dims = dims; };
-    var ort = { env: { wasm: {} }, Tensor: Tensor, InferenceSession: { create: function (buf, o) { created++; return Promise.resolve({ run: function (feeds) { runs.push(feeds); return Promise.resolve({ output: { data: Float32Array.from([0.1, -0.2, 0.3]) } }); } }); } } };
+    var ort = { env: { wasm: {} }, Tensor: Tensor, InferenceSession: { create: function () { created++; return Promise.resolve({ run: function (feeds) { runs.push(feeds); return Promise.resolve({ output: { data: Float32Array.from([0.1, -0.2, 0.3]) } }); } }); } } };
     var __import = function (u) { fetched.push('import ' + u); return Promise.resolve(ort); };
-    new Function('self', '__import', 'setTimeout', 'clearTimeout', 'fetch', src)(self, __import, setTimeout, clearTimeout, function (u, o) { return self.fetch(u, o); });
-    self.onmessage({ data: { cmd: 'load', base: 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/', model: 'en_GB-cori-medium' } });
+    new Function('self', '__import', 'setTimeout', 'clearTimeout', 'fetch', 'caches', src)(self, __import, setTimeout, clearTimeout, function (u, o) { return self.fetch(u, o); }, self.caches);
+    var B = 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/';
+    self.onmessage({ data: { cmd: 'load', base: B, model: 'en_GB-cori-medium' } });
     self.onmessage({ data: { cmd: 'say', id: 7, text: 'Hello there.', lengthScale: 0.9 } });
-    return new Promise(function (r) { setTimeout(r, 50); }).then(function () {
-        T.eq(fetched, ['import https://x.service-now.com/api/x_196061_netra_v1/voice/ear/ort/ort.wasm.bundle.min.mjs',
-            'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/voice/en_GB-cori-medium.onnx-json',
-            'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/voice/piper_phonemize-js',
-            'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/voice/en_GB-cori-medium.onnx'], 'every file from this instance, none from a CDN or a hub');
-        T.eq(ort.env.wasm.wasmPaths, 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/ort/');
-        T.eq(self.__phonOpts.locateFile('piper_phonemize.wasm'), 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/voice/piper_phonemize-wasm');
-        T.eq(self.__phonOpts.locateFile('piper_phonemize.data'), 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/voice/piper_phonemize.data');
+    self.onmessage({ data: { cmd: 'say', id: 71, text: '' } });
+    return new Promise(function (r) { setTimeout(r, 80); }).then(function () {
+        T.eq(fetched.slice().sort(), ['import ' + B + 'ort/ort.wasm.bundle.min.mjs', B + 'voice/en_GB-cori-medium.onnx', B + 'voice/en_GB-cori-medium.onnx-json', B + 'voice/piper_phonemize-js', B + 'voice/piper_phonemize.data', B + 'ort/ort-wasm-simd-threaded-wasm', B + 'voice/piper_phonemize-wasm'].sort(), 'every file from this instance, none from a CDN or a hub: the language data and both WebAssembly binaries too, all at once');
+        T.eq(putInCache.length, 6, 'the six files go into Cache storage for the next visit');
+        T.eq(ort.env.wasm.wasmPaths, B + 'ort/');
+        T.eq(self.__phonOpts.locateFile('piper_phonemize.wasm'), B + 'voice/piper_phonemize-wasm');
+        T.ok(self.__phonOpts.getPreloadedPackage() instanceof ArrayBuffer, 'the language data handed to the phonemizer, not fetched by it');
         T.eq(created, 1);
-        T.eq(posted[0].ready, true); T.eq(posted[0].rate, 22050);
-        T.eq(mains[0], ['-l', 'en', '--input', '[{"text":"Hello there."}]', '--espeak_data', '/espeak-ng-data']);
-        var f = runs[0];
+        T.eq(posted.map(function (m) { return m.stage || (m.ready ? 'ready' : 'id' + m.id); }), ['fetching', 'starting', 'starting', 'ready', 'id7', 'id71'], 'the stages (each step of the start announced), then ready, then the sentences');
+        T.eq(posted[0].mb, 0); T.eq(posted[1].step, 'engine'); T.eq(typeof posted[1].mb, 'number', 'the bytes that came down'); T.eq(posted[2].step, 'warm-up');
+        T.eq(posted[3].rate, 22050);
+        T.eq(mains[0], ['-l', 'en', '--input', '[{"text":"Ready."}]', '--espeak_data', '/espeak-ng-data'], 'a warm-up sentence first');
+        T.eq(mains[1], ['-l', 'en', '--input', '[{"text":"Hello there."}]', '--espeak_data', '/espeak-ng-data']);
+        T.eq(runs.length, 2, 'the model ran for the warm-up and the sentence; the empty one has no phonemes');
+        var f = runs[1];
         T.eq([f.input.type, f.input.dims, Array.from(f.input.data).map(Number)], ['int64', [1, 4], [1, 2, 3, 4]]);
         T.eq([f.input_lengths.type, Array.from(f.input_lengths.data).map(Number)], ['int64', [4]]);
         T.eq(f.scales.type, 'float32'); T.ok(Math.abs(f.scales.data[1] - 0.9) < 1e-6, 'the pace is the length scale: ' + f.scales.data[1]);
         T.ok(!f.sid, 'no speaker id for a single-speaker voice');
-        T.eq(posted[1].id, 7); T.eq(Array.from(posted[1].pcm).map(function (x) { return Math.round(x * 10) / 10; }), [0.1, -0.2, 0.3]); T.eq(posted[1].rate, 22050);
+        T.eq(posted[4].id, 7); T.eq(Array.from(posted[4].pcm).map(function (x) { return Math.round(x * 10) / 10; }), [0.1, -0.2, 0.3]); T.eq(posted[4].rate, 22050);
+        T.eq(posted[5].id, 71); T.eq(posted[5].pcm.length, 0, 'silence for a sentence with no phonemes');
         // queued sentences dropped: answered as dropped, never run
         self.onmessage({ data: { cmd: 'say', id: 8, text: 'Eight.' } });
         self.onmessage({ data: { cmd: 'say', id: 9, text: 'Nine.' } });
         self.onmessage({ data: { cmd: 'drop', upTo: 9 } });
         self.onmessage({ data: { cmd: 'say', id: 10, text: 'Ten.' } });
         return new Promise(function (r) { setTimeout(r, 50); }).then(function () {
-            var tail = posted.slice(2).map(function (m) { return m.id + (m.dropped ? ' dropped' : ' pcm'); });
+            var tail = posted.slice(6).map(function (m) { return m.id + (m.dropped ? ' dropped' : ' pcm'); });
             T.eq(tail, ['8 dropped', '9 dropped', '10 pcm'], 'eight and nine skipped (eight was already phonemized), ten made: ' + tail.join(', '));
-            T.eq(runs.length, 2, 'the model ran only for seven and ten');
+            T.eq(runs.length, 3, 'the model ran for the warm-up, seven and ten');
         });
     });
 });
 
-T.test('the page: her voice loads from this instance at boot, the gate waits for it (a while), Settings lists it first, the Lab cycles to it', function () {
+T.test('the worker: a sentence is tried twice; the second visit reads Cache storage and fetches nothing', function () {
+    var src = workerSrc();
+    var fetched = [], posted = [], attempts = 0;
+    var cached = {};
+    var self = {
+        caches: { open: function () { return Promise.resolve({ match: function (u) { return Promise.resolve(cached[u]); }, put: function (u, r) { cached[u] = r; return Promise.resolve(); } }); } },
+        postMessage: function (m) { posted.push(m); },
+        fetch: function (u) {
+            fetched.push(String(u));
+            return Promise.resolve({ ok: true, clone: function () { return this; },
+                json: function () { return Promise.resolve({ audio: { sample_rate: 22050 }, espeak: { voice: 'en' }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 }, num_speakers: 1 }); },
+                text: function () { return Promise.resolve('var createPiperPhonemize = function (opts) { return Promise.resolve({ callMain: function (args) { opts.print(JSON.stringify({ phoneme_ids: [1, 2] })); } }); };'); },
+                arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(8)); } });
+        }
+    };
+    var Tensor = function (type, data, dims) { this.type = type; this.data = data; this.dims = dims; };
+    var ort = { env: { wasm: {} }, Tensor: Tensor, InferenceSession: { create: function () { return Promise.resolve({ run: function () { attempts++; if (attempts === 2) return Promise.reject(new Error('flaky once')); if (attempts === 4 || attempts === 5) return Promise.reject(new Error('broken twice')); return Promise.resolve({ output: { data: Float32Array.from([0.5]) } }); } }); } } };
+    var __import = function () { return Promise.resolve(ort); };
+    new Function('self', '__import', 'setTimeout', 'clearTimeout', 'fetch', 'caches', src)(self, __import, setTimeout, clearTimeout, function (u, o) { return self.fetch(u, o); }, self.caches);
+    var B = 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/';
+    self.onmessage({ data: { cmd: 'load', base: B, model: 'en_GB-cori-medium' } });
+    self.onmessage({ data: { cmd: 'say', id: 1, text: 'Once more.' } });
+    self.onmessage({ data: { cmd: 'say', id: 2, text: 'No luck.' } });
+    return new Promise(function (r) { setTimeout(r, 80); }).then(function () {
+        var got = posted.filter(function (m) { return m.id !== undefined; });
+        T.eq(got[0].id, 1); T.eq(got[0].pcm.length, 1, 'the first sentence, made on the second try');
+        T.eq(got[1].id, 2); T.match(got[1].error, /broken twice/, 'the second, tried twice, is reported');
+        T.eq(attempts, 5, 'warm-up, then two tries, then two tries');
+        T.eq(fetched.length, 6, 'six files fetched on the first visit');
+        // the next visit: everything from Cache storage
+        var fetched2 = fetched.length;
+        var self2 = Object.assign({}, self, { postMessage: noop });
+        new Function('self', '__import', 'setTimeout', 'clearTimeout', 'fetch', 'caches', src)(self2, __import, setTimeout, clearTimeout, function (u, o) { return self2.fetch(u, o); }, self2.caches);
+        self2.onmessage({ data: { cmd: 'load', base: B, model: 'en_GB-cori-medium' } });
+        return new Promise(function (r) { setTimeout(r, 60); }).then(function () { T.eq(fetched.length, fetched2, 'nothing fetched: every file came from Cache storage'); });
+    });
+});
+
+T.test('the page: her voice loads from this instance at boot, the card waits for it and names the stage, Settings lists it first, the Lab cycles to it, the ear waits for her', function () {
     var cl = page(), c = cl.c, f = cl.fn;
     var made = fakeWorker(cl);
     f._netraVoiceLoad();
     T.eq(c.voice.status, 'loading'); T.eq(made.length, 1); T.eq(made[0].opts, { type: 'module' });
     T.eq(made[0].posted[0], { cmd: 'load', base: 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/', model: 'en_GB-cori-medium' });
     f._netraVoiceLoad(); T.eq(made.length, 1, 'loaded once');
-    // the gate: waiting, then hers
+    // the card: waiting, the stage named, then hers
     T.eq(f._voiceReady(), false); T.eq(c.gate.voiceText, 'loading my own voice from this instance…');
     T.eq(f._plainGateText(c.gate.voiceText), 'Getting her voice ready from this instance…');
+    f._netraVoiceOnMessage({ data: { stage: 'starting' } });
+    T.eq(f._voiceReady(), false); T.eq(f._plainGateText(c.gate.voiceText), 'Starting her voice…');
+    cl.set('_voiceFirstStart', Date.now() - 80000); T.eq(f._voiceReady(), false, 'still waited for at 80 s');
+    cl.set('_voiceFirstStart', Date.now() - 95000); T.eq(f._netraVoiceComing(), false, 'past 90 s she is no longer waited for'); f._voiceReady(); T.notMatch(c.gate.voiceText, /my own voice/, 'the device\'s voices are looked at instead: ' + c.gate.voiceText);
+    cl.set('_voiceFirstStart', Date.now());
     f._netraVoiceOnMessage({ data: { ready: true, ms: 2400, rate: 22050 } });
     T.eq(c.voice.status, 'ready'); T.eq(f._netraVoiceReady(), true);
     T.eq(f._voiceReady(), true); T.eq(c.gate.voiceText, 'my own voice (Cori)'); T.eq(f._plainGateText(c.gate.voiceText), 'Netra\'s own voice (Cori)');
@@ -108,9 +174,19 @@ T.test('the page: her voice loads from this instance at boot, the gate waits for
     T.match(CLIENT, /c\.ttsEngine\s+= 'netra';/, 'her own voice is the default engine');
     T.match(CLIENT, /var seq = \['netra', 'edge', 'gemini', 'stream', 'browser'\];/, 'the Lab cycles through it');
     T.match(CLIENT, /startContinuous\(\);\n\s+_netraVoiceLoad\(\);/, 'loaded at boot, before the ear');
+    T.match(CLIENT, /\$timeout\(function \(\) \{ if \(!_ctrlDestroyed\) _netraVoiceLoad\(\); \}, 0, false\);\n\};\s*$/, 'and already when the page has its data, before any tap');
+    T.ok(/_afterVoice\(function \(\) \{ _earLoad\(true\); \}, 60000, true\)/.test(CLIENT), 'the standby ear waits for her whole load');
+    T.ok(/_afterVoice\(function \(\) \{ if \(!_earWorker && c\.ear\.status === 'loading'\) \{ try \{ _earSpawn\(\); \}[^\n]*\}, 45000\)/.test(CLIENT), 'the needed ear waits for her files to come down (up to 45 s)');
+    // _afterVoice: runs at once when she is not loading, waits while she is
+    var ran = 0; c.voice.status = 'ready'; f._afterVoice(function () { ran++; }, 5000); T.eq(ran, 1);
+    c.voice.status = 'loading'; c.voice.stage = 'starting'; f._afterVoice(function () { ran++; }, 5000); T.eq(ran, 2, 'once her files are down the ear may start');
+    var quiet = cl.get('$timeout'); cl.set('$timeout', Object.assign(function () { return {}; }, { cancel: noop }));
+    c.voice.stage = 'fetching'; f._afterVoice(function () { ran++; }, 5000); T.eq(ran, 2, 'while her files come down the ear waits');
+    f._afterVoice(function () { ran++; }, 5000, true); c.voice.stage = 'starting'; f._afterVoice(function () { ran++; }, 5000, true); T.eq(ran, 2, 'the standby ear waits for her whole load');
+    cl.set('$timeout', quiet);
 });
 
-T.test('speaking: sentence groups synthesized in order and played back to back; a barge-in abandons the rest; a failed group hands the rest to this device\'s voice; while she loads the device speaks (said once)', function () {
+T.test('speaking: one sentence a group, made in order, played back to back; a line waits for her while she loads; a sentence she could not make is left out; a barge-in drops the queue; a dead worker is started again and the next line waits; the device only when she is not on the instance or would not come back', function () {
     var cl = page(), c = cl.c, f = cl.fn;
     var answers = [];
     var made = fakeWorker(cl, function (w, m) { if (m.cmd === 'say') answers.push(m); });
@@ -118,16 +194,31 @@ T.test('speaking: sentence groups synthesized in order and played back to back; 
     global.Audio = function (url) { var a = this; this.url = url; played.push(a); this.play = function () { return Promise.resolve(); }; };
     global.Blob = global.Blob || function (parts, o) { this.parts = parts; this.type = o && o.type; };
     cl.set('speakBrowser', function (text, done) { browser.push(text); if (done) done(); });
-    // not ready yet: the device speaks, and the reason is logged once
     cl.set('_humanizeReply', function (t) { return t; }); cl.set('_afterTTS', function (d) { if (d) d(); }); c.labMute = false;
+    // not on this instance at all: the device speaks, and the reason is logged once
+    c.data = {};
     f.speak('Hello.'); f.speak('Again.');
     T.eq(browser, ['Hello.', 'Again.']);
-    T.eq(c.events.filter(function (e) { return /this device's voice for now/.test(e); }).length, 1, 'said once');
-    // ready: two groups, synthesized in order, played in order
-    f._netraVoiceLoad(); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.eq(c.events.filter(function (e) { return /this device's voice instead/.test(e); }).length, 1, 'said once');
+    // loading: a line waits for her, and is said by her once she is there
+    c.data = { ear_base: '/api/x_196061_netra_v1/voice/ear' }; browser.length = 0; cl.set('_voiceWaitSaid', false);
+    f._netraVoiceLoad();
+    var heldDone = 0;
+    var sessionBefore = cl.get('_speakSessionId');
+    f.speak('Wait for me.', function () { heldDone++; });
+    T.eq(browser, [], 'not the device'); T.eq(cl.get('_voiceHeld').length, 1, 'held');
+    T.ok(c.events.some(function (e) { return /this line waits for it/.test(e); }), c.events.join(' | '));
+    T.eq(cl.get('_speakSessionId'), sessionBefore, 'a held line bumps no session and marks nothing as speaking');
+    f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.eq(cl.get('_voiceHeld').length, 0, 'flushed');
+    var said = answers.filter(function (a) { return a.text === 'Wait for me.'; });
+    T.eq(said.length, 1, 'the held line goes to her: ' + answers.map(function (a) { return a.text; }).join(' | '));
+    f._netraVoiceOnMessage({ data: { id: said[0].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
+    T.eq(played.length, 1); played[0].onended(); T.eq(heldDone, 1, 'its done ran after she said it');
+    played.length = 0; answers.length = 0;
     var doneCalls = 0;
     f.speakNetraVoice('First sentence here. Second sentence there.', function () { doneCalls++; });
-    T.eq(answers.length, 2, 'two groups asked for'); T.eq(answers[0].text, 'First sentence here.'); T.eq(answers[1].text, 'Second sentence there.');
+    T.eq(answers.length, 2, 'one sentence a group'); T.eq(answers[0].text, 'First sentence here.'); T.eq(answers[1].text, 'Second sentence there.');
     T.ok(Math.abs(answers[0].lengthScale - 1) < 1e-9);
     // the second answer arrives first: nothing plays out of order
     f._netraVoiceOnMessage({ data: { id: answers[1].id, pcm: Float32Array.from([0.1, 0.2]), rate: 22050 } });
@@ -138,14 +229,12 @@ T.test('speaking: sentence groups synthesized in order and played back to back; 
     T.eq(played.length, 2, 'then the second'); T.eq(doneCalls, 0);
     played[1].onended();
     T.eq(doneCalls, 1, 'done once, after the last group');
-    T.eq(c.voice.said, 2, 'two groups said');
-    // a barge-in: the session moves on, the queue stops
+    // a barge-in: the session moves on, the queue stops, the worker is told to drop what is queued
     played.length = 0; answers.length = 0;
     f.speakNetraVoice('One. Two. Three.', function () { doneCalls++; });
     f._netraVoiceOnMessage({ data: { id: answers[0].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
     T.eq(played.length, 1, 'the first of three plays');
     var postedBefore = made[0].posted.length;
-    // a stop bumps the session and drops what her voice still had to make (stopSpeaking itself needs half the page)
     T.match(CLIENT, /_speakSessionId\+\+;[^\n]*\n\s+_netraVoiceDrop\(\);/, 'stopSpeaking drops her queued sentences');
     cl.set('_speakSessionId', cl.get('_speakSessionId') + 1); f._netraVoiceDrop();
     played[0].onended();
@@ -153,20 +242,236 @@ T.test('speaking: sentence groups synthesized in order and played back to back; 
     var drop = made[0].posted.slice(postedBefore).filter(function (m) { return m.cmd === 'drop'; });
     T.eq(drop.length, 1, 'the worker is told to drop what is queued'); T.eq(drop[0].upTo, answers[2].id);
     T.eq(Object.keys(cl.get('_voiceJobs')).length, 0, 'no job left waiting');
-    // a failed group: the rest goes to this device's voice
+    // a sentence she could not make (tried twice in the worker), or one with no sound: left out, the rest still hers
     played.length = 0; answers.length = 0; browser.length = 0;
     f.speakNetraVoice('Alpha. Beta. Gamma.', function () { doneCalls++; });
     f._netraVoiceOnMessage({ data: { id: answers[0].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
     f._netraVoiceOnMessage({ data: { id: answers[1].id, error: 'phonemizer silent' } });
+    f._netraVoiceOnMessage({ data: { id: answers[2].id, pcm: Float32Array.from([0.2]), rate: 22050 } });
     played[0].onended();
-    T.eq(browser, ['Beta. Gamma.'], 'the rest, in this device\'s voice'); T.eq(doneCalls, 2, 'done after the fallback');
-    // the worker dies: pending groups are given up, the status says so, the next line is the device's
-    answers.length = 0; browser.length = 0;
-    f.speakNetraVoice('Delta.', function () { doneCalls++; });
+    T.eq(browser, [], 'never the device\'s voice for a sentence'); T.eq(played.length, 2, 'Beta left out, Gamma played'); T.eq(doneCalls, 1);
+    T.ok(c.events.some(function (e) { return /"Beta\." left out/.test(e); }), c.events.join(' | '));
+    played[1].onended(); T.eq(doneCalls, 2);
+    // the worker dies mid-line: she is started again, the rest of that line and the next line wait for her, and she says them in order
+    answers.length = 0; browser.length = 0; played.length = 0;
+    f.speakNetraVoice('Delta. Epsilon.', function () { doneCalls++; });
+    var madeBefore = made.length;
     f._netraVoiceFail('worker: failed');
-    T.eq(c.voice.status, 'error'); T.eq(browser, ['Delta.']);
-    T.eq(f._netraVoiceReady(), false);
-    f.speak('Later.'); T.eq(browser[browser.length - 1], 'Later.');
+    T.eq(browser, [], 'not the device: her restart is coming'); T.eq(cl.get('_voiceRestarts'), 1);
+    T.eq(cl.get('_voiceHeld').map(function (h) { return h.text; }), ['Delta. Epsilon.'], 'the whole line waits for her');
+    T.ok(c.events.some(function (e) { return /starting it again/.test(e); }), 'restarted');
+    T.eq(made.length, madeBefore + 1, 'a new worker (the timeout stub runs at once)'); T.eq(c.voice.status, 'loading');
+    browser.length = 0; cl.set('_voiceWaitSaid', false);
+    f.speak('Later.'); T.eq(browser, [], 'the next line waits for her too'); T.eq(cl.get('_voiceHeld').length, 2);
+    answers.length = 0; played.length = 0;
+    f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.eq(cl.get('_voiceHeld').length, 0);
+    T.eq(answers.map(function (a) { return a.text; }), ['Delta.', 'Epsilon.'], 'the line she had begun first, whole');
+    f._netraVoiceOnMessage({ data: { id: answers[0].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
+    f._netraVoiceOnMessage({ data: { id: answers[1].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
+    played[0].onended(); played[1].onended();
+    T.eq(answers.map(function (a) { return a.text; }), ['Delta.', 'Epsilon.', 'Later.'], 'then the next held line, in order');
+    // a stop while a line waits: it is not said later
+    cl.set('_voiceWorker', null); c.voice.status = 'loading'; cl.set('_voiceFirstStart', Date.now());
+    f.speak('Never mind.'); T.eq(cl.get('_voiceHeld').length, 1);
+    T.match(CLIENT, /_netraVoiceDrop\(\);[^\n]*\n\s+_voiceHeld = \[\];/, 'stopSpeaking clears what waited');
+    cl.set('_voiceHeld', []);
+    // the wait window over with her still loading: what waited is said by the device, and she takes over once ready
+    f.speak('Waited too long.'); T.eq(cl.get('_voiceHeld').length, 1);
+    f._netraVoiceWaitOver(); T.eq(browser, [], 'not yet: she is still within the window (the timer is what ends it)');
+    cl.set('_voiceFirstStart', Date.now() - 100000); f._netraVoiceWaitOver();
+    T.eq(browser, ['Waited too long.'], 'the device says it once the window is over'); T.eq(cl.get('_voiceHeld').length, 0);
+    // dead again past the restarts: the device for good
+    cl.set('_voiceFirstStart', Date.now()); cl.set('_voiceRestarts', 4); c.voice.status = 'ready'; cl.set('_voiceWorker', { postMessage: noop, terminate: noop });
+    browser.length = 0;
+    f._netraVoiceFail('worker: failed again');
+    T.eq(f._netraVoiceComing(), false); cl.set('_voiceWaitSaid', false);
+    f.speak('Gone.'); T.eq(browser, ['Gone.'], 'the device now');
+});
+
+T.test('thinking cues: on her engine the device\'s speech synthesis is never used; her own short cues are made once she is ready and played from the cache', function () {
+    var cl = page(), c = cl.c, f = cl.fn;
+    var answers = [];
+    fakeWorker(cl, function (w, m) { if (m.cmd === 'say') answers.push(m); });
+    global.Blob = global.Blob || function (parts, o) { this.parts = parts; this.type = o && o.type; };
+    var spoken = 0; global.speechSynthesis = { speak: function () { spoken++; }, cancel: noop }; c.hasTTS = true;
+    cl.set('currentFillerAudio', null); cl.set('currentFillerUtter', null); cl.set('_lastSentText', ''); cl.set('lastFillerPlayedAt', 0);
+    var ended = 0;
+    f._playOneFiller(function () { ended++; });
+    T.eq(spoken, 0, 'no device synthesis on her engine'); T.eq(ended, 1, 'the chain keeps its pacing');
+    // her cues, from the cache, once she is ready (the ready handler asks for them through the timeout stub)
+    f._netraVoiceLoad(); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.eq(answers.length, 0, 'not before the 6 s after ready'); f._netraFillersPrepare();
+    T.eq(answers.map(function (a) { return a.text; }), ['One moment, please.'], 'one at a time');
+    f._netraVoiceOnMessage({ data: { id: answers[0].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
+    T.eq(answers.length, 2, 'the next follows'); f._netraVoiceOnMessage({ data: { id: answers[1].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
+    T.eq(cl.get('fillerCache').map(function (x) { return x.text; }), ['One moment, please.', 'Checking on that now.']);
+    f._netraFillersPrepare(); T.eq(answers.length, 2, 'made once');
+    // a cue still being made when a line starts is not dropped with the line's leftovers
+    cl.set('_fillersPrepared', false); cl.set('fillerCache', []); answers.length = 0;
+    f._netraFillersPrepare(); T.eq(answers.length, 1);
+    var cueId = answers[0].id;
+    f._netraVoiceDrop();
+    T.ok(cl.get('_voiceJobs')[cueId], 'the cue job is kept');
+    f._netraVoiceOnMessage({ data: { id: cueId, pcm: Float32Array.from([0.1]), rate: 22050 } });
+    T.eq(cl.get('fillerCache').length, 1, 'and the cue lands');
+    global.Audio = function (url) { this.url = url; this.play = function () { return Promise.resolve(); }; };
+    f._playOneFiller(noop);
+    T.eq(spoken, 0, 'a cached cue plays, the device stays silent');
+    // a neural cue left in the pool by the Lab's Edge engine is never hers to play; and hers are never the neural engine's
+    cl.get('fillerCache').push({ url: 'blob:edge', text: 'Neural cue.' });
+    var playedUrls = []; global.Audio = function (url) { playedUrls.push(url); this.url = url; this.play = function () { return Promise.resolve(); }; };
+    for (var k = 0; k < 12; k++) f._playOneFiller(noop);
+    T.ok(playedUrls.length === 12 && playedUrls.every(function (u) { return u !== 'blob:edge'; }), 'only her cues on her engine: ' + playedUrls.join(','));
+    c.ttsEngine = 'edge'; playedUrls.length = 0; cl.set('_edgeVoiceAvailable', function () { return true; });
+    for (var k2 = 0; k2 < 6; k2++) f._playOneFiller(noop);
+    T.ok(playedUrls.every(function (u) { return u === 'blob:edge'; }), 'and only the neural ones on the neural engine: ' + playedUrls.join(','));
+    c.ttsEngine = 'netra';
+    // the preview names her while the line waits for her
+    cl.set('_voiceLoadStart', Date.now()); c.voice.status = 'loading'; cl.set('_voiceWorker', null);
+    var spokenLines = []; cl.set('speak', function (t2) { spokenLines.push(t2); });
+    f._previewVoice(); T.match(spokenLines[0], /This is the Cori voice/, spokenLines[0]);
+    T.ok(c.events.some(function (e) { return /filler\[blob\]/.test(e); }), 'played from the cache: ' + c.events.filter(function (e) { return /filler/.test(e); }).join(' | '));
+});
+
+// a timer stub the test drives: timers are kept with their delay, and fired by hand
+function drivenTimers(cl) {
+    var timers = [], n = 0;
+    cl.set('$timeout', Object.assign(function (fn, delay) { var t = { id: ++n, fn: fn, delay: delay || 0 }; timers.push(t); return t; }, {
+        cancel: function (t) { var i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); return i >= 0; }
+    }));
+    return { timers: timers, fire: function (pred) { var due = timers.filter(pred || function () { return true; }); due.forEach(function (t) { var i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); t.fn(); }); return due.length; } };
+}
+
+T.test('her voice all visit long: a failure after the first minutes starts her again (a few times, with a growing pause) and lines wait 25 s for her; a load that goes quiet is started again; a stuck worker is caught while the user keeps talking', function () {
+    var cl = page(), c = cl.c, f = cl.fn;
+    var answers = [];
+    var made = fakeWorker(cl, function (w, m) { if (m.cmd === 'say') answers.push(m); });
+    var played = [], browser = [];
+    global.Audio = function (url) { var a = this; this.url = url; played.push(a); this.play = function () { return Promise.resolve(); }; };
+    global.Blob = global.Blob || function (parts, o) { this.parts = parts; this.type = o && o.type; };
+    cl.set('speakBrowser', function (text, done) { browser.push(text); if (done) done(); });
+    cl.set('_humanizeReply', function (t) { return t; }); cl.set('_afterTTS', function (d) { if (d) d(); }); c.labMute = false;
+    var tm = drivenTimers(cl);
+    // ready for five minutes, then the worker dies mid-visit
+    f._netraVoiceLoad(); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    cl.set('_voiceFirstStart', Date.now() - 300000);
+    T.eq(cl.get('_voiceEverReady'), true);
+    f._netraVoiceFail('worker: died at minute five');
+    T.eq(cl.get('_voiceRestarts'), 1, 'one restart after the mid-visit death'); T.ok(cl.get('_voiceRestartAt') > 0);
+    T.eq(f._netraVoiceComing(), true, 'she is coming back: her files are cached');
+    f.speak('Still hers.'); T.eq(browser, [], 'the line waits for her'); T.eq(cl.get('_voiceHeld').map(function (h) { return h.text; }), ['Still hers.'], 'held: ' + c.events.slice(-4).join(' | '));
+    T.eq(tm.timers.filter(function (t) { return t.delay === 1500; }).length, 1, 'the first restart after 1.5 s');
+    T.eq(tm.timers.filter(function (t) { return t.delay === 25000; }).length, 1, 'and the line waits at most 25 s');
+    var madeBefore = made.length;
+    tm.fire(function (t) { return t.delay === 1500; });
+    T.eq(made.length, madeBefore + 1, 'a new worker'); T.eq(c.voice.status, 'loading');
+    T.ok(c.events.some(function (e) { return /starting my own voice again/.test(e); }), c.events.slice(-3).join(' | '));
+    answers.length = 0;
+    f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.eq(cl.get('_voiceRestartAt'), 0, 'back'); T.eq(cl.get('_voiceHeld').length, 0);
+    T.eq(answers.map(function (a) { return a.text; }), ['Still hers.'], 'and she says what waited');
+    T.eq(tm.timers.filter(function (t) { return t.delay === 25000; }).length, 0, 'the wait timer is cancelled once she is back');
+    // she is not back within 25 s: what waited is said by the device, once; she still takes over when she comes
+    f._netraVoiceFail('worker: died again'); T.eq(cl.get('_voiceRestarts'), 2);
+    T.eq(tm.timers.filter(function (t) { return t.delay === 3000; }).length, 1, 'the second restart after 3 s');
+    browser.length = 0; cl.set('_voiceWaitSaid', false);
+    f.speak('Waiting.'); T.eq(browser, []);
+    cl.set('_voiceRestartAt', Date.now() - 26000);
+    T.eq(f._netraVoiceComing(), false, 'past 25 s she is no longer waited for');
+    tm.fire(function (t) { return t.delay === 25000; });
+    T.eq(browser, ['Still hers.', 'Waiting.'], 'the device says the line she was cut off on, then what waited'); T.eq(cl.get('_voiceHeld').length, 0);
+    f.speak('Meanwhile.'); T.eq(browser, ['Still hers.', 'Waiting.', 'Meanwhile.'], 'and the next lines, while she is away');
+    tm.fire(function (t) { return t.delay === 3000; }); T.eq(c.voice.status, 'loading');
+    f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } }); T.eq(f._netraVoiceReady(), true, 'hers again once she is back');
+    // the pause grows and is capped; after the budget the device for the rest of the visit
+    var restart6 = function (t) { return t.delay === 6000 && t.fn !== f._netraFillersPrepare; };   // her cues are also asked for 6 s after each ready
+    f._netraVoiceFail('x'); T.eq(cl.get('_voiceRestarts'), 3); T.eq(tm.timers.filter(restart6).length, 1, 'the third restart after 6 s');
+    tm.fire(restart6); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    f._netraVoiceFail('x'); T.eq(cl.get('_voiceRestarts'), 4); T.eq(tm.timers.filter(function (t) { return t.delay === 12000; }).length, 1);
+    tm.fire(function (t) { return t.delay === 12000; }); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    f._netraVoiceFail('x'); T.eq(cl.get('_voiceRestarts'), 4, 'no fifth'); T.eq(f._netraVoiceComing(), false); T.eq(c.voice.status, 'error');
+    T.ok(c.events.some(function (e) { return /this device's voice instead/.test(e); }));
+    // a load that says nothing for 45 s is started again; one that keeps reporting bytes is not
+    cl.set('_voiceRestarts', 0); c.voice.status = 'off'; cl.set('_voiceFirstStart', 0); cl.set('_voiceEverReady', false);
+    f._netraVoiceLoad(); T.eq(c.voice.status, 'loading');
+    var watch = tm.timers.filter(function (t) { return t.delay === 45000; }); T.eq(watch.length, 1, 'the load watch');
+    f._netraVoiceOnMessage({ data: { stage: 'fetching', mb: 40 } }); T.eq(c.voice.mb, 40);
+    f._voiceReady(); T.eq(c.gate.voiceText, 'loading my own voice from this instance… 40 MB'); T.eq(f._plainGateText(c.gate.voiceText), 'Getting her voice ready from this instance… 40 MB');
+    cl.set('_voiceLastMsg', Date.now() - 20000);
+    tm.fire(function (t) { return t.delay === 45000; });
+    T.eq(c.voice.status, 'loading', 'bytes landed 20 s ago: still waited for'); T.ok(tm.timers.some(function (t) { return t.delay >= 24000 && t.delay <= 25000; }), 'looked at again when 45 s would be up');
+    cl.set('_voiceLastMsg', Date.now() - 46000);
+    tm.fire(function (t) { return t.delay >= 24000 && t.delay <= 25000; });
+    T.eq(cl.get('_voiceRestarts'), 1, 'quiet for 45 s: started again'); T.ok(c.events.some(function (e) { return /no progress for 45 s while loading/.test(e); }), c.events.slice(-2).join(' | '));
+    tm.fire(function (t) { return t.delay === 1500; }); f._netraVoiceOnMessage({ data: { stage: 'starting', step: 'engine', mb: 82 } }); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.eq(f._netraVoiceReady(), true);
+    // a stuck worker: the sentence it owes an answer to is watched; new lines (which drop it) do not move the watch
+    cl.set('_voiceRestarts', 0); answers.length = 0; browser.length = 0;
+    f.speakNetraVoice('First.', noop);
+    T.eq(cl.get('_voiceOut'), [answers[0].id]); var since = cl.get('_voiceHeadSince'); T.ok(Date.now() - since < 1000);
+    T.eq(tm.timers.filter(function (t) { return t.delay === 30000; }).length, 1, 'one stall watch');
+    cl.set('_voiceHeadSince', Date.now() - 20000);
+    f.speakNetraVoice('Second.', noop); f.speakNetraVoice('Third.', noop);
+    T.eq(cl.get('_voiceOut').length, 3, 'the first two, dropped by the page, are still owed an answer');
+    T.eq(cl.get('_voiceHeadSince'), Date.now() - 20000 > cl.get('_voiceHeadSince') - 5 ? cl.get('_voiceHeadSince') : -1, 'the watch stays on the first');
+    T.eq(tm.timers.filter(function (t) { return t.delay === 30000; }).length, 1, 'still one watch');
+    cl.set('_voiceHeadSince', Date.now() - 31000);
+    tm.fire(function (t) { return t.delay === 30000; });
+    T.eq(c.voice.status, 'error'); T.ok(c.events.some(function (e) { return /no sound in 30 s for "\(a dropped sentence\)"/.test(e); }), c.events.slice(-3).join(' | '));
+    T.eq(cl.get('_voiceOut'), [], 'nothing owed by a dead worker');
+    tm.fire(function (t) { return t.delay === 1500; }); answers.length = 0; f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.eq(answers.map(function (a) { return a.text; }), ['Third.'], 'the line the stall cut off waited for her and is hers again');
+    f._netraVoiceOnMessage({ data: { id: answers[0].id, pcm: Float32Array.from([0.1]), rate: 22050 } }); T.eq(cl.get('_voiceOut'), []);
+    // a live worker that answers in time: the watch moves to the next sentence and ends when nothing is owed
+    answers.length = 0; f.speakNetraVoice('One. Two.', noop);
+    T.eq(cl.get('_voiceOut').length, 2);
+    cl.set('_voiceHeadSince', Date.now() - 29000);
+    f._netraVoiceOnMessage({ data: { id: answers[0].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
+    T.ok(Date.now() - cl.get('_voiceHeadSince') < 1000, 'the second sentence is watched from now');
+    tm.fire(function (t) { return t.delay === 30000; });
+    T.eq(c.voice.status, 'ready', 'not stuck'); T.ok(tm.timers.some(function (t) { return t.delay >= 29000 && t.delay <= 30000; }), 'watched on');
+    f._netraVoiceOnMessage({ data: { id: answers[1].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
+    T.eq(cl.get('_voiceOut'), []); T.eq(tm.timers.filter(function (t) { return t.delay >= 29000 && t.delay <= 30000; }).length, 0, 'the watch ends');
+    // the page goes: the worker with it, nothing waits, nothing polls
+    var terminated = 0; cl.get('_voiceWorker').terminate = function () { terminated++; };
+    cl.set('_voiceHeld', [{ text: 'x' }]);
+    f._netraVoiceStop();
+    T.eq(terminated, 1, 'the worker is terminated on stop'); T.eq(cl.get('_voiceWorker'), null); T.eq(c.voice.status, 'off'); T.eq(cl.get('_voiceHeld'), []);
+    T.match(CLIENT, /_silenceCurrentAudio\(\);\n\s+try \{ _netraVoiceStop\(\); \}/, 'called when the controller is destroyed');
+    cl.set('_ctrlDestroyed', true);
+    var ran = 0; c.voice.status = 'loading'; c.voice.stage = 'fetching'; f._afterVoice(function () { ran++; }, 5000); T.eq(ran, 0); T.eq(tm.timers.filter(function (t) { return t.delay === 400; }).length, 0, 'no poll after destroy');
+    var before = made.length; c.voice.status = 'off'; f._netraVoiceLoad(); T.eq(made.length, before, 'no worker for a destroyed page');
+    cl.set('_ctrlDestroyed', false);
+    // a clip of hers cut short lets its blob URL go
+    var revoked = []; global.URL.revokeObjectURL = function (u) { revoked.push(u); };
+    var audio = { _netraUrl: 'blob:cut', pause: noop }; cl.set('currentAudio', audio);
+    f._silenceCurrentAudio(); T.eq(revoked, ['blob:cut']); T.eq(audio._netraUrl, null);
+    T.match(CLIENT, /audio\._netraUrl = url;/, 'every clip of hers carries its URL for that');
+    T.match(CLIENT, /'phonemizer silent'\)\), 5000\)/, 'the worker gives a sentence up well inside the 30 s watch (5 s a try, four tries at most)');
+});
+
+T.test('the worker: the bytes are told as they land, from a streamed body or a cached one', function () {
+    var src = workerSrc();
+    var posted = [];
+    var chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])];
+    var streamed = function () { var i = 0; return { ok: true, clone: function () { return this; }, body: { getReader: function () { return { read: function () { return Promise.resolve(i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }); } }; } } }; };
+    var plain = { ok: true, clone: function () { return this; },
+        json: function () { return Promise.resolve({ audio: { sample_rate: 22050 }, espeak: { voice: 'en' }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 }, num_speakers: 1 }); },
+        text: function () { return Promise.resolve('var createPiperPhonemize = function (opts) { self.__phonOpts = opts; return Promise.resolve({ callMain: function (args) { opts.print(JSON.stringify({ phoneme_ids: [1] })); } }); };'); },
+        arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(8)); } };
+    var self = { caches: null, postMessage: function (m) { posted.push(m); }, fetch: function (u) { return Promise.resolve(/\.onnx$/.test(String(u)) ? streamed() : plain); } };
+    var ort = { env: { wasm: {} }, Tensor: function () {}, InferenceSession: { create: function (model) { self.__model = model; return Promise.resolve({ run: function () { return Promise.resolve({ output: { data: Float32Array.from([0.1]) } }); } }); } } };
+    new Function('self', '__import', 'setTimeout', 'clearTimeout', 'fetch', 'caches', src)(self, function () { return Promise.resolve(ort); }, setTimeout, clearTimeout, function (u, o) { return self.fetch(u, o); }, self.caches);
+    self.onmessage({ data: { cmd: 'load', base: 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/', model: 'en_GB-cori-medium' } });
+    return new Promise(function (r) { setTimeout(r, 60); }).then(function () {
+        T.eq(Array.from(new Uint8Array(self.__model)), [1, 2, 3, 4, 5], 'the streamed pieces make the model, whole and in order');
+        T.ok(posted.some(function (m) { return m.stage === 'fetching' && m.mb === 0; }), 'the bytes so far are told as they land: ' + JSON.stringify(posted.filter(function (m) { return m.stage; })));
+        var starting = posted.filter(function (m) { return m.stage === 'starting'; });
+        T.eq(starting.map(function (m) { return m.step; }), ['engine', 'warm-up']); T.eq(starting[0].mb, 0, '5 + 8 + 8 + 8 bytes round to 0 MB');
+        T.ok(posted.some(function (m) { return m.ready; }), 'ready');
+        T.ok(self.__phonOpts.getPreloadedPackage() instanceof ArrayBuffer, 'the language data (read the plain way when a body cannot be streamed) still handed over');
+    });
 });
 
 T.test('a WAV from PCM: 16-bit mono at the voice\'s rate, the sizes right', function () {
