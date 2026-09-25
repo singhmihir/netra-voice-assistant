@@ -898,7 +898,8 @@ api.controller = function ($scope, $timeout, $window) {
             logEvent('dev', 'voice -> my own (' + VOICE_NAME + ', from this instance)');
             return;
         }
-        if (c.ttsEngine === 'netra') { c.ttsEngine = 'browser'; try { localStorage.setItem('netra_engine', 'browser'); } catch (eB) {} }
+        var leftHers = c.ttsEngine === 'netra';
+        if (leftHers) { c.ttsEngine = 'browser'; try { localStorage.setItem('netra_engine', 'browser'); } catch (eB) {} }
         forcedVoiceName = String(name || '');
         try {
             if (forcedVoiceName) localStorage.setItem('netra_voicePick', forcedVoiceName);
@@ -907,6 +908,12 @@ api.controller = function ($scope, $timeout, $window) {
         if (forcedVoiceName) c.voiceName = forcedVoiceName;
         else chooseVoice();
         logEvent('dev', 'voice -> ' + (forcedVoiceName || 'the best on this device'));
+        if (leftHers) _netraVoiceLeft();   // a line that waited for her is said now, by this voice
+    }
+    // her engine given up while she was still coming: whatever waited for her is said by the engine picked
+    function _netraVoiceLeft() {
+        if (_voiceWaitTimer) { $timeout.cancel(_voiceWaitTimer); _voiceWaitTimer = null; }
+        _netraVoiceFlush();
     }
     // 'Hear this voice': the voice that really speaks, by its plain name. A
     // Guest or a read-only reviewer is not called by a name
@@ -3791,18 +3798,22 @@ api.controller = function ($scope, $timeout, $window) {
         "  pdiBase = d.base; const t0 = Date.now(); gotBytes = 0; toldAt = 0;\n" +
         "  self.postMessage({ stage: 'fetching', mb: 0 });\n" +
         "  const ortP = import(pdiBase + 'ort/ort.wasm.bundle.min.mjs');\n" +
-        // the files together, not one after another
-        "  const [cfgR, glueR, model, dataBuf] = await Promise.all([fetch(pdiBase + 'voice/' + d.model + '.onnx-json'), fetch(pdiBase + 'voice/piper_phonemize-js'), fetch(pdiBase + 'voice/' + d.model + '.onnx').then(readAll), fetch(pdiBase + 'voice/piper_phonemize.data').then(readAll),\n" +
+        // the files together, not one after another; the big model on its own promise, so the phonemizer
+        // is built from the small files while the model is still coming down
+        "  const modelP = fetch(pdiBase + 'voice/' + d.model + '.onnx').then(readAll);\n" +
+        "  const [cfgR, glueR, dataBuf, ortWasm, phonWasm] = await Promise.all([fetch(pdiBase + 'voice/' + d.model + '.onnx-json'), fetch(pdiBase + 'voice/piper_phonemize-js'), fetch(pdiBase + 'voice/piper_phonemize.data').then(readAll),\n" +
         "    fetch(pdiBase + 'ort/ort-wasm-simd-threaded-wasm').then(readAll).catch(() => null), fetch(pdiBase + 'voice/piper_phonemize-wasm').then(readAll).catch(() => null)]);\n" +
         "  const [cfgJ, glue] = await Promise.all([cfgR.json(), glueR.text()]);\n" +
-        "  cfg = cfgJ; ort = await ortP;\n" +
-        "  ort.env.wasm.wasmPaths = pdiBase + 'ort/'; ort.env.wasm.numThreads = 1;\n" +
+        "  cfg = cfgJ;\n" +
+        "  const factory = new Function('self', glue + '\\nreturn createPiperPhonemize;')(self);\n" +
+        // the phonemizer's 18 MB of language data and its WebAssembly handed over, not fetched again by its own loader
+        "  makePhon = () => factory({ print: (line) => { try { if (gotIds) gotIds(JSON.parse(line).phoneme_ids); } catch (e) {} }, printErr: () => {}, wasmBinary: phonWasm || undefined, getPreloadedPackage: () => dataBuf.slice(0), locateFile: (f) => f.endsWith('.wasm') ? pdiBase + 'voice/piper_phonemize-wasm' : (f.endsWith('.data') ? pdiBase + 'voice/piper_phonemize.data' : f) });\n" +
+        "  const phP = makePhon();\n" +
+        "  const model = await modelP; ort = await ortP;\n" +
+        "  ort.env.wasm.wasmPaths = pdiBase + 'ort/'; ort.env.wasm.numThreads = 1; if (ortWasm) ort.env.wasm.wasmBinary = ortWasm;\n" +
         // each step of the start is announced: a page that hears nothing for a while knows the worker is stuck
         "  self.postMessage({ stage: 'starting', step: 'engine', mb: Math.round(gotBytes / 1048576), ms: Date.now() - t0 });\n" +
-        "  const factory = new Function('self', glue + '\\nreturn createPiperPhonemize;')(self);\n" +
-        // the phonemizer's 18 MB of language data handed over, not fetched again by its own loader
-        "  makePhon = () => factory({ print: (line) => { try { if (gotIds) gotIds(JSON.parse(line).phoneme_ids); } catch (e) {} }, printErr: () => {}, getPreloadedPackage: () => dataBuf.slice(0), locateFile: (f) => f.endsWith('.wasm') ? pdiBase + 'voice/piper_phonemize-wasm' : (f.endsWith('.data') ? pdiBase + 'voice/piper_phonemize.data' : f) });\n" +
-        "  const [sess, ph] = await Promise.all([ort.InferenceSession.create(model, { executionProviders: ['wasm'] }), makePhon()]);\n" +
+        "  const [sess, ph] = await Promise.all([ort.InferenceSession.create(model, { executionProviders: ['wasm'] }), phP]);\n" +
         "  session = sess; phon = ph;\n" +
         "  self.postMessage({ stage: 'starting', step: 'warm-up', ms: Date.now() - t0 });\n" +
         // warmed up: the first real sentence is not the slow one
@@ -6941,22 +6952,13 @@ api.controller = function ($scope, $timeout, $window) {
             } catch (e) {}
             _edgeLiveWs = null;
         }
-        if (currentAudio) {
-            // Detach the engine's handlers FIRST: setting src='' fires an
-            // async 'error' event, and the classic engines' onerror is
-            // their fallback-RESPEAK path - without this, every barge on a
-            // short reply re-spoke the stale text via the next engine and
-            // incremented the persisted circuit breaker.
-            try {
-                currentAudio.onended = null;
-                currentAudio.onerror = null;
-                currentAudio.onplaying = null;
-                currentAudio.pause();
-                currentAudio.src = '';
-            } catch (e) {}
-            try { detachOutputAnalyser(currentAudio); } catch (e) {}
-            currentAudio = null;
-        }
+        // The engine's handlers are detached FIRST (in _silenceCurrentAudio):
+        // setting src='' fires an async 'error' event, and the classic
+        // engines' onerror is their fallback-RESPEAK path - without this,
+        // every barge on a short reply re-spoke the stale text via the next
+        // engine and incremented the persisted circuit breaker. A cut clip
+        // of her own voice lets its blob URL go there too.
+        _silenceCurrentAudio();
         if (TTS && (TTS.speaking || TTS.pending)) {
             try { TTS.cancel(); } catch (e) {}
         }
@@ -7360,7 +7362,11 @@ api.controller = function ($scope, $timeout, $window) {
                 if (blobs[i] === false) {
                     // her voice died mid-line: the rest is not lost - it waits for her restart, or the device says it
                     var rest = groups.slice(i).join(' ');
-                    if (_netraVoiceComing()) { logEvent('warn', 'my own voice stopped mid-line - the rest waits for it'); _voiceHeld.push({ text: rest, done: done }); return; }
+                    if (_netraVoiceComing()) {
+                        // the floor is free while the rest waits (the held line marks itself again when she says it)
+                        _clearSpeaking(); if (c.state === 'speaking') setState(c.alert ? 'idle' : 'dormant');
+                        logEvent('warn', 'my own voice stopped mid-line - the rest waits for it'); _voiceHeld.push({ text: rest, done: done }); return;
+                    }
                     logEvent('warn', 'my own voice stopped mid-line - this device\'s voice for the rest');
                     return speakBrowser(rest, done);
                 }
@@ -7561,10 +7567,7 @@ api.controller = function ($scope, $timeout, $window) {
 
         // Never overlap: silence whatever is already playing (handlers
         // detached first so their fallback paths don't fire).
-        if (currentAudio) {
-            try { currentAudio.onended = currentAudio.onerror = currentAudio.onplaying = null; currentAudio.pause(); currentAudio.src = ''; } catch (e) {}
-            currentAudio = null;
-        }
+        _silenceCurrentAudio();
         if (TTS && (TTS.speaking || TTS.pending)) { try { TTS.cancel(); } catch (e) {} }
         try {
             audio = new Audio();
@@ -9391,6 +9394,7 @@ api.controller = function ($scope, $timeout, $window) {
         var idx = seq.indexOf(c.ttsEngine || 'netra');
         c.ttsEngine = seq[(idx + 1) % seq.length];
         c.useRemoteTTS = (c.ttsEngine !== 'browser');
+        if (idx === 0) _netraVoiceLeft();   // a line that waited for her goes to the next engine now
         logEvent('dev', 'TTS engine -> ' + c.ttsEngine +
                  (c.ttsEngine === 'netra'  ? ' (my own voice, ' + VOICE_NAME + ', from this instance)' :
                   c.ttsEngine === 'edge'   ? ' (' + c.edgeVoice + ', Microsoft Neural, free)' :

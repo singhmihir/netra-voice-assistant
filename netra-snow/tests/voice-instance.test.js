@@ -451,6 +451,61 @@ T.test('her voice all visit long: a failure after the first minutes starts her a
     T.match(CLIENT, /'phonemizer silent'\)\), 5000\)/, 'the worker gives a sentence up well inside the 30 s watch (5 s a try, four tries at most)');
 });
 
+T.test('a line cut by her restart frees the floor while it waits; a device voice picked while a line waits says it now; a stop lets her cut clip go', function () {
+    var cl = page(), c = cl.c, f = cl.fn;
+    var answers = [];
+    fakeWorker(cl, function (w, m) { if (m.cmd === 'say') answers.push(m); });
+    var browser = [];
+    global.Audio = function (url) { this.url = url; this.play = function () { return Promise.resolve(); }; };
+    global.Blob = global.Blob || function (parts, o) { this.parts = parts; this.type = o && o.type; };
+    cl.set('speakBrowser', function (text, done) { browser.push(text); if (done) done(); });
+    cl.set('_humanizeReply', function (t) { return t; }); cl.set('_afterTTS', function (d) { if (d) d(); }); c.labMute = false; c.alert = true;
+    var cleared = 0; cl.set('_clearSpeaking', function () { cleared++; }); cl.set('setState', function (st) { c.state = st; });
+    f._netraVoiceLoad(); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    f.speakNetraVoice('Delta. Epsilon.', noop);
+    T.eq(c.state, 'speaking'); cleared = 0;
+    f._netraVoiceFail('worker: died mid-line');
+    T.eq(cl.get('_voiceHeld').map(function (h) { return h.text; }), ['Delta. Epsilon.'], 'the line waits for her restart');
+    T.eq(cleared, 1, 'the floor is free while it waits'); T.eq(c.state, 'idle', 'the stage is not left on Speaking with nothing playing');
+    // a device voice picked in Settings while a line waits for her: the line is said now, by that voice
+    cl.set('forcedVoiceName', ''); cl.set('chooseVoice', function () { return null; }); browser.length = 0;
+    f._setDeviceVoice('Samantha');
+    T.eq(c.ttsEngine, 'browser'); T.eq(browser, ['Delta. Epsilon.'], 'said by the device at once'); T.eq(cl.get('_voiceHeld'), []);
+    T.match(CLIENT, /c\.ttsEngine = seq\[\(idx \+ 1\) % seq\.length\];[^\n]*\n[^\n]*\n\s+if \(idx === 0\) _netraVoiceLeft\(\);/, 'the Lab\'s engine cycle away from her does the same');
+    // a stop goes through the one silencer, which lets a cut clip of hers go
+    var stop = CLIENT.slice(CLIENT.indexOf('function stopSpeaking('), CLIENT.indexOf('function stopSpeaking(') + 3000);
+    T.match(stop, /_silenceCurrentAudio\(\);/, 'stopSpeaking silences through the helper'); T.notMatch(stop, /currentAudio\.onended = null;/, 'no inline copy that forgets the URL');
+    var live = CLIENT.slice(CLIENT.indexOf('function speakEdgeLive('), CLIENT.indexOf('function speakEdgeLive(') + 6000);
+    T.match(live, /Never overlap[^\n]*\n[^\n]*\n\s+_silenceCurrentAudio\(\);/, 'and so does the live engine before it plays');
+});
+
+T.test('the worker: the phonemizer is built from the small files while the model is still coming down, with its WebAssembly handed over', function () {
+    var src = workerSrc();
+    var posted = [];
+    var releaseModel; var modelGate = new Promise(function (r) { releaseModel = r; });
+    var modelRes = { ok: true, clone: function () { return this; }, body: { getReader: function () { var sent = false; return { read: function () { return modelGate.then(function () { if (sent) return { done: true }; sent = true; return { done: false, value: new Uint8Array([9, 9]) }; }); } }; } } };
+    var wasmBuf = new ArrayBuffer(4);
+    var plain = function (u) { return { ok: true, clone: function () { return this; },
+        json: function () { return Promise.resolve({ audio: { sample_rate: 22050 }, espeak: { voice: 'en' }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 }, num_speakers: 1 }); },
+        text: function () { return Promise.resolve('var createPiperPhonemize = function (opts) { self.__phonOpts = opts; self.__phonAt = self.__tick++; return Promise.resolve({ callMain: function (args) { opts.print(JSON.stringify({ phoneme_ids: [1] })); } }); };'); },
+        arrayBuffer: function () { return Promise.resolve(/piper_phonemize-wasm$/.test(u) ? wasmBuf : new ArrayBuffer(8)); } }; };
+    var self = { caches: null, __tick: 0, postMessage: function (m) { posted.push(m); }, fetch: function (u) { return Promise.resolve(/\.onnx$/.test(String(u)) ? modelRes : plain(String(u))); } };
+    var ort = { env: { wasm: {} }, Tensor: function () {}, InferenceSession: { create: function () { self.__sessionAt = self.__tick++; return Promise.resolve({ run: function () { return Promise.resolve({ output: { data: Float32Array.from([0.1]) } }); } }); } } };
+    new Function('self', '__import', 'setTimeout', 'clearTimeout', 'fetch', 'caches', src)(self, function () { return Promise.resolve(ort); }, setTimeout, clearTimeout, function (u, o) { return self.fetch(u, o); }, self.caches);
+    self.onmessage({ data: { cmd: 'load', base: 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/', model: 'en_GB-cori-medium' } });
+    return new Promise(function (r) { setTimeout(r, 40); }).then(function () {
+        T.ok(self.__phonOpts, 'the phonemizer is being built before the model has landed');
+        T.eq(self.__phonOpts.wasmBinary, wasmBuf, 'its WebAssembly handed over, not fetched by its own loader');
+        T.ok(!posted.some(function (m) { return m.stage === 'starting'; }), 'still fetching as far as the page knows (the ear keeps waiting)');
+        releaseModel();
+        return new Promise(function (r2) { setTimeout(r2, 40); });
+    }).then(function () {
+        T.ok(self.__sessionAt > self.__phonAt, 'the session is created once the model is in, after the phonemizer began');
+        T.eq(ort.env.wasm.wasmBinary instanceof ArrayBuffer, true, 'the runtime\'s WebAssembly handed over too');
+        T.ok(posted.some(function (m) { return m.ready; }), 'ready');
+    });
+});
+
 T.test('the worker: the bytes are told as they land, from a streamed body or a cached one', function () {
     var src = workerSrc();
     var posted = [];
