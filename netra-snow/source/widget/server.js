@@ -933,10 +933,11 @@
                 if (rbSay) finalText = (finalText.replace(/[^.!?]*\?\s*["']?\s*$/, '').replace(/\s+$/, '') + ' ' + rbSay).replace(/^\s+/, '');
             }
 
-            // Persist last spoken utterance into the context table (best-effort)
+            // Persist last spoken utterance into the context table (best-effort).
+            // Not for a Guest: every visitor is the one Guest user, so that
+            // row would be shared by everyone who opens the public page
             try {
-                var ctx = new NetraContext();
-                ctx.setLastUtterance(finalText);
+                if (!_isGuest()) new NetraContext().setLastUtterance(finalText);
             } catch (eC) {}
 
             // Re-read pause state in case a tool toggled it
@@ -6277,6 +6278,8 @@ _timeLine();
 
     function _setFocusTicket(num) {
         if (!num) return { ok: false, error: 'ticket number required' };
+        // the Guest user's row would be every visitor's: a Guest keeps no focus
+        if (_isGuest()) return { ok: false, needs_sign_in: true, error: 'That needs you to sign in to ServiceNow first.' };
         try {
             var table = _tableForNumber(num);
             if (!table) return { ok: false, error: 'Unrecognised number prefix: ' + num };
