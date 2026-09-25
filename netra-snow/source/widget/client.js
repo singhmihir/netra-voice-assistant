@@ -912,8 +912,7 @@ api.controller = function ($scope, $timeout, $window) {
     }
     // her engine given up while she was still coming: whatever waited for her is said by the engine picked
     function _netraVoiceLeft() {
-        if (_voiceWaitTimer) { $timeout.cancel(_voiceWaitTimer); _voiceWaitTimer = null; }
-        _netraVoiceFlush();
+        _netraVoiceFlush();   // the wait timer stays armed: harmless with nothing held, and needed if her engine is picked again while she loads
     }
     // 'Hear this voice': the voice that really speaks, by its plain name. A
     // Guest or a read-only reviewer is not called by a name
@@ -1040,6 +1039,7 @@ api.controller = function ($scope, $timeout, $window) {
     // read-back, not the interjection
     function _floorFree() {
         if (_speakingNow || _chatInFlight || _queuedUtterance) return false;
+        if (_voiceHeld && _voiceHeld.length) return false;   // v7.9 - a line is waiting for her own voice: an interjection would be said twice
         if (_fillerChainActive || currentFillerAudio || currentFillerUtter) return false;
         if (c.state === 'speaking' || c.state === 'thinking' || c.state === 'awaiting') return false;
         if (String(c.interim || '').trim() || Date.now() - (_lastInterimAt || 0) < 1500) return false;
@@ -3779,7 +3779,8 @@ api.controller = function ($scope, $timeout, $window) {
         "const kept = new Set(); const dropped = (id) => id <= droppedUpTo && !kept.has(id);\n" +
         "self.onmessage = (e) => {\n" +
         "  const d = e.data || {};\n" +
-        "  if (d.cmd === 'load') chain = chain.then(() => load(d)).catch((err) => self.postMessage({ error: String(err && err.message || err) }));\n" +
+        // a file the instance does not have (HTTP 4xx) will not appear on a retry: told as final
+        "  if (d.cmd === 'load') chain = chain.then(() => load(d)).catch((err) => { const m = String(err && err.message || err); self.postMessage({ error: m, fatal: /^HTTP 4\\d\\d/.test(m) }); });\n" +
         // a barge-in or a new line: the sentences still queued are skipped, not made
         "  else if (d.cmd === 'drop') { droppedUpTo = Math.max(droppedUpTo, d.upTo || 0); (d.keep || []).forEach((k) => kept.add(k)); }\n" +
         "  else if (d.cmd === 'say') chain = chain.then(() => (dropped(d.id) ? self.postMessage({ id: d.id, dropped: true }) : sayTwice(d))).catch((err) => self.postMessage({ id: d.id, error: String(err && err.message || err) }));\n" +
@@ -3801,7 +3802,8 @@ api.controller = function ($scope, $timeout, $window) {
         // the files together, not one after another; the big model on its own promise, so the phonemizer
         // is built from the small files while the model is still coming down
         "  const modelP = fetch(pdiBase + 'voice/' + d.model + '.onnx').then(readAll);\n" +
-        "  const [cfgR, glueR, dataBuf, ortWasm, phonWasm] = await Promise.all([fetch(pdiBase + 'voice/' + d.model + '.onnx-json'), fetch(pdiBase + 'voice/piper_phonemize-js'), fetch(pdiBase + 'voice/piper_phonemize.data').then(readAll),\n" +
+        "  const okR = (r) => { if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status)); return r; };\n" +
+        "  const [cfgR, glueR, dataBuf, ortWasm, phonWasm] = await Promise.all([fetch(pdiBase + 'voice/' + d.model + '.onnx-json').then(okR), fetch(pdiBase + 'voice/piper_phonemize-js').then(okR), fetch(pdiBase + 'voice/piper_phonemize.data').then(readAll),\n" +
         "    fetch(pdiBase + 'ort/ort-wasm-simd-threaded-wasm').then(readAll).catch(() => null), fetch(pdiBase + 'voice/piper_phonemize-wasm').then(readAll).catch(() => null)]);\n" +
         "  const [cfgJ, glue] = await Promise.all([cfgR.json(), glueR.text()]);\n" +
         "  cfg = cfgJ;\n" +
@@ -3842,6 +3844,7 @@ api.controller = function ($scope, $timeout, $window) {
     var _voiceWorker = null, _voiceJobs = {}, _voiceJobId = 0, _voiceLoadStart = 0, _voiceWaitSaid = false;
     var _voiceHeld = [], _voiceRestarts = 0, _voiceRestartAt = 0, _voiceFirstStart = 0, _voiceWaitTimer = null, _voiceEverReady = false;
     var _voiceOut = [], _voiceHeadSince = 0, _voiceLastMsg = 0, _voiceLoadTimer = null;   // what the worker still owes an answer, and when it last spoke
+    var _voiceReadyAt = 0, VOICE_HEALTHY_MS = 120000;   // two healthy minutes earn a fresh restart budget: the cap bounds flapping, not the visit
     var VOICE_WAIT_MS = 90000;          // lines wait this long (from her first load) for her voice before this device's speaks them
     var VOICE_RESTART_WAIT_MS = 25000;  // ... and this long for her to come back after a failure later in the visit (her files are cached then)
     var VOICE_RESTARTS = 4;             // failures she is started again after, in one visit
@@ -3856,7 +3859,11 @@ api.controller = function ($scope, $timeout, $window) {
     function _netraVoiceComing() {
         var st = _voiceState().status;
         if (st !== 'loading' && !(st === 'error' && _voiceRestartAt)) return false;
-        if (_voiceRestartAt) return Date.now() - _voiceRestartAt < VOICE_RESTART_WAIT_MS;
+        if (_voiceRestartAt) {
+            var until = _voiceRestartAt + VOICE_RESTART_WAIT_MS;
+            if (!_voiceEverReady && _voiceFirstStart) until = Math.max(until, _voiceFirstStart + VOICE_WAIT_MS);
+            return Date.now() < until;
+        }
         return !!_voiceFirstStart && Date.now() - _voiceFirstStart < VOICE_WAIT_MS;
     }
     // the window closes: whatever waited is said by the voice there is; she still takes over once ready
@@ -3889,7 +3896,7 @@ api.controller = function ($scope, $timeout, $window) {
             _voiceWorker.postMessage({ cmd: 'load', base: _earBase(), model: VOICE_MODEL });
             logEvent('tts', (_voiceRestartAt ? 'starting my own voice again' : 'loading my own voice') + ' (' + VOICE_NAME + ') from this instance');
             _netraVoiceLoadWatch();
-        } catch (e) { _netraVoiceFail(String(e && e.message || e)); }
+        } catch (e) { _netraVoiceFail(String(e && e.message || e), true); }   // a worker that cannot be made will not be made on a retry
         _readyUpdate();
     }
     // a load that goes quiet (no bytes landing, no step begun) for 45 s is not waited on: the worker is made again
@@ -3909,7 +3916,7 @@ api.controller = function ($scope, $timeout, $window) {
             _readyUpdate(); return;
         }
         if (d.ready) {
-            c.voice.status = 'ready'; c.voice.stage = ''; c.voice.loadMs = d.ms || (Date.now() - _voiceLoadStart); _voiceWaitSaid = false; _voiceEverReady = true;
+            c.voice.status = 'ready'; c.voice.stage = ''; c.voice.loadMs = d.ms || (Date.now() - _voiceLoadStart); _voiceWaitSaid = false; _voiceEverReady = true; _voiceReadyAt = Date.now();
             if (_voiceLoadTimer) { $timeout.cancel(_voiceLoadTimer); _voiceLoadTimer = null; }
             if (_voiceWaitTimer && _voiceRestartAt) { $timeout.cancel(_voiceWaitTimer); _voiceWaitTimer = null; }
             _voiceRestartAt = 0;
@@ -3933,23 +3940,32 @@ api.controller = function ($scope, $timeout, $window) {
             job.cb(_pcmToWav(d.pcm, d.rate || 22050));
             return;
         }
-        if (d.error) _netraVoiceFail(d.error);
+        if (d.error) _netraVoiceFail(d.error, !!d.fatal);
     }
-    function _netraVoiceFail(msg) {
+    // how long lines wait for a restart: 25 s, or the rest of the first-load window while she has never been ready
+    function _netraVoiceRestartWaitMs() {
+        var ms = VOICE_RESTART_WAIT_MS;
+        if (!_voiceEverReady && _voiceFirstStart) ms = Math.max(ms, _voiceFirstStart + VOICE_WAIT_MS - Date.now());
+        return ms;
+    }
+    function _netraVoiceFail(msg, fatal) {
         c.voice.status = 'error'; c.voice.error = msg; c.voice.stage = '';
         try { if (_voiceWorker) _voiceWorker.terminate(); } catch (e) {}
         _voiceWorker = null; _voiceOut = [];
         if (_voiceLoadTimer) { $timeout.cancel(_voiceLoadTimer); _voiceLoadTimer = null; }
         // made again (its files are cached now), a few times a visit, any time in the visit: decided first,
-        // so the lines she was on know whether to wait for her
-        var again = _voiceRestarts < VOICE_RESTARTS && _netraVoiceWanted() && !_ctrlDestroyed;
+        // so the lines she was on know whether to wait for her. A failure that would only repeat (a file the
+        // instance does not have, a worker that cannot be made) is not retried
+        if (_voiceReadyAt && Date.now() - _voiceReadyAt >= VOICE_HEALTHY_MS) _voiceRestarts = 0;   // she ran well for a while: the budget is whole again
+        _voiceReadyAt = 0;
+        var again = !fatal && _voiceRestarts < VOICE_RESTARTS && _netraVoiceWanted() && !_ctrlDestroyed;
         if (again) {
             _voiceRestarts++; _voiceRestartAt = Date.now();
             logEvent('warn', 'my own voice failed (' + msg + ') - starting it again (' + _voiceRestarts + ' of ' + VOICE_RESTARTS + ')');
             // lines wait for her a little while; the timer says them in the device's voice if she is not back
             if (_voiceWaitTimer) $timeout.cancel(_voiceWaitTimer);
-            _voiceWaitTimer = $timeout(_netraVoiceWaitOver, VOICE_RESTART_WAIT_MS, false);
-        } else { _voiceRestartAt = 0; logEvent('warn', 'my own voice failed (' + msg + ') - this device\'s voice instead'); }
+            _voiceWaitTimer = $timeout(_netraVoiceWaitOver, _netraVoiceRestartWaitMs(), false);
+        } else { _voiceRestartAt = 0; logEvent('warn', 'my own voice ' + (fatal ? 'is not on this instance' : 'failed') + ' (' + msg + ') - this device\'s voice instead'); }
         for (var k in _voiceJobs) { var j = _voiceJobs[k]; delete _voiceJobs[k]; j.cb(null); }
         _netraVoiceWatch();
         if (again) $timeout(function () { if (!_voiceWorker && c.voice.status === 'error') { c.voice.status = 'off'; _netraVoiceLoad(); } }, Math.min(12000, 1500 * Math.pow(2, _voiceRestarts - 1)), false);
@@ -4022,10 +4038,13 @@ api.controller = function ($scope, $timeout, $window) {
     function _netraVoiceWatch() {
         if (!_voiceOut || !_voiceOut.length) { if (_voiceStallTimer) { $timeout.cancel(_voiceStallTimer); _voiceStallTimer = null; } return; }
         if (_voiceStallTimer) return;   // already watching; it looks again when it fires
-        var left = VOICE_STALL_MS - (Date.now() - _voiceHeadSince);
+        // a long sentence is allowed longer (100 ms a character on top): busy is not stuck
+        var head = _voiceJobs && _voiceJobs[_voiceOut[0]], allow = VOICE_STALL_MS + (head ? head.text.length * 100 : 0);
+        var left = allow - (Date.now() - _voiceHeadSince);
         if (left <= 0) {
-            var head = _voiceJobs && _voiceJobs[_voiceOut[0]];
-            _netraVoiceFail('no sound in ' + Math.round(VOICE_STALL_MS / 1000) + ' s for "' + (head ? head.text.substring(0, 40) : '(a dropped sentence)') + '"');
+            // the sentence that stalled is left out (never another voice), so the restarted line does not begin with it again
+            if (head) { delete _voiceJobs[_voiceOut[0]]; head.cb('skip'); }
+            _netraVoiceFail('no sound in ' + Math.round(allow / 1000) + ' s for "' + (head ? head.text.substring(0, 40) : '(a dropped sentence)') + '"');
             return;
         }
         _voiceStallTimer = $timeout(function () { _voiceStallTimer = null; _netraVoiceWatch(); }, Math.max(500, left), false);
@@ -7331,6 +7350,20 @@ api.controller = function ($scope, $timeout, $window) {
         return groups;
     }
 
+    // a group longer than max is cut at the last ', ; :' before max, else at the last space
+    var VOICE_GROUP_MAX = 220;
+    function _splitLongGroup(g, max) {
+        var out = [], rest = String(g || '');
+        while (rest.length > max) {
+            var head = rest.slice(0, max), cut = Math.max(head.lastIndexOf(', '), head.lastIndexOf('; '), head.lastIndexOf(': '));
+            if (cut < max / 3) cut = head.lastIndexOf(' ');
+            if (cut < max / 3) cut = max;
+            out.push(rest.slice(0, cut).trim()); rest = rest.slice(cut).replace(/^[,;:\s]+/, '');
+        }
+        if (rest.trim()) out.push(rest.trim());
+        return out;
+    }
+
     // v7.9 - her own voice, from this instance: sentence groups synthesized in
     // the worker in order and played back to back; a barge-in or stop (a
     // bumped session) abandons the queue; a failed group hands the rest to
@@ -7338,8 +7371,11 @@ api.controller = function ($scope, $timeout, $window) {
     function speakNetraVoice(text, done) {
         if (!_netraVoiceReady()) return speakBrowser(text, done);
         _netraVoiceDrop();   // an earlier line still being made is not finished
+        if (TTS && (TTS.speaking || TTS.pending)) { try { TTS.cancel(); } catch (eT) {} }   // a device line still going (said while she loaded) stops here
         var session = ++_speakSessionId;
-        var groups = _splitSentenceGroups(text, 1);   // one sentence a group: the first is heard while the rest are made
+        // one sentence a group: the first is heard while the rest are made; a run-on group is cut at a
+        // comma or a space, so no single piece takes the worker more than a few seconds
+        var groups = [].concat.apply([], _splitSentenceGroups(text, 1).map(function (g) { return _splitLongGroup(g, VOICE_GROUP_MAX); }));
         if (!groups.length) { if (done) done(); return; }
         setState('speaking');
         var blobs = new Array(groups.length), waiters = new Array(groups.length);
@@ -7362,6 +7398,7 @@ api.controller = function ($scope, $timeout, $window) {
                 if (blobs[i] === false) {
                     // her voice died mid-line: the rest is not lost - it waits for her restart, or the device says it
                     var rest = groups.slice(i).join(' ');
+                    if (_netraVoiceReady()) { logEvent('tts', 'my own voice is back - the rest of the line is hers'); return speakNetraVoice(rest, done); }
                     if (_netraVoiceComing()) {
                         // the floor is free while the rest waits (the held line marks itself again when she says it)
                         _clearSpeaking(); if (c.state === 'speaking') setState(c.alert ? 'idle' : 'dormant');

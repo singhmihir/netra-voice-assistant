@@ -26,7 +26,7 @@ function page() {
     cl.set('_voiceWorker', null); cl.set('_voiceJobs', {}); cl.set('_voiceJobId', 0); cl.set('_voiceLoadStart', 0); cl.set('_voiceWaitSaid', false);
     cl.set('_voiceHeld', []); cl.set('_voiceRestarts', 0); cl.set('_voiceRestartAt', 0); cl.set('VOICE_WAIT_MS', 90000); cl.set('_voiceFirstStart', 0); cl.set('_voiceWaitTimer', null); cl.set('_voiceStallTimer', null);
     cl.set('_voiceEverReady', false); cl.set('_voiceOut', []); cl.set('_voiceHeadSince', 0); cl.set('_voiceLastMsg', 0); cl.set('_voiceLoadTimer', null);
-    cl.set('VOICE_RESTART_WAIT_MS', 25000); cl.set('VOICE_RESTARTS', 4); cl.set('VOICE_LOAD_STALL_MS', 45000); cl.set('VOICE_STALL_MS', 30000);
+    cl.set('VOICE_RESTART_WAIT_MS', 25000); cl.set('VOICE_RESTARTS', 4); cl.set('VOICE_LOAD_STALL_MS', 45000); cl.set('VOICE_STALL_MS', 30000); cl.set('VOICE_GROUP_MAX', 220); cl.set('_voiceReadyAt', 0); cl.set('VOICE_HEALTHY_MS', 120000);
     cl.set('VOICE_FILLERS', ['One moment, please.', 'Checking on that now.']); cl.set('_fillersPrepared', false); cl.set('fillerCache', []);
     return cl;
 }
@@ -410,14 +410,15 @@ T.test('her voice all visit long: a failure after the first minutes starts her a
     cl.set('_voiceRestarts', 0); answers.length = 0; browser.length = 0;
     f.speakNetraVoice('First.', noop);
     T.eq(cl.get('_voiceOut'), [answers[0].id]); var since = cl.get('_voiceHeadSince'); T.ok(Date.now() - since < 1000);
-    T.eq(tm.timers.filter(function (t) { return t.delay === 30000; }).length, 1, 'one stall watch');
+    var stallWatch = function (t) { return t.delay >= 30000 && t.delay < 31000; };   // 30 s plus 100 ms a character of the head
+    T.eq(tm.timers.filter(stallWatch).length, 1, 'one stall watch');
     cl.set('_voiceHeadSince', Date.now() - 20000);
     f.speakNetraVoice('Second.', noop); f.speakNetraVoice('Third.', noop);
     T.eq(cl.get('_voiceOut').length, 3, 'the first two, dropped by the page, are still owed an answer');
     T.eq(cl.get('_voiceHeadSince'), Date.now() - 20000 > cl.get('_voiceHeadSince') - 5 ? cl.get('_voiceHeadSince') : -1, 'the watch stays on the first');
-    T.eq(tm.timers.filter(function (t) { return t.delay === 30000; }).length, 1, 'still one watch');
+    T.eq(tm.timers.filter(stallWatch).length, 1, 'still one watch');
     cl.set('_voiceHeadSince', Date.now() - 31000);
-    tm.fire(function (t) { return t.delay === 30000; });
+    tm.fire(stallWatch);
     T.eq(c.voice.status, 'error'); T.ok(c.events.some(function (e) { return /no sound in 30 s for "\(a dropped sentence\)"/.test(e); }), c.events.slice(-3).join(' | '));
     T.eq(cl.get('_voiceOut'), [], 'nothing owed by a dead worker');
     tm.fire(function (t) { return t.delay === 1500; }); answers.length = 0; f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
@@ -429,10 +430,10 @@ T.test('her voice all visit long: a failure after the first minutes starts her a
     cl.set('_voiceHeadSince', Date.now() - 29000);
     f._netraVoiceOnMessage({ data: { id: answers[0].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
     T.ok(Date.now() - cl.get('_voiceHeadSince') < 1000, 'the second sentence is watched from now');
-    tm.fire(function (t) { return t.delay === 30000; });
-    T.eq(c.voice.status, 'ready', 'not stuck'); T.ok(tm.timers.some(function (t) { return t.delay >= 29000 && t.delay <= 30000; }), 'watched on');
+    tm.fire(stallWatch);
+    T.eq(c.voice.status, 'ready', 'not stuck'); T.ok(tm.timers.some(function (t) { return t.delay >= 29000 && t.delay < 31000; }), 'watched on');
     f._netraVoiceOnMessage({ data: { id: answers[1].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
-    T.eq(cl.get('_voiceOut'), []); T.eq(tm.timers.filter(function (t) { return t.delay >= 29000 && t.delay <= 30000; }).length, 0, 'the watch ends');
+    T.eq(cl.get('_voiceOut'), []); T.eq(tm.timers.filter(function (t) { return t.delay >= 29000 && t.delay < 31000; }).length, 0, 'the watch ends');
     // the page goes: the worker with it, nothing waits, nothing polls
     var terminated = 0; cl.get('_voiceWorker').terminate = function () { terminated++; };
     cl.set('_voiceHeld', [{ text: 'x' }]);
@@ -504,6 +505,115 @@ T.test('the worker: the phonemizer is built from the small files while the model
         T.eq(ort.env.wasm.wasmBinary instanceof ArrayBuffer, true, 'the runtime\'s WebAssembly handed over too');
         T.ok(posted.some(function (m) { return m.ready; }), 'ready');
     });
+});
+
+T.test('the rest of a cut line is hers again if she is back in time; a file the instance lacks is not retried; a first load keeps its window through a restart; a run-on group is cut; a long sentence is allowed longer; a device line still going is cut before her clip; an interjection waits while a line waits for her', function () {
+    var cl = page(), c = cl.c, f = cl.fn;
+    var answers = [];
+    var made = fakeWorker(cl, function (w, m) { if (m.cmd === 'say') answers.push(m); });
+    var played = [], browser = [];
+    global.Audio = function (url) { var a = this; this.url = url; played.push(a); this.play = function () { return Promise.resolve(); }; };
+    global.Blob = global.Blob || function (parts, o) { this.parts = parts; this.type = o && o.type; };
+    cl.set('speakBrowser', function (text, done) { browser.push(text); if (done) done(); });
+    cl.set('_humanizeReply', function (t) { return t; }); cl.set('_afterTTS', function (d) { if (d) d(); }); c.labMute = false; c.alert = true;
+    var tm = drivenTimers(cl);
+    f._netraVoiceLoad(); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    // she dies while clip 1 plays and is back before it ends: clip 2 is hers, not the device's
+    f.speakNetraVoice('Alpha. Beta.', noop);
+    f._netraVoiceOnMessage({ data: { id: answers[0].id, pcm: Float32Array.from([0.1]), rate: 22050 } });
+    T.eq(played.length, 1, 'Alpha playing');
+    f._netraVoiceFail('worker: died under Alpha');
+    tm.fire(function (t) { return t.delay === 1500; }); answers.length = 0;
+    f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.eq(cl.get('_voiceHeld'), [], 'nothing held: the line is still playing');
+    played[0].onended();
+    T.eq(browser, [], 'never the device'); T.eq(answers.map(function (a) { return a.text; }), ['Beta.'], 'the rest is asked of her again');
+    T.ok(c.events.some(function (e) { return /my own voice is back - the rest of the line is hers/.test(e); }), c.events.slice(-3).join(' | '));
+    // an instance without her files: the worker's HTTP 404 is final - no restart, the device at once, the card moves on
+    cl.set('_voiceRestarts', 0); cl.set('_voiceEverReady', false); cl.set('_voiceFirstStart', 0); c.voice.status = 'off'; cl.set('_voiceWorker', null);
+    var before = made.length; f._netraVoiceLoad(); T.eq(made.length, before + 1);
+    f._netraVoiceOnMessage({ data: { error: 'HTTP 404', fatal: true } });
+    T.eq(cl.get('_voiceRestarts'), 0, 'not retried'); T.eq(f._netraVoiceComing(), false); T.eq(c.voice.status, 'error');
+    T.ok(c.events.some(function (e) { return /my own voice is not on this instance \(HTTP 404\) - this device's voice instead/.test(e); }), c.events.slice(-2).join(' | '));
+    f._voiceReady(); T.notMatch(c.gate.voiceText, /my own voice/, 'the card looks at the device\'s voices: ' + c.gate.voiceText);
+    T.match(CLIENT, /fatal: \/\^HTTP 4\\\\d\\\\d\/\.test\(m\)/, 'the worker marks a 4xx as final');
+    T.match(CLIENT, /catch \(e\) \{ _netraVoiceFail\(String\(e && e\.message \|\| e\), true\); \}/, 'a worker that cannot be made is not made again');
+    // a transient failure 10 s into a first load: lines keep the rest of the 90 s window, not just 25 s
+    cl.set('_voiceRestarts', 0); c.voice.status = 'off';
+    f._netraVoiceLoad(); cl.set('_voiceFirstStart', Date.now() - 10000);
+    f._netraVoiceFail('network blip');
+    T.eq(cl.get('_voiceRestarts'), 1);
+    var w = tm.timers.filter(function (t) { return t.delay > 25000; }); T.eq(w.length, 1, 'the wait timer'); T.ok(w[0].delay >= 79000 && w[0].delay <= 80000, 'the rest of the first window: ' + w[0].delay);
+    cl.set('_voiceRestartAt', Date.now() - 30000); T.eq(f._netraVoiceComing(), true, 'still coming 30 s after the restart, inside the first window');
+    cl.set('_voiceFirstStart', Date.now() - 95000); T.eq(f._netraVoiceComing(), false, 'and not past it');
+    // a run-on reply with no full stop is cut into pieces the worker can make in a few seconds each
+    cl.set('_voiceRestarts', 0); cl.set('_voiceEverReady', true); cl.set('_voiceFirstStart', Date.now()); cl.set('_voiceRestartAt', 0); c.voice.status = 'off';
+    f._netraVoiceLoad(); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } }); T.eq(f._netraVoiceReady(), true);
+    var words = []; for (var i = 0; i < 90; i++) words.push('INC00' + (1000 + i) + (i % 7 === 6 ? ',' : '')); var runOn = words.join(' ');
+    T.ok(runOn.length > 600 && runOn.indexOf('.') < 0, 'one 600+ char group without a full stop');
+    answers.length = 0; f.speakNetraVoice(runOn, noop);
+    T.ok(answers.length >= 3, 'cut into pieces: ' + answers.length);
+    T.ok(answers.every(function (a) { return a.text.length <= 220; }), 'none over 220 chars: ' + answers.map(function (a) { return a.text.length; }).join(','));
+    T.eq(answers.map(function (a) { return a.text; }).join(' ').replace(/,/g, ''), runOn.replace(/,/g, ''), 'nothing lost, nothing doubled');
+    T.eq(f._splitLongGroup('a b c', 220), ['a b c']); T.eq(f._splitLongGroup('one, two, three', 9), ['one', 'two', 'three'], 'cut at the commas');
+    // a long sentence at the head of the queue is allowed 100 ms a character on top of the 30 s
+    cl.set('_voiceStallTimer', null); cl.set('_voiceHeadSince', Date.now() - 40000);
+    f._netraVoiceWatch(); T.eq(c.voice.status, 'ready', 'a 220-char sentence 40 s in is busy, not stuck');
+    cl.set('_voiceStallTimer', null); cl.set('_voiceHeadSince', Date.now() - 53000);
+    f._netraVoiceWatch(); T.eq(c.voice.status, 'error', 'past 30 s + 22 s it is stuck'); T.ok(c.events.some(function (e) { return /no sound in 5[0-2] s/.test(e); }), c.events.slice(-2).join(' | '));
+    // a device line still going when hers starts is cut first
+    tm.fire(function (t) { return t.delay === 1500; }); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    var cancelled = 0; cl.set('TTS', { speaking: true, pending: false, cancel: function () { cancelled++; }, getVoices: function () { return []; } });
+    f.speakNetraVoice('Hers now.', noop); T.eq(cancelled, 1, 'the device utterance is cancelled');
+    // an interjection (a reminder, a polled notification) waits while a line waits for her, so it is not said twice
+    cl.set('_speakingNow', false); cl.set('_chatInFlight', false); cl.set('_queuedUtterance', null); cl.set('_fillerChainActive', false); cl.set('currentFillerAudio', null); cl.set('currentFillerUtter', null);
+    c.state = 'idle'; c.interim = ''; cl.set('_lastInterimAt', 0); c.labCalib = null; cl.set('_stillAwaiting', function () { return false; });
+    cl.set('_voiceHeld', []); T.eq(f._floorFree(), true);
+    cl.set('_voiceHeld', [{ text: 'Reminder: stand-up.' }]); T.eq(f._floorFree(), false, 'the floor is not free while a line waits for her');
+});
+
+T.test('a healthy run earns a fresh restart budget; her engine picked again while she loads still releases what waits; a missing config file is final; the sentence that stalled is left out of the restarted line', function () {
+    var cl = page(), c = cl.c, f = cl.fn;
+    var answers = [];
+    fakeWorker(cl, function (w, m) { if (m.cmd === 'say') answers.push(m); });
+    var played = [], browser = [];
+    global.Audio = function (url) { var a = this; this.url = url; played.push(a); this.play = function () { return Promise.resolve(); }; };
+    global.Blob = global.Blob || function (parts, o) { this.parts = parts; this.type = o && o.type; };
+    cl.set('speakBrowser', function (text, done) { browser.push(text); if (done) done(); });
+    cl.set('_humanizeReply', function (t) { return t; }); cl.set('_afterTTS', function (d) { if (d) d(); }); c.labMute = false; c.alert = true;
+    var tm = drivenTimers(cl);
+    // the budget spent on a flaky first load, then twenty healthy minutes: a later stall still restarts her
+    f._netraVoiceLoad(); cl.set('_voiceRestarts', 4); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.ok(cl.get('_voiceReadyAt') > 0);
+    cl.set('_voiceReadyAt', Date.now() - 20 * 60000);
+    f._netraVoiceFail('stuck twenty minutes later');
+    T.eq(cl.get('_voiceRestarts'), 1, 'the budget was whole again'); T.eq(f._netraVoiceComing(), true, 'she is coming back');
+    // but flapping right after a ready spends it
+    tm.fire(function (t) { return t.delay === 1500; }); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    f._netraVoiceFail('died again at once'); T.eq(cl.get('_voiceRestarts'), 2, 'a ready seconds ago earns nothing');
+    // her engine left while she loads, then picked again: the wait timer still releases what waits
+    cl.set('_voiceRestarts', 0); cl.set('_voiceRestartAt', 0); cl.set('_voiceEverReady', false); cl.set('_voiceFirstStart', 0); cl.set('_voiceWorker', null); c.voice.status = 'off'; cl.set('_voiceWaitTimer', null);
+    f._netraVoiceLoad(); T.eq(tm.timers.filter(function (t) { return t.delay === 90000; }).length, 1, 'the first-load wait');
+    cl.set('_voiceWaitSaid', false); f.speak('Early.'); T.eq(cl.get('_voiceHeld').length, 1);
+    cl.set('forcedVoiceName', ''); cl.set('chooseVoice', function () { return null; }); browser.length = 0;
+    f._setDeviceVoice('Samantha'); T.eq(browser, ['Early.'], 'said at once by the device'); T.eq(cl.get('_voiceHeld'), []);
+    T.eq(tm.timers.filter(function (t) { return t.delay === 90000; }).length, 1, 'the wait timer is not cancelled');
+    f._setDeviceVoice('__netra__'); T.eq(c.ttsEngine, 'netra');
+    f.speak('Later.'); T.eq(cl.get('_voiceHeld').length, 1, 'held again for her');
+    cl.set('_voiceFirstStart', Date.now() - 95000); browser.length = 0;
+    tm.fire(function (t) { return t.delay === 90000; });
+    T.eq(browser, ['Later.'], 'and the window still ends it'); T.eq(cl.get('_voiceHeld'), []);
+    // the sentence that stalled is left out: the restarted line begins with the next one
+    cl.set('_voiceRestarts', 0); cl.set('_voiceEverReady', true); cl.set('_voiceFirstStart', Date.now()); cl.set('_voiceRestartAt', 0); cl.set('_voiceWorker', null); c.voice.status = 'off';
+    f._netraVoiceLoad(); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } }); answers.length = 0; played.length = 0;
+    f.speakNetraVoice('Stuck one. Next one.', noop);
+    T.eq(answers.map(function (a) { return a.text; }), ['Stuck one.', 'Next one.']);
+    cl.set('_voiceStallTimer', null); cl.set('_voiceHeadSince', Date.now() - 32000);
+    f._netraVoiceWatch(); T.eq(c.voice.status, 'error');
+    T.eq(cl.get('_voiceHeld').map(function (h) { return h.text; }), ['Next one.'], 'the stuck sentence is left out, the rest waits for her');
+    tm.fire(function (t) { return t.delay === 1500; }); answers.length = 0; f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    T.eq(answers.map(function (a) { return a.text; }), ['Next one.'], 'she goes on from the next sentence'); T.eq(browser, ['Later.'], 'never the device');
+    T.match(CLIENT, /fetch\(pdiBase \+ 'voice\/' \+ d\.model \+ '\.onnx-json'\)\.then\(okR\), fetch\(pdiBase \+ 'voice\/piper_phonemize-js'\)\.then\(okR\)/, 'a missing config or glue file is an HTTP error (final), not a parse error retried four times');
 });
 
 T.test('the worker: the bytes are told as they land, from a streamed body or a cached one', function () {

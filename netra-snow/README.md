@@ -291,16 +291,28 @@ voice; a worker that dies at any point in the visit is started again (four
 times at most, after a pause that doubles from 1.5 s to 12 s) and lines
 wait up to 25 s for it to come back, since its files are cached by then; a
 load that goes quiet for 45 s (no bytes landing, no start step begun) is
-started again too; a worker that gives no answer for 30 s to the sentence
+started again too; a worker that gives no answer for 30 s (plus 100 ms a
+character of the sentence, so a long one is busy, not stuck) to the sentence
 it is on is stuck and is started again - and that watch is not moved by new
 lines or by a barge-in, so a stuck worker is caught while the user keeps
-talking. The thinking cues are four short lines made in her voice once she
-is ready, and on her engine the device's speech synthesis is never used for
-a cue (silence keeps the pacing instead). This device's own voice speaks
-only when the instance has no voice files at all, or when hers died and
-would not come back in time - and then for the rest of the line she had
-begun, so nothing is lost (and the stage does not show her speaking while
-that rest waits). Each sentence is its own group: synthesized in the worker
+talking. A failure that would only repeat - a file the instance does not
+have, a worker the browser will not make - is not retried: the device
+speaks at once and the loading card moves on. While she has never been
+ready, a restart keeps the rest of the 90 s window; two healthy minutes
+earn a fresh restart budget, so the cap bounds flapping, not the visit; and
+the sentence that stalled is left out, so the restarted line does not begin
+with it again. The thinking cues are
+four short lines made in her voice once she is ready, and on her engine the
+device's speech synthesis is never used for a cue (silence keeps the pacing
+instead). A reply with no full stop is cut into pieces of at most 220
+characters at a comma or a space, so no piece takes the worker long. This
+device's own voice speaks only when the instance has no voice files at all,
+or when hers died and would not come back in time - and then for the rest
+of the line she had begun, so nothing is lost (the stage does not show her
+speaking while that rest waits, and if she is back by the time the rest is
+due it is hers again). A device line still going when her clip starts is
+cut first; a reminder or a notification waits while a line waits for her,
+so it is never said twice. Each sentence is its own group: synthesized in the worker
 in order and played back to back; a barge-in, a stop or a new line drops
 what is still queued and lets the cut clip's memory go. Leaving the page
 ends the worker. Settings lists "Netra's own voice (Cori, British English)"
