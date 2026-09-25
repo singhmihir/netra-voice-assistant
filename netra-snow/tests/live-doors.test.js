@@ -196,7 +196,7 @@ T.test('B2: Type opens the box with the caret in it and follows the on-screen ke
     vv.scale = 1; vv.height = 800; listeners.resize();
     T.ok(!stage.hasAttribute('data-kbd'), 'keyboard down: the orb is back');
     vv.height = 300; listeners.resize();
-    T.match(CSS, /\.netra-stage\[data-kbd\] \.netra-stage-blob-wrap,\n\.netra-stage\[data-kbd\] \.netra-stage-3d \{ visibility: hidden; \}/);
+    T.match(CSS, /\.netra-stage\[data-kbd\] \.netra-stage-orbit,\n\.netra-stage\[data-kbd\] \.netra-stage-blob-wrap \{ display: none; \}\n\.netra-stage\[data-kbd\] \.netra-stage-3d \{ visibility: hidden; \}/);
     p.f._typeToggle(false);
     T.ok(!stage.hasAttribute('data-kbd'), 'closing the box brings the orb back');
     T.eq(c.typeOn, false);
@@ -609,16 +609,16 @@ T.test('B3: "Transcript copied" is said on every Copy, and a reopened sheet does
 T.test('B4: the Tokyo starter is answered at once and exactly, from the browser\'s own time zones', function () {
     // live, the model was busy and a Guest heard a web page's title read out
     var f = page().f, at = Date.UTC(2026, 8, 25, 9, 5);   // 09:05 UTC: 18:05 in Tokyo, 05:05 in New York
-    T.match(f._placeTime('tokyo', at), /^In Tokyo it is 6 oh 5 P M(, on \w+day)?\.$/);
-    T.match(f._placeTime('New York', at), /^In New York it is 5 oh 5 A M(, on \w+day)?\.$/);
-    T.match(f._placeTime('the uk', Date.UTC(2026, 0, 5, 14, 0)), /^In UK it is 2 o'clock P M/);
+    T.match(f._placeTime('tokyo', at), /^In Tokyo it is 6:05 PM(, on \w+day)?\.$/);
+    T.match(f._placeTime('New York', at), /^In New York it is 5:05 AM(, on \w+day)?\.$/);
+    T.match(f._placeTime('the uk', Date.UTC(2026, 0, 5, 14, 0)), /^In UK it is 2:00 PM/);
     T.eq(f._placeTime('atlantis', at), null, 'a place not in the table goes on to the model');
     var real = Date.now;
     Date.now = function () { return at; };
     try {
         ['What time is it in Tokyo?', 'what\'s the time in tokyo', 'time in Tokyo now', 'what is the current time in tokyo'].forEach(function (u) {
             var r = f.matchLocal(u) || {};
-            T.eq(r.intent, 'time', u); T.match(r.reply || '', /^In Tokyo it is 6 oh 5 P M/, u);
+            T.eq(r.intent, 'time', u); T.match(r.reply || '', /^In Tokyo it is 6:05 PM/, u);
         });
         T.eq(f.matchLocal('what time is it in atlantis'), null, 'unknown: not answered locally');
         T.match(f.matchLocal('what time is it').reply, /^The time is /, 'the local time is as before');
@@ -658,23 +658,27 @@ T.test('B7: on the stage M mutes, ? speaks the list, keys off leaves M alone but
     var e = key('m', { target: orb });
     handler(e);
     T.eq(mutes, 1, 'M on Netra mutes'); T.eq(e.prevented, 1);
+    // focus on <body> (nothing focused): the stage covers the page and the
+    // rest is inert, so the key is the stage's (changed with X9)
     handler(key('m', { target: DOC.body }));
-    T.eq(mutes, 1, 'keys on the portal page do nothing');
+    T.eq(mutes, 2, 'focus on the page body: M still mutes');
+    handler(key('m', { target: DOC.body.appendChild(el('a', 'portal-link')) }));
+    T.eq(mutes, 2, 'keys on the portal page do nothing');
     handler(key('m', { target: stage.appendChild(el('input')) }));
-    T.eq(mutes, 1, 'typing in a field');
+    T.eq(mutes, 2, 'typing in a field');
     handler(key('m', { target: stage.appendChild(el('aside', 'netra-lab')).appendChild(el('button')) }));
-    T.eq(mutes, 1, 'a key in the Lab is the Lab\'s');
+    T.eq(mutes, 2, 'a key in the Lab is the Lab\'s');
     handler(key('?', { target: orb }));
     T.match(p.rec.spoken[0], /^Shortcuts: M, mute\. Slash, type\. T, transcript\. S, settings\. Escape, stop Netra talking or close\./);
     c.shortcutsOn = false;
     handler(key('m', { target: orb }));
-    T.eq(mutes, 1, 'single keys off');
+    T.eq(mutes, 2, 'single keys off');
     handler(key('Escape', { target: orb }));
     T.eq(p.rec.stops, ['Escape key'], 'Escape still stops her');
     // behind the loading card only Escape counts
     c.shortcutsOn = true; c.gate = { open: false, typing: false };
     handler(key('m', { target: orb }));
-    T.eq(mutes, 1);
+    T.eq(mutes, 2);
     // off the stage (the floating orb), Escape is as it was
     c.liveMode = false;
     handler(key('Escape', { target: DOC.body }));

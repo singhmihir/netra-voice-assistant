@@ -254,8 +254,9 @@ you did not move.
   orb sits in the same place in every state, and the bar and the typing
   box stay on screen on a 320 px phone, a phone held sideways, a short
   laptop window and with the keyboard up (the orb steps aside while you
-  type). Checked in a real browser at ten sizes, compiled the way the
-  portal compiles it.
+  type, the bar goes compact and the caption shows whole lines or none).
+  Checked in a real browser at sixteen sizes, six of them with the
+  keyboard up, compiled the way the portal compiles it.
 - **One status, said once.** Listening, Thinking (named: "Searching the
   web…"), Speaking, Mic off, Paused, Ended - one line with a hint, one
   polite announcer, and never a word over her own voice. A wait has a
@@ -272,7 +273,17 @@ you did not move.
   keyboard shortcuts and More (the Lab with Copy diagnostics, the app
   install). Single-key shortcuts (M, /, T, S, Esc, ?) for keyboard users.
 - **Try saying.** Four starters until the first question; the time in
-  another city is answered at once from the browser's own time zones.
+  another city is answered at once from the browser's own time zones,
+  written as people write it ("1:12 PM").
+- **The focus is never lost.** When Try again, the mic check's card or the
+  loading card goes, the focus moves to the orb or into the card - never
+  to the page - and Try again sends exactly the question that failed. The
+  single keys work wherever the focus is on the stage; Escape closes a
+  sheet, then the Lab, then the typing box, then stops her; the Lab is a
+  modal wherever it covers the stage. On an iPhone that needs a tap, the
+  orb says so and wakes the mic instead of pausing her. A shared reviewer
+  account is not greeted by name, and the voice picked in Settings is the
+  voice that speaks.
 - **Found live, fixed for good.** The portal's SCSS compiler silently drops
   a rule with min() around calc() (it took the stage's grid with it) and
   writes `var(--a) + 1px` as the invalid `var(--a)+ 1px`; those sums now

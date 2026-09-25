@@ -45,6 +45,9 @@ var BAR = tpl.slice(tpl.indexOf('<div class="netra-stage-controls" role="group"'
 BAR = BAR.slice(0, BAR.indexOf('\n    </div>') + 11);
 var TYPE = tpl.slice(tpl.indexOf('<form class="netra-type"'));
 TYPE = TYPE.slice(0, TYPE.indexOf('</form>') + 7);
+// the real header, with a Guest's Sign in (the widest it gets)
+var HEAD = tpl.slice(tpl.indexOf('<header class="netra-stage-head">'));
+HEAD = HEAD.slice(0, HEAD.indexOf('</header>') + 9);
 // the 'Try saying' starters, which take the aux row before the first question
 var TRY = '<div class="netra-try" role="group"><p class="netra-try-h">Try saying</p>' +
     ['What can you do?', 'Tell me a joke', 'What time is it in Tokyo?', 'Search the web for today’s news']
@@ -53,8 +56,8 @@ var LONG = 'Tokyo is nine hours ahead of London, so it is a quarter past six in 
 
 // the stage's rows with their real classes; the typing box is open in the aux row
 function stage(st) {
-    return '<div class="vtest"><div class="netra-root"><div class="netra-stage netra-3d-on netra-cap-' + (st.size || 'm') + '"' + (st.vvh ? ' style="--vvh:' + st.vvh + 'px"' : '') + '>' +
-        '<header class="netra-stage-head"><button type="button" class="netra-head-settings"><span>Settings</span></button><h1 class="netra-stage-brand">Netra</h1></header>' +
+    return '<div class="vtest"><div class="netra-root"><div class="netra-stage netra-3d-on netra-cap-' + (st.size || 'm') + '"' + (st.vvh ? ' style="--vvh:' + st.vvh + 'px" data-kbd=""' : '') + '>' +
+        HEAD +
         '<div class="netra-stage-center"><div class="netra-stage-orbit"></div>' +
         '<button type="button" class="netra-stage-blob-wrap" id="orb"><svg class="netra-stage-svg" viewBox="0 0 120 120"></svg></button>' +
         '<div class="netra-status" id="status"><p class="netra-status-label">' + st.label + '</p>' +
@@ -71,7 +74,10 @@ var STATES = {
     xl: { label: 'Speaking', hint: 'Talk or tap to interrupt', size: 'xl' },
     starters: { label: 'Listening', aux: 'try' }
 };
-var SIZES = [[375, 667], [390, 664], [360, 640], [320, 568], [412, 915], [667, 375], [1280, 720], [1366, 657], [390, 844, 480], [390, 844, 380]];
+// a third number is the height left above the on-screen keyboard (--vvh);
+// the stage then has data-kbd, as _vvWatch sets it
+var SIZES = [[375, 667], [390, 664], [360, 640], [320, 568], [412, 915], [667, 375], [1280, 720], [1366, 657], [390, 844, 480], [390, 844, 380],
+    [320, 568, 308], [844, 390, 230], [844, 390, 190], [667, 375, 190]];
 
 (async function () {
     var browser;
@@ -87,8 +93,15 @@ var SIZES = [[375, 667], [390, 664], [360, 640], [320, 568], [412, 915], [667, 3
             await page.setContent('<!doctype html><html><head><style>' + compiled + '</style>' + inline + '</head><body class="netra-live-body">' + stage(st) + '</body></html>');
             var m = await page.evaluate(function () {
                 function r(sel) { var b = document.querySelector(sel).getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), left: Math.round(b.left), right: Math.round(b.right), w: Math.round(b.width), h: Math.round(b.height) }; }
-                return { stage: r('.netra-stage'), orb: r('#orb'), status: r('#status'), cap: r('#cap'), aux: r(document.querySelector('#netra-type') ? '#netra-type' : '.netra-try'), bar: r('.netra-stage-controls') };
+                var cap = document.querySelector('#cap'), cs = getComputedStyle(cap), line = parseFloat(getComputedStyle(cap.querySelector('.netra-cap-line')).lineHeight);
+                return { stage: r('.netra-stage'), orb: r('#orb'), status: r('#status'), cap: r('#cap'), aux: r(document.querySelector('#netra-type') ? '#netra-type' : '.netra-try'), bar: r('.netra-stage-controls'),
+                    // the caption's text area and one line of it; where the middle cuts it
+                    capText: Math.round(cap.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)), capLine: Math.round(line),
+                    head: [r('.netra-head-settings'), r('.netra-stage-brand'), r('.netra-head-signin')],
+                    mid: r('.netra-stage-center'), midClip: getComputedStyle(document.querySelector('.netra-stage-center')).overflow,
+                    labels: [].map.call(document.querySelectorAll('.netra-ctl-label'), function (l) { return l.textContent + (l.getBoundingClientRect().width > 2 ? '' : ' (hidden)'); }) };
             });
+            if (process.env.NETRA_SHOT) await page.screenshot({ path: process.env.NETRA_SHOT + '/' + SIZES[s].join('x') + '-' + k + '.png' });
             m.size = SIZES[s].slice(0, 2).join('x') + (SIZES[s][2] ? ' --vvh ' + SIZES[s][2] : ''); m.state = k;
             out.push(m);
         }

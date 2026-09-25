@@ -1801,7 +1801,8 @@
 .netra-stage-blob-wrap:active { transform: scale(0.97); }
 /* the on-screen keyboard is up (client.js _vvWatch): the orb's row is too
    small to tap, so the orb steps aside while typing */
-.netra-stage[data-kbd] .netra-stage-blob-wrap,
+.netra-stage[data-kbd] .netra-stage-orbit,
+.netra-stage[data-kbd] .netra-stage-blob-wrap { display: none; }
 .netra-stage[data-kbd] .netra-stage-3d { visibility: hidden; }
 /* no square box on a click or a tap; keyboard focus gets the ring that hugs
    the orb (template <style>, ::after) */
@@ -2238,6 +2239,79 @@
 .netra-try-chip:last-child { margin-right: auto; }
 .netra-try-chip:hover { background: #2a2b2d; }
 .netra-try-chip:focus-visible { outline: 3px solid #ffffff; outline-offset: 2px; }
+
+/* the on-screen keyboard is up (client.js _vvWatch sets data-kbd and the
+   visible height, --vvh): 308 px on a 320 x 568 phone, 190 px on a phone
+   held sideways. No orb row and no orb column: the status, the caption and
+   the typing box get the whole width, and the bar is compact. The middle
+   is one column that wraps: a caption with no room for one whole line
+   wraps into a second column, off the side and cut away, never a sliver
+   under the typing box (her words are still in the Transcript) */
+.netra-stage[data-kbd] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: calc(56px + env(safe-area-inset-top, 0px)) minmax(0, 1fr) auto auto;
+    grid-template-areas: 'head' 'mid' 'aux' 'bar';
+    --kbd-lines: 1;
+}
+/* a tall phone has room for two lines above its keyboard */
+@media (min-height: 700px) and (orientation: portrait) {
+    .netra-stage[data-kbd] { --kbd-lines: 2; }
+}
+.netra-stage[data-kbd] .netra-stage-center {
+    grid-area: mid;
+    display: flex;
+    flex-flow: column wrap;
+    align-items: center;
+    align-content: flex-start;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+/* the status keeps the full width, so a wrapped caption starts past the edge */
+.netra-stage[data-kbd] .netra-status { flex: none; min-height: 0; padding: 4px 16px; }
+.netra-stage[data-kbd] .netra-status-hint { display: none; }
+.netra-stage[data-kbd] .netra-retry-row { margin-top: 4px; }
+/* whole lines, the newest words; the line before is masked at the edge */
+.netra-stage[data-kbd] .netra-cap {
+    flex: none;
+    align-self: center;
+    height: calc(14px + var(--kbd-lines) * 1.45em);
+    max-height: none;
+    padding: 6px 14px;
+    border-radius: 16px;
+}
+.netra-stage[data-kbd] .netra-cap .netra-cap-line {
+    -webkit-mask-image: linear-gradient(to top, #000 calc(var(--kbd-lines) * 1.45em), transparent calc(var(--kbd-lines) * 1.45em));
+    mask-image: linear-gradient(to top, #000 calc(var(--kbd-lines) * 1.45em), transparent calc(var(--kbd-lines) * 1.45em));
+}
+.netra-stage[data-kbd] .netra-type { padding: 2px 0; }
+/* compact bar: smaller circles, the words kept as each control's name for
+   screen readers but not shown (the .netra-sr-only pattern); the keyboard
+   covers the home bar */
+.netra-stage[data-kbd] .netra-stage-controls { padding-top: 4px; padding-bottom: 6px; }
+.netra-stage[data-kbd] .netra-ctl { min-height: 44px; gap: 0; }
+.netra-stage[data-kbd] .netra-ctl-ico { width: 44px; height: 44px; }
+.netra-stage[data-kbd] .netra-ctl-label {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap;
+    border: 0;
+}
+/* sideways the header shares its row with the status and the caption */
+@media (orientation: landscape) and (max-height: 520px) {
+    .netra-stage[data-kbd] {
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-rows: 48px minmax(0, 1fr) auto auto;
+        grid-template-areas: 'head mid' '. mid' 'aux aux' 'bar bar';
+    }
+    .netra-stage[data-kbd] .netra-stage-head { column-gap: 12px; }
+    .netra-stage[data-kbd] .netra-status { padding: 2px 16px; }
+}
 
 /* ---- R28 - sheets: the Transcript and Settings ----
    A dark scrim over the stage and a card: a bottom sheet with a grip on a

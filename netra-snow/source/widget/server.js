@@ -175,6 +175,8 @@
     // operational detail - neither goes to the public page
     if (!action) {
         var bootGuest = _isGuest();
+        // a shared read-only reviewer account: the greeting does not use its name
+        data.read_only = !bootGuest && _readOnlyAccount();
         data.vocab = bootGuest ? {} : _getVocab();
         // R17 - one cheap count so the client knows whether to auto-offer
         // the while-you-were-away debrief after the greeting

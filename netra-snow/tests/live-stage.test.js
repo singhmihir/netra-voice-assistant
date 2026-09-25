@@ -376,7 +376,7 @@ T.test('A2: the SCSS survives the portal\'s compiler: no calc() inside min()/max
         'in calc(), put the var() last (26px + var(--x)), or move the sum to the inline style');
 });
 
-T.test('A2: the stage fits - the bar and the aux row end on screen at common sizes and with the keyboard open', function () {
+T.test('A2: the stage fits - the bar and the aux row end on screen at common sizes and with the keyboard up (320 x 568 and sideways too)', function () {
     // the orb row and then the caption row give way; the orb follows its row
     var st = rule(CSS, '.netra-stage');
     T.match(st, /grid-template-rows: calc\(56px \+ env\(safe-area-inset-top, 0px\)\) minmax\(0, 1fr\) minmax\(min-content, auto\) minmax\(0, var\(--cap-row\)\) minmax\(min-content, var\(--aux-h\)\) auto/);
@@ -396,12 +396,31 @@ T.test('A2: the stage fits - the bar and the aux row end on screen at common siz
         T.eq(m.stage.h, vvh ? +vvh[1] : +m.size.split(/[x ]/)[1], where + ': the stage is the visible height');
         T.ok(m.bar.bottom <= m.stage.bottom + 1, where + ': the bar ends on screen (' + m.bar.bottom + ' > ' + m.stage.bottom + ')');
         T.ok(m.aux.bottom <= m.bar.top + 1, where + ': the aux row (the composer) is above the bar');
+        // the header's controls never sit on each other (a Guest's Sign in included)
+        T.ok(m.head[0].right <= m.head[1].left && m.head[1].right <= m.head[2].left, where + ': Settings, Netra and Sign in do not overlap');
+        // a caption shows at least one whole line, or none at all
+        T.ok(m.capText >= m.capLine, where + ': the caption has a whole line (' + m.capText + ' < ' + m.capLine + ')');
+        if (vvh) {
+            // the keyboard is up (data-kbd): no orb, a compact bar, the words
+            // kept for screen readers; status and caption in the middle, whose
+            // edge cuts nothing that is shown
+            T.eq(m.orb.w, 0, where + ': the orb steps aside');
+            T.eq(m.labels, ['Mute (hidden)', 'Type (hidden)', 'Transcript (hidden)', 'End (hidden)'], where + ': the bar keeps its words as names');
+            T.ok(m.bar.h <= 60, where + ': the bar is compact (' + m.bar.h + ')');
+            T.ok(m.mid.bottom <= m.aux.top + 1, where + ': the middle ends above the typing box');
+            T.ok(m.status.bottom <= m.mid.bottom + 1, where + ': the status (and Try again) is whole (' + m.status.bottom + ' > ' + m.mid.bottom + ')');
+            T.ok(m.head.every(function (h) { return h.bottom <= m.mid.top + 1 || h.right <= m.mid.left + 1; }), where + ': the header is clear of the middle');
+            var shown = m.cap.left < m.stage.right;
+            if (shown) T.ok(m.status.bottom <= m.cap.top + 1 && m.cap.bottom <= m.mid.bottom + 1, where + ': the caption is whole, under the status (' + m.cap.top + '-' + m.cap.bottom + ')');
+            else T.eq(m.midClip, 'hidden', where + ': a caption with no room is cut away whole');
+            if (m.size === '390x844 --vvh 480' || m.size === '320x568 --vvh 308' || m.size === '844x390 --vvh 230' && m.state === 'listening') T.ok(shown, where + ': there is room for the caption');
+            return;
+        }
         T.ok(Math.abs(m.orb.w - m.orb.h) <= 1, where + ': the orb is round');
         // (a phone held sideways has the status beside the orb, not under it)
         T.ok(m.orb.bottom <= m.status.top + 1 || m.orb.right <= m.status.left + 1, where + ': the orb stays clear of the status');
         // the real typing box is open in the aux row: with the keyboard up too
         T.ok(m.status.bottom <= m.cap.top + 1 && m.cap.bottom <= m.aux.top + 1, where + ': status, caption and aux do not overlap');
-        if (vvh) return;
         T.ok(m.orb.w >= 96, where + ': the orb is still a big target (' + m.orb.w + ')');
         // a new caption size or state never moves the orb (Try again may make it smaller)
         if (m.state === 'retry') return;
@@ -409,7 +428,7 @@ T.test('A2: the stage fits - the bar and the aux row end on screen at common siz
         if (at[m.size]) T.eq(o, at[m.size], where + ': the orb stays in one place');
         else at[m.size] = o;
     });
-    T.ok(out.length >= 40, 'every size and state was laid out');
+    T.ok(out.length >= 60, 'every size and state was laid out');
 });
 
 T.test('A2: the header is Settings, Netra and (for a Guest) Sign in; the decor layers are gone; system fonts only', function () {
@@ -695,7 +714,7 @@ T.test('A6: after a failed turn Try again stays up through her apology and after
     f._retryTurn();
     T.eq(c.lastFailed, false, 'pressed: gone');
     // every server failure branch uses it
-    T.eq((SRC.match(/\n\s+_turnFailed\(\);/g) || []).length, 3, 'empty reply, server error, transport error');
+    T.eq((SRC.match(/\n\s+_turnFailed\(myAsk\);/g) || []).length, 3, 'empty reply, server error, transport error (each with the question it sent)');
 });
 
 T.test('A6: Try again and Type instead move focus to the orb before their row goes, never to the page', function () {
@@ -760,11 +779,12 @@ T.test('A6: cutting her off plays the falling blip only, never the your-turn chi
     T.eq(p.rec.cues, ['open']);
 });
 
-T.test('A6: Try again asks the last question again; a blocked mic says what to do, as an alert', function () {
+T.test('A6: Try again asks the failed question again; a blocked mic says what to do, as an alert', function () {
     var p = page(), c = p.c, f = p.f, asked = [], started = 0;
-    p.set('processCommand', function (t, conf) { asked.push([t, conf]); });
+    // X5: the question the failed turn sent, not c.lastHeard (see live-focus)
+    p.set('handleHeard', function (t) { asked.push([t, 1.0]); });
     p.set('startContinuous', function () { started++; });
-    c.lastHeard = 'x';
+    p.set('_failedAsk', { text: 'x', auto: false }); c.lastFailed = true;
     f._retryTurn();
     T.eq(asked, [['x', 1.0]]);
     // microphone blocked
@@ -788,9 +808,10 @@ T.test('A6: Try again asks the last question again; a blocked mic says what to d
 T.test('A7: a title the page focuses (a sheet\'s, the loading card\'s) gets no box, not even the portal\'s green one', function () {
     // found live: the portal's accessibility mode gives any focused [tabindex]
     // a green border ([accessibility] [tabindex]:not(...):focus); every
-    // tabindex here is a title that focus is moved to, never a control
+    // tabindex here is a title that focus is moved to, or the stage itself
+    // (X9: a click on its background keeps the focus on it), never a control
     T.match(STYLE, /\.netra-root \[tabindex="-1"\]:focus \{ border: 0 !important; box-shadow: none !important; \}/);
-    (TPL.match(/tabindex="[^"]*"/g) || []).forEach(function (a) { T.eq(a, 'tabindex="-1"', 'only titles carry a tabindex'); });
+    (TPL.match(/tabindex="[^"]*"/g) || []).forEach(function (a) { T.eq(a, 'tabindex="-1"', 'only titles and the stage carry a tabindex, never in the Tab order'); });
 });
 
 T.test('A7: the portal header made inert by the loading card is quieted again when the card goes', function () {

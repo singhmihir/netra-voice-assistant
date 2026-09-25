@@ -40,6 +40,9 @@
      focused [tabindex]: ours are all titles, not controls */
   .netra-stage [tabindex="-1"]:focus-visible { outline: none !important; }
   .netra-root [tabindex="-1"]:focus { border: 0 !important; box-shadow: none !important; }
+  /* the stage itself takes the focus on a click on its background (so the
+     single keys still work): it is not a control and shows no ring */
+  .netra-root .netra-stage:focus { outline: none; }
   /* R28 - the orb's size, here and not in the SCSS: the portal's compiler
      drops a whole rule that has min() around calc() (it took the stage's
      grid with it once), and turns "var(--a) + var(--b)" into the invalid
@@ -121,8 +124,10 @@
   .netra-3d-on .netra-stage-ring { display: none; }
   /* R28 - Settings and the Transcript are sheets (stylesheet.scss .netra-sheet*,
      .netra-set-*). The Lab stays a floating window here; on a phone it is a
-     sheet across the width that stops above the control bar, so the four
-     controls and their focus rings stay reachable. The bar is 8 px + 84 px
+     sheet across the width that stops above the control bar. Wherever it
+     lies over the stage it is a modal (client.js _labModal): Tab stays in
+     it and Escape or its Close gives the stage back, so the bar is seen
+     but out of the Tab order until then. The bar is 8 px + 84 px
      controls + 20 px (plus the home bar): 112 px, the ring 6 px over the
      circles stays inside it. The bar's bottom padding is here, not in the
      SCSS: max() around calc() is left to the browser */
@@ -518,7 +523,7 @@
         ==================================================== -->
   <!-- R28 - an anchored grid (head, orb, status, cap, aux, bar): the orb stays
        in one place in every state; the caption size class sets --cap -->
-  <div class="netra-stage" ng-if="c.liveMode" ng-class="['netra-stage-' + c.state, 'netra-cap-' + (c.capSize || 'm'), {'netra-calm': c.calm}]">
+  <div class="netra-stage" ng-if="c.liveMode" tabindex="-1" ng-class="['netra-stage-' + c.state, 'netra-cap-' + (c.capSize || 'm'), {'netra-calm': c.calm}]">
     <!-- the stage's only live regions: a screen reader hears each thing once -->
     <div class="netra-sr-only" id="netra-say" role="status" aria-live="polite" aria-atomic="true">{{c.srSay}}</div>
     <div class="netra-sr-only" role="alert" aria-atomic="true">{{c.srAlert}}</div>
@@ -634,10 +639,31 @@
         </div>
         <div class="netra-calib-actions">
           <button class="netra-calib-skip" ng-show="c.labCalib.stage === 'listening' || c.labCalib.stage === 'prompt'" ng-click="c.calibSkip()">Skip</button>
-          <button ng-show="c.labCalib.stage === 'done' || c.labCalib.stage === 'timeout'" ng-click="c.calibRetry()">Try again</button>
-          <button ng-show="c.labCalib.stage === 'done' || c.labCalib.stage === 'timeout'" ng-click="c.calibDismiss()">Close</button>
+          <button class="netra-calib-retry" ng-show="c.labCalib.stage === 'done' || c.labCalib.stage === 'timeout'" ng-click="c.calibRetry()">Try again</button>
+          <button class="netra-calib-close" ng-show="c.labCalib.stage === 'done' || c.labCalib.stage === 'timeout'" ng-click="c.calibDismiss()">Close</button>
         </div>
       </div>
+    </div>
+
+    <!-- R28 - Type: a real way in from the first second ('/' opens it too).
+         It sits just above the bar, and the stage shrinks with the on-screen
+         keyboard, so the field is never under it. It and the starters come
+         before the bar in the page too (the grid keeps them in place), so
+         Tab goes down the screen: orb, chips or box, then the bar -->
+    <form class="netra-type" id="netra-type" ng-if="c.typeOn && !c.ended" ng-submit="c.typeSend()" aria-label="Type to Netra" novalidate>
+      <label class="netra-sr-only" for="netra-type-in">Type to Netra</label>
+      <input id="netra-type-in" type="text" autocomplete="off" autocapitalize="sentences" enterkeyhint="send"
+             ng-model="c.typeText" ng-keydown="c.typeKey($event)" placeholder="Ask Netra anything"/>
+      <button type="submit" class="netra-type-send" ng-disabled="!c.typeText" aria-label="Send">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6 3.39 10.2 16 12 3.39 13.8z"/></svg>
+      </button>
+      <button type="button" class="netra-type-close" ng-click="c.typeToggle(false)" aria-label="Close typing"><span aria-hidden="true">×</span></button>
+    </form>
+
+    <!-- R28 - 'Try saying': what works, until the first question -->
+    <div class="netra-try" role="group" aria-labelledby="netra-try-h" ng-if="c.showStarters()">
+      <p id="netra-try-h" class="netra-try-h">Try saying</p>
+      <button type="button" class="netra-try-chip" ng-repeat="s in c.starters() track by $index" ng-click="c.tryStarter(s)" ng-focus="c.chipFocus($event)">{{s}}</button>
     </div>
 
     <!-- R28 - one bar of four labelled controls, in the same place in every
@@ -671,25 +697,6 @@
         <span class="netra-ctl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" focusable="false"><path fill="currentColor" d="M4 5h16v2H4V5zm0 4h16v2H4V9zm0 4h16v2H4v-2zm0 4h10v2H4v-2z"/></svg></span>
         <span class="netra-ctl-label">Transcript<span ng-if="c.convoView().length"> ({{c.convoView().length}})</span></span>
       </button>
-    </div>
-
-    <!-- R28 - Type: a real way in from the first second ('/' opens it too).
-         It sits just above the bar, and the stage shrinks with the on-screen
-         keyboard, so the field is never under it -->
-    <form class="netra-type" id="netra-type" ng-if="c.typeOn && !c.ended" ng-submit="c.typeSend()" aria-label="Type to Netra" novalidate>
-      <label class="netra-sr-only" for="netra-type-in">Type to Netra</label>
-      <input id="netra-type-in" type="text" autocomplete="off" autocapitalize="sentences" enterkeyhint="send"
-             ng-model="c.typeText" ng-keydown="c.typeKey($event)" placeholder="Ask Netra anything"/>
-      <button type="submit" class="netra-type-send" ng-disabled="!c.typeText" aria-label="Send">
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6 3.39 10.2 16 12 3.39 13.8z"/></svg>
-      </button>
-      <button type="button" class="netra-type-close" ng-click="c.typeToggle(false)" aria-label="Close typing"><span aria-hidden="true">×</span></button>
-    </form>
-
-    <!-- R28 - 'Try saying': what works, until the first question -->
-    <div class="netra-try" role="group" aria-labelledby="netra-try-h" ng-if="c.showStarters()">
-      <p id="netra-try-h" class="netra-try-h">Try saying</p>
-      <button type="button" class="netra-try-chip" ng-repeat="s in c.starters() track by $index" ng-click="c.tryStarter(s)">{{s}}</button>
     </div>
 
     <!-- R28 - the Transcript: a sheet over the stage (bottom sheet on a phone,
@@ -748,8 +755,11 @@
         <section class="netra-set-group" aria-labelledby="netra-set-speak">
           <h3 id="netra-set-speak">How Netra speaks</h3>
           <label class="netra-set-label" for="netra-set-voice">Voice</label>
-          <select id="netra-set-voice" class="netra-set-select" ng-model="c.edgeVoice" ng-change="c.devSetEdgeVoice()"
+          <!-- the neural voices where they can play, else this device's own -->
+          <select id="netra-set-voice" class="netra-set-select" ng-if="c.neuralVoices()" ng-model="c.edgeVoice" ng-change="c.devSetEdgeVoice()"
                   ng-options="v as c.voiceLabel(v) for v in c.edgeVoices"></select>
+          <select id="netra-set-voice" class="netra-set-select" ng-if="!c.neuralVoices()" ng-model="c.voicePick" ng-change="c.setDeviceVoice()"
+                  ng-options="v.name as v.label for v in c.deviceVoices()"></select>
           <button type="button" class="netra-set-btn" ng-click="c.devPreviewVoice()">Hear this voice</button>
           <label class="netra-set-label" for="netra-set-rate">Speaking pace</label>
           <input id="netra-set-rate" class="netra-set-range" type="range" min="0.85" max="1.3" step="0.05"
@@ -837,9 +847,11 @@
           R8.1 - NETRA LAB: super-advanced diagnostics console
           (mic spectrum scope, recognition health, STT accuracy
           calibration, brain + hue telemetry). R28 - opened from
-          Settings > More or Alt+D; Escape closes it
+          Settings > More or Alt+D; Escape closes it. On a phone it
+          covers the stage, so there it is a modal: Tab stays inside
           ==================================================== -->
-    <aside class="netra-lab" ng-show="c.labOn" role="dialog" aria-label="Netra Lab diagnostics (draggable window)" ng-keydown="c.labKey($event)">
+    <aside class="netra-lab" ng-show="c.labOn" role="dialog" aria-label="Netra Lab diagnostics (draggable window)"
+           ng-attr-aria-modal="{{c.labOn && c.labCovers ? 'true' : undefined}}" ng-keydown="c.labKey($event)">
       <header class="netra-lab-head" ng-mousedown="c.labDragStart($event)"
               title="Drag this bar to move the Netra Lab window">
         <span class="netra-lab-grip" aria-hidden="true">⋮⋮</span>

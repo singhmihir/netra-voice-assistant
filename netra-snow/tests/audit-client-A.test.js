@@ -243,16 +243,16 @@ T.test('boot mic check: ways of saying skip skip it, a command runs, and a cut-o
     T.eq(q.c.labCalib.stage, 'skipped', 'so the briefing and "Run mic check" are not blocked forever');
 });
 
-T.test('clock and date read naturally: o\'clock on the hour, real ordinals', function () {
+T.test('clock and date read naturally: the time as it is written (3:00 PM), real ordinals', function () {
     var Real = Date;
     function at(d, u) {
         global.Date = function () { return arguments.length ? new (Function.prototype.bind.apply(Real, [null].concat([].slice.call(arguments))))() : new Real(d.getTime()); };
         global.Date.now = function () { return d.getTime(); };
         try { return page().f.matchLocal(u).reply; } finally { global.Date = Real; }
     }
-    T.eq(at(new Real(2026, 8, 23, 15, 0), 'what time is it'), "The time is 3 o'clock P M.");
-    T.eq(at(new Real(2026, 8, 23, 9, 5), 'what time is it'), 'The time is 9 oh 5 A M.');
-    T.eq(at(new Real(2026, 8, 23, 12, 30), 'what time is it'), 'The time is 12 30 P M.');
+    T.eq(at(new Real(2026, 8, 23, 15, 0), 'what time is it'), 'The time is 3:00 PM.');
+    T.eq(at(new Real(2026, 8, 23, 9, 5), 'what time is it'), 'The time is 9:05 AM.');
+    T.eq(at(new Real(2026, 8, 23, 12, 30), 'what time is it'), 'The time is 12:30 PM.');
     T.eq(at(new Real(2026, 8, 23, 10, 0), 'what is the date'), 'Today is Wednesday, the 23rd of September.');
     T.eq(at(new Real(2026, 8, 1, 10, 0), 'what is the date'), 'Today is Tuesday, the 1st of September.');
     T.eq(at(new Real(2026, 8, 22, 10, 0), 'what is the date'), 'Today is Tuesday, the 22nd of September.');
