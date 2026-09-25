@@ -90,17 +90,19 @@ T.test('the ear cuts speech into segments with pre-roll, drops clicks, caps long
     T.eq(sent.length, 1, 'one segment');
     var audio = sent[0].audio;
     T.ok(audio instanceof Float32Array);
-    // 4 pre-roll frames (~340 ms) + 12 speech + ~9 silence frames, at 16 kHz
-    T.ok(audio.length > 16000 * 1.5 && audio.length < 16000 * 2.6, 'about two seconds at 16 kHz: ' + audio.length);
+    // v7.8: ~7 pre-roll frames (~600 ms) + 12 speech + ~11 silence frames (900 ms), at 16 kHz
+    T.ok(audio.length > 16000 * 2.2 && audio.length < 16000 * 2.8, 'about two and a half seconds at 16 kHz: ' + audio.length);
     var peak = 0; for (var m = Math.floor(audio.length / 2); m < Math.floor(audio.length / 2) + 64; m++) peak = Math.max(peak, Math.abs(audio[m]));
     T.ok(peak > 0.05, 'the speech is in it (peak ' + peak.toFixed(3) + ')');
     // a click is not a word
     f._earFeed(frame(50), rate); for (i = 0; i < 12; i++) f._earFeed(frame(2), rate);
     T.eq(sent.length, 1, 'a single loud frame is dropped');
-    // a turn that never pauses is cut at the cap
+    // a turn that never pauses is cut at the cap (v7.8: 20 s, so a long ask is not split)
     for (i = 0; i < 200; i++) f._earFeed(frame(50), rate);
+    T.eq(sent.length, 1, '17 s of speech is not cut yet');
+    for (i = 0; i < 40; i++) f._earFeed(frame(50), rate);
     T.eq(sent.length, 2, 'cut at the cap');
-    T.ok(sent[1].audio.length <= 16000 * 15.2);
+    T.ok(sent[1].audio.length <= 16000 * 20.2 && sent[1].audio.length > 16000 * 19.5, 'twenty seconds: ' + sent[1].audio.length);
     // never more than two waiting: the oldest goes
     cl.set('_earBusy', true);
     for (var k = 0; k < 4; k++) { for (i = 0; i < 12; i++) f._earFeed(frame(50), rate); for (i = 0; i < 12; i++) f._earFeed(frame(2), rate); }
@@ -258,7 +260,7 @@ T.test('no mic check at start, no nudges, the quickest defaults', function () {
     f._armReprompt('Shall I read the rest?');
     T.eq(timers, [], 'a question does not arm a "still here" nudge');
     T.eq(cl.get('REMOTE_TTS_DEFAULT'), false, 'the browser voice by default');
-    T.eq(cl.get('EAR_MODEL'), 'onnx-community/whisper-tiny.en');
+    T.eq(cl.get('EAR_MODEL_TINY'), 'onnx-community/whisper-tiny.en', 'a phone\'s ear stays the quick one');
 });
 
 T.test('the loading screen: nothing is accepted until Netra can hear, speak and answer', function () {

@@ -1,7 +1,7 @@
 /* The loading screen, from a first visit on a phone, an iPhone and a screen reader.
  *
  * The gate must open as soon as the browser's own recognizer works - the
- * on-device ear (a 40-200 MB download) is only for a recognizer that fails.
+ * on-device ear (a 40-590 MB download) is only for a recognizer that fails.
  * On iPhone the Start button's own click is what unlocks her voice. For a
  * screen reader the card is a modal dialog with one quiet status line, not
  * a stream of download percentages. A browser that can not hear can still
@@ -46,7 +46,7 @@ T.test('a recognizer that started cleanly opens the gate at once, even where the
     delete global.Worker;
 });
 
-T.test('boot never holds the gate for the ear; a desktop loads the small ear later in the background, a phone never', function () {
+T.test('boot never holds the gate for the ear; a desktop loads its ear later in the background, a phone never', function () {
     var cl = page(), f = cl.fn, c = cl.c, calls = [], later = [];
     cl.set('$timeout', Object.assign(function (fn, ms) { later.push({ fn: fn, ms: ms }); return {}; }, { cancel: noop }));
     cl.set('$window', { navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/141.0' }, document: { addEventListener: noop } });
@@ -65,7 +65,7 @@ T.test('boot never holds the gate for the ear; a desktop loads the small ear lat
     var bg = later.filter(function (x) { return x.ms >= 10000; });
     T.eq(bg.length, 1, 'one later background load on a desktop');
     cl.set('_ctrlDestroyed', false); bg[0].fn();
-    T.eq(calls.indexOf('_earLoad') >= 0, true, 'the small ear loads in the background');
+    T.eq(calls.indexOf('_earLoad') >= 0, true, 'the ear loads in the background');
     // a phone: nothing later either
     var cl2 = page(), later2 = [];
     ['unlockAudio', 'populateVoices', 'startContinuous', '_readyUpdate', 'startListeningWatchdog', 'startVisibilityRecovery',
@@ -87,7 +87,7 @@ T.test('a background ear waits in standby while the browser hears, and a deaf st
     cl.set('_earSpawn', function () { spawned.push(c.ear.model + ' on ' + c.ear.device); cl.set('_earWorker', {}); });
     cl.set('_nativeVerdict', 'ok');
     f._earLoad(true);
-    T.eq(spawned, ['onnx-community/whisper-tiny.en on wasm'], 'the small model, even with a GPU');
+    T.eq(spawned, ['onnx-community/whisper-base.en on wasm'], 'v7.8: the balanced model in standby (80 MB); the best one is fetched when the ear is really needed');
     f._earOnMessage({ data: { loaded: true } });
     T.eq(c.ear.status, 'standby', 'the browser recognizer keeps the mic');
     T.eq(c.ear.on, false);
@@ -107,9 +107,9 @@ T.test('a blocked speech service loads the ear, and the loading screen says why 
     cl.set('speak', noop);
     f.startContinuous();
     cl.get('contRec').onerror({ error: 'network' });
-    T.eq(spawned, ['onnx-community/whisper-tiny.en'], 'the ear starts loading');
+    T.eq(spawned, ['onnx-community/whisper-base.en'], 'the ear starts loading: base on a desktop CPU (v7.8)');
     T.eq(c.ready, false);
-    T.eq(c.gate.hearingText, 'The browser can\'t reach its speech service - downloading speech recognition, one time (about 40 MB)');
+    T.eq(c.gate.hearingText, 'The browser can\'t reach its speech service - downloading speech recognition, one time (balanced, about 80 MB)', 'the size named honestly');
     // a refusal that comes after the clean start still brings the ear
     var cl2 = page(), f2 = cl2.fn, c2 = cl2.c, spawned2 = [];
     cl2.set('SR', function () { var r = this; r.start = noop; r.stop = noop; r.abort = noop; });
@@ -133,21 +133,21 @@ T.test('a blocked speech service loads the ear, and the loading screen says why 
     delete global.Worker;
 });
 
-T.test('a phone never picks the big model; a desktop GPU does, and the size said matches', function () {
+T.test('a phone never picks the big model; a desktop picks the most accurate its hardware runs, and the size said matches', function () {
     var cl = page(), f = cl.fn, c = cl.c;
     cl.set('$window', { navigator: { gpu: {}, userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36' } });
     f._earPickModel();
     T.eq([c.ear.model, c.ear.device, f._earSizeMb()], ['onnx-community/whisper-tiny.en', 'wasm', 40], 'Android with WebGPU: tiny');
-    c.ear.size = 'base';
+    c.ear.size = 'small';
     f._earPickModel();
-    T.eq(c.ear.model, 'onnx-community/whisper-tiny.en', 'even when base was chosen in the Lab');
+    T.eq(c.ear.model, 'onnx-community/whisper-tiny.en', 'even when the best was chosen in Settings');
     c.ear.size = 'auto';
     cl.set('$window', { navigator: { gpu: {}, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36' } });
     f._earPickModel();
-    T.eq([c.ear.model, c.ear.device, f._earSizeMb()], ['onnx-community/whisper-base.en', 'webgpu', 200], 'desktop GPU: base');
+    T.eq([c.ear.model, c.ear.device, f._earSizeMb()], ['onnx-community/whisper-small.en', 'webgpu', 590], 'v7.8 - desktop GPU: small (fp32 encoder, q4 decoder)');
     cl.set('$window', { navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } });
     f._earPickModel();
-    T.eq([c.ear.model, c.ear.device], ['onnx-community/whisper-tiny.en', 'wasm']);
+    T.eq([c.ear.model, c.ear.device, f._earSizeMb()], ['onnx-community/whisper-base.en', 'wasm', 80], 'v7.8 - desktop CPU: base');
 });
 
 // the worker's own source, run with a stand-in for transformers.js
@@ -179,7 +179,7 @@ T.test('download progress is one figure for all the files, only goes up, and "pr
     c.ear.status = 'loading';
     shown.forEach(function (p) { f._earOnMessage({ data: { progress: p } }); texts.push(c.gate.hearingText); figs.push(c.ear.progress); });
     T.eq(figs, [50, 50, 50, 99], 'a new file does not pull the figure back (the card\'s bar shows it)');
-    texts.forEach(function (t) { T.match(t, /downloading speech recognition, one time \(about 40 MB\)$/); T.notMatch(t, /%/, 'the figure is the bar, not the words'); });
+    texts.forEach(function (t) { T.match(t, /downloading speech recognition, one time \(quick, about 40 MB\)$/); T.notMatch(t, /%/, 'the figure is the bar, not the words'); });
     f._earOnMessage({ data: { progress: 100 } });
     T.eq(c.ear.progress, 99, 'never 100 from a file figure');
     f._earOnMessage({ data: { downloaded: true } });
@@ -241,7 +241,7 @@ T.test('the status line changes on milestones only: a whole download is one anno
     f._earOnMessage({ data: { downloaded: true } });
     if (c.gate.status !== lines[lines.length - 1]) lines.push(c.gate.status);
     T.eq(lines.length, 1, 'no percentage is ever announced: ' + JSON.stringify(lines));
-    T.eq(lines[0], 'Voice and answers ready. Waiting for hearing. Downloading speech recognition, about 40 MB, one time. This can take a minute.');
+    T.eq(lines[0], 'Voice and answers ready. Waiting for hearing. Downloading speech recognition, the quick model, about 40 MB, one time. This can take a minute.');
     T.match(c.gate.hearingText, /setting up speech recognition/i, 'the visible row still moves');
     // a real problem is a milestone: answers go down
     c.gate.brain = false; c.gate.brainDown = true; c.gate.brainText = 'The free AI models are overloaded right now';

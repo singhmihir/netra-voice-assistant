@@ -740,6 +740,11 @@
           <label class="netra-set-label" for="netra-set-lang">I speak</label>
           <select id="netra-set-lang" class="netra-set-select" ng-model="c.recLang" ng-change="c.labSetLang()"
                   ng-options="l as c.langName(l) for l in c.recLangs"></select>
+          <!-- v7.8 - the on-device ear's size: accuracy first, the cost said plainly -->
+          <label class="netra-set-label" for="netra-set-ear">Hearing</label>
+          <select id="netra-set-ear" class="netra-set-select" ng-model="c.ear.size" ng-change="c.setEarSize()" aria-describedby="netra-set-ear-hint"
+                  ng-options="s as c.earSizeLabel(s) for s in c.earSizes"></select>
+          <p class="netra-set-hint" id="netra-set-ear-hint">Netra's own on-device hearing, used when the browser's recognizer is blocked; Best is the most accurate and slower. Now: {{c.earSummary()}}</p>
           <label class="netra-set-label" for="netra-set-gain">Microphone sensitivity</label>
           <input id="netra-set-gain" class="netra-set-range" type="range" min="0.5" max="3" step="0.1"
                  ng-model="c.micGain" ng-change="c.labSetGain()" aria-describedby="netra-set-gain-hint"/>
@@ -896,7 +901,7 @@
         <div class="netra-lab-row netra-lab-selects">
           <label>ear</label>
           <select ng-model="c.ear.mode" ng-change="c.labSetEar()" ng-options="m as m for m in ['auto','on','off']" aria-label="Which ear hears you: automatic, the on-device one, or the browser only"></select>
-          <select ng-model="c.ear.size" ng-change="c.labSetEarSize()" ng-options="m as (m === 'auto' ? 'model: auto' : (m === 'tiny' ? 'model: tiny (fast)' : 'model: base (clear)')) for m in ['auto','tiny','base']" aria-label="On-device model: tiny is fastest, base is clearer"></select>
+          <select ng-model="c.ear.size" ng-change="c.labSetEarSize()" ng-options="m as c.earSizeLabel(m) for m in c.earSizes" aria-label="On-device model: auto picks the most accurate this device runs; tiny is quickest, base balanced, small the most accurate and slowest"></select>
           <em class="netra-lab-ear-status">{{c.earSummary()}}</em>
         </div>
         <div class="netra-lab-heard-row" ng-repeat="h in c.heard track by $index">

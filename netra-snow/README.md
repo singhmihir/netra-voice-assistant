@@ -244,6 +244,33 @@ journey (hunters per area, then an adversarial verifier per finding; 13 of
   ear hands back to the browser recognizer, the same words are never asked
   twice.
 
+**Hearing, accuracy first (v7.8).** "It fails to catch simple phrases I
+speak" - so the on-device ear now takes the most accurate Whisper its
+device runs, and says what that costs. On a desktop with WebGPU the ear is
+**small.en** (an fp32 encoder with a q4 decoder, about 590 MB, once); on a
+desktop CPU it is **base.en** (q8, about 80 MB, no real word errors on 32
+Indian-English phrases where tiny had three: "tell me a joke" heard as
+"then meet a joke"); a phone stays on tiny (its own recognizer is
+primary). Settings > How Netra listens has a **Hearing** select - Auto,
+Quick (tiny, 40 MB), Balanced (base, 80 MB), Best (small, about 250 MB on
+a CPU, and slow there: about 19 s a phrase on four cores, so the loading
+card names the size and says so) - and a chosen size wins on a desktop;
+changing it reloads a loaded ear. The copy a desktop keeps ready in the
+background is the very model the ear will use, so the switch costs
+nothing later, and a GPU that fails falls back to base, never tiny. The
+mic graph asks the browser for a 16 kHz audio context, so the browser
+resamples the mic with its own proper filter; where it refuses, a 33-tap
+windowed-sinc low-pass replaces the block average that folded everything
+above 8 kHz onto the speech (a 19 kHz tone came through as a 3 kHz alias
+only 14 dB down). Segments keep 600 ms before the meter rose (a soft first
+syllable stays whole), wait 900 ms of silence (a pause mid-phrase is not
+the end), and run up to 20 s; her share of a segment is scored over its
+voiced part, so the longer wait never dilutes the echo guard. The worker
+passes Whisper no decode options: transformers.js 3.7.1 has no beam search
+and no prompt, and an n-gram ban (tried, and taken out in review) forces a
+repeated digit run such as "zero zero one zero zero zero one" onto a wrong
+digit.
+
 **A calmer stage, built for the people who use it (v7.7).** Learning
 from Gemini Live, ChatGPT voice, Siri and the screen-reader guidance they
 follow, the Live page was redesigned around one rule: nothing moves that

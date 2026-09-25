@@ -534,10 +534,12 @@ api.controller = function ($scope, $timeout, $window) {
     var _micGainNode = null;
     c.labMute = false;
     c.recLangs = ['en-IN', 'en-US', 'en-GB', 'en-AU', 'hi-IN', 'es-ES', 'fr-FR', 'de-DE', 'ja-JP'];
-    c.recLang = 'en-US';   // R20 - the quickest, most widely served recognition language
+    // no stored choice: the browser's own English (en-IN, en-GB) knows the
+    // user's accent best; any other locale keeps en-US, the most widely served
+    c.recLang = _defaultRecLang($window.navigator && $window.navigator.language, c.recLangs);
     c.micGain = 1.0;
     try {
-        c.recLang = localStorage.getItem('netra_lang_v2') || 'en-US';
+        c.recLang = localStorage.getItem('netra_lang_v2') || c.recLang;
         var g = parseFloat(localStorage.getItem('netra_mic_gain'));
         if (g >= 0.5 && g <= 3) c.micGain = g;
         c.labMute = localStorage.getItem('netra_lab_mute') === '1';
@@ -558,6 +560,13 @@ api.controller = function ($scope, $timeout, $window) {
         try { localStorage.setItem('netra_mic_gain', String(c.micGain)); } catch (e) {}
         _micGainApply();   // muted stays at zero
     };
+    // the browser's English locale when the page offers it, else en-US (the
+    // deaf-strike and language-not-supported fallbacks to en-US stay)
+    function _defaultRecLang(navLang, langs) {
+        var m = String(navLang || '').match(/^en-([a-z]{2})$/i);
+        var want = m ? 'en-' + m[1].toUpperCase() : '';
+        return (want && (langs || []).indexOf(want) >= 0) ? want : 'en-US';
+    }
     c.labSetMute = function () {
         try { localStorage.setItem('netra_lab_mute', c.labMute ? '1' : '0'); } catch (e) {}
         logEvent('lab', 'TTS ' + (c.labMute ? 'muted' : 'unmuted'));
@@ -660,6 +669,7 @@ api.controller = function ($scope, $timeout, $window) {
         // the caption shows what was typed, as it shows what was heard
         c.prevHeard = c.lastHeard; c.lastHeard = t; c.interim = '';
         logEvent(from === 'lab' ? 'lab' : 'type', 'typed (' + (from || 'type') + '): "' + t + '"');
+        c._typedTurn = true;   // the server forgives mis-heard words in speech only
         processCommand(t, 1.0);
         return true;
     }
@@ -1847,6 +1857,94 @@ api.controller = function ($scope, $timeout, $window) {
         $scope.$applyAsync();
     }
 
+    // HEARD, NOT TYPED - what the recognizer makes of Netra's command words,
+    // and the word that was meant: [pattern source, replacement], applied in
+    // order on word boundaries, case-insensitive, to speech only (a typed
+    // word is never rewritten). One copy here and one in server.js: a test
+    // keeps the two identical, so keep this body exactly the same in both.
+    function _forgiveTable() {
+        // a spoken number follows: "instant 13", "in c one three", "p one"
+        var num = '(?= ?(?:\\d+|zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\\b)';
+        // a record or pronoun follows: "results it", "a sign this to", "wash inc"
+        var rec = '(?= (?:it|this|that|the|to|incident|inc|ticket|change|problem|request)\\b)';
+        // the start of what was said, past her name
+        var lead = '^((?:(?:hey|ok|okay) )?netra[,!.]* )?';
+        // three or more digits follow: a ticket number, never "ink 3 times"
+        var dig = '(?:\\d|zero|oh|one|two|three|four|five|six|seven|eight|nine)';
+        var num3 = '(?= ?(?:\\d{3,}|(?:' + dig + ' ){2}' + dig + ')\\b)';
+        return [
+            // tickets
+            ['\\btickers\\b', 'tickets'],
+            ['\\bticker\\b' + num, 'ticket'],
+            ['\\b(my|this|that|new|open|latest|last) ticker\\b', '$1 ticket'],
+            ['\\bticket[\'\u2019]s\\b', 'tickets'],
+            ['\\btick its\\b', 'tickets'],
+            ['\\b(?:tiket|tickit|tikit)(s?)\\b', 'ticket$1'],
+            ['\\b(?:lift|least|lest|lists) my(?= (?:tickets?|approvals?|incidents?|work|queue|cases)\\b)', 'list my'],
+            // incidents
+            ['\\b(?:insident|in sedent|incidant)(s?)\\b', 'incident$1'],
+            ['\\bincidence\\b' + num, 'incident'],
+            ['\\binstant(s?)\\b' + num, 'incident$1'],
+            ['\\b(?:in c|ink|i and c)\\b\\.?' + num3, 'INC'],
+            // approvals
+            ['\\b(my|pending|any|of) approval\\b(?! (?:request|rule|process|for|from|on|of)\\b)', '$1 approvals'],
+            [lead + 'approval$', '$1approvals'],
+            ['\\ba provals?\\b', 'approvals'],
+            ['\\b(my|pending|any) approvers\\b', '$1 approvals'],
+            ['\\ba (?:prove|proof)\\b(?= (?:it|this|that|the|them|all)\\b)', 'approve'],
+            // resolve, assign, close, escalate, watch, nudge
+            [lead + 'resolved\\b' + rec, '$1resolve'],
+            [lead + 'resolved\\b' + num, '$1resolve'],
+            ['\\bresults\\b(?= (?:it|this|that)\\b)', 'resolve'],
+            ['\\b(?:re solve|dissolve)\\b' + rec, 'resolve'],
+            ['\\ba sign\\b' + rec, 'assign'],
+            ['\\ba sign\\b' + num, 'assign'],
+            ['\\bdesign\\b(?= (?:it|this|to)\\b)', 'assign'],
+            ['\\bdesign\\b' + num, 'assign'],
+            ['\\b(?:a ?sign|assign) ?ee\\b', 'assignee'],
+            ['\\bclothes\\b' + rec, 'close'],
+            ['\\bescalade\\b', 'escalate'],
+            ['\\bwash(?= (?:it|this|that|incident|inc|ticket|change|problem|request|the (?:incident|inc|ticket|change|problem|request|queue))\\b)', 'watch'],
+            ['\\b(?:notch|judge)\\b(?= (?:the (?:assignee|owner|assigned|group|team|person|user|caller)|him|her|them|whoever)\\b)', 'nudge'],
+            ['\\bpriorty\\b', 'priority'],
+            // the fast lane's own phrases
+            ['\\b(while i was) (?:awake|a way|a wake)\\b', '$1 away'],
+            ['\\b(?:then meet a joke|tell me joke|tell me the joke|tell me a (?:choke|jock|jog|yoke))\\b', 'tell me a joke'],
+            ['\\bwhat can (?:u|you) do for me\\b', 'what can you do'],
+            ['\\bwhat can u do\\b', 'what can you do'],
+            ['\\bstatus off\\b(?= (?:incident|inc|ticket|change|problem|request|my|the|that|this|it)\\b)', 'status of'],
+            ['\\bstate us of\\b', 'status of'],
+            ['\\b(?:de|dee|d) brief\\b', 'debrief'],
+            ['\\b(daily|morning) (?:breathing|beefing|briefly)\\b', '$1 briefing'],
+            ['\\bread arrest\\b', 'read the rest'],
+            [lead + 'pardon me$', '$1pardon'],
+            [lead + 'undue( that| it)?$', '$1undo$2'],
+            [lead + 'and do (that|it)$', '$1undo $2'],
+            ['\\bre index\\b', 'reindex'],
+            ['\\btry age\\b', 'triage'],
+            ['\\bcommission\\b(?= (?:status|report|progress)\\b)', 'mission'],
+            ['\\b(pause|resume|cancel|stop|undo|the|apply) commission\\b', '$1 mission'],
+            // names and codes
+            // the name, not "restart the service now": one of its own nouns follows
+            ['\\bservice now(?= (?:docs?|documentation|instance|portal|page|record|ticket|app|application|community|developer|store|kb|knowledge|itsm|release|releases|version|update|updates)\\b)', 'ServiceNow'],
+            ['\\bservice snow\\b', 'ServiceNow'],
+            ['\\b(?:a ?)?p(?:ee)? ?(?:one|1)\\b', 'P1'],
+            ['\\b(?:a ?)?p(?:ee)? ?(?:two|2)\\b', 'P2'],
+            ['\\b(?:a ?)?p(?:ee)? ?(?:three|3)\\b', 'P3'],
+            ['\\b(?:a ?)?p(?:ee)? ?(?:four|4)\\b', 'P4'],
+            ['\\bworknote(s?)\\b', 'work note$1'],
+            ['\\bwork not\\b', 'work note']
+        ];
+    }
+    var _forgiveRules = null;   // the table, compiled once
+    function _forgive(text) {
+        var out = String(text || '');
+        if (!out) return out;
+        if (!_forgiveRules) _forgiveRules = _forgiveTable().map(function (r) { return [new RegExp(r[0], 'gi'), r[1]]; });
+        for (var i = 0; i < _forgiveRules.length; i++) out = out.replace(_forgiveRules[i][0], _forgiveRules[i][1]);
+        return out;
+    }
+
     // Apply alias map to a transcript before sending to Gemini.
     function applyAliases(text) {
         if (!text) return text;
@@ -2904,7 +3002,7 @@ api.controller = function ($scope, $timeout, $window) {
                     };
                 });
             } catch (eTrk) {}
-            _micCtx = new (window.AudioContext || window.webkitAudioContext)();
+            _micCtx = _newMicContext();
             // R27 - WebKit: follow the context; a capturing page may resume it
             try {
                 _micCtx.onstatechange = function () {
@@ -2915,7 +3013,7 @@ api.controller = function ($scope, $timeout, $window) {
                 };
             } catch (eSC) {}
             _resumeAudio('mic started');
-            var source = _micCtx.createMediaStreamSource(stream);
+            var source = _micSourceFor(stream);
             // R3.5.1 - GainNode set to 1.0 (no extra boost). AGC already
             // normalises the stream; doubling on top made the ring dance
             // for ambient room noise. The mic stream itself stays clean
@@ -3538,8 +3636,8 @@ api.controller = function ($scope, $timeout, $window) {
         try {
             // R24 - no ear download holds the loading screen: it loads when the
             // browser's recognizer is missing, blocked or deaf (startContinuous,
-            // onerror, _deafCheck). A desktop also keeps the small ear ready in
-            // the background a little later, because some recognizers start and
+            // onerror, _deafCheck). A desktop also keeps its ear (the same model
+            // it would use) ready in the background a little later, because some recognizers start and
             // then hear nothing with no error at all (corporate networks do
             // this): the first deaf strike then swaps it in at once. A phone
             // downloads nothing up front
@@ -3623,23 +3721,31 @@ api.controller = function ($scope, $timeout, $window) {
      *  the Lab can force it on or off.
      * ============================================================ */
     var EAR_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1/dist/transformers.min.js';
-    var EAR_MODEL = 'onnx-community/whisper-tiny.en';        // small and quick anywhere (WebAssembly)
-    var EAR_MODEL_GPU = 'onnx-community/whisper-base.en';    // clearer, on a GPU-capable browser
+    // v7.8 - accuracy first: the ladder is tiny (a phone: its own recognizer
+    // is primary), base (a desktop on WebAssembly, ~80 MB, no real errors on
+    // Indian English) and small (a desktop GPU, or chosen: slow on a CPU but
+    // the most accurate). Whisper has one English model per size
+    var EAR_MODEL_TINY = 'onnx-community/whisper-tiny.en';    // quick anywhere: a phone's ear
+    var EAR_MODEL_BASE = 'onnx-community/whisper-base.en';    // clearer: a desktop on WebAssembly
+    var EAR_MODEL_SMALL = 'onnx-community/whisper-small.en';  // most accurate: a desktop GPU, or chosen
+    var EAR_RATE = 16000;         // what Whisper hears; asked of the mic's own context
     var EAR_START_LEVEL = 18;     // meter level that opens a segment
     var EAR_STOP_LEVEL = 9;       // and below which silence is counted
-    var EAR_SILENCE_MS = 650;     // this much silence closes the segment
+    var EAR_SILENCE_MS = 900;     // this much silence closes the segment (v7.8: a pause mid-phrase is not the end)
     var EAR_MIN_SPEECH_MS = 300;  // shorter is a click, not a word
     var EAR_PARTIAL_MS = 1200;    // while the user still speaks, the words so far every this often
-    var EAR_MAX_MS = 15000;       // a segment never runs longer
-    var EAR_PREROLL_MS = 320;     // audio kept from before the meter rose
+    var EAR_MAX_MS = 20000;       // a segment never runs longer
+    var EAR_PREROLL_MS = 600;     // audio kept from before the meter rose (v7.8: a soft first syllable is kept whole)
     var DEAF_LOUD_LEVEL = 22;     // speech-loud on the meter
     var DEAF_WINDOW_MS = 10000;   // judged every ten seconds
     var DEAF_LOUD_MS = 1500;      // this much speech with no words is a strike
     var EAR_HALLUCINATION_RE = /^[\s\W]*$|^\[.*\]$|^\(.*\)$|^(you|thank you|thanks|thanks for watching|bye|so|the end|okay)[.!]?$/i;
-    c.ear = { mode: 'auto', size: 'auto', on: false, status: 'off', progress: 0, prepared: false, model: EAR_MODEL, device: 'wasm', error: '', heard: 0, why: '', lastMs: 0 };
+    c.ear = { mode: 'auto', size: 'auto', on: false, status: 'off', progress: 0, prepared: false, model: EAR_MODEL_TINY, device: 'wasm', error: '', heard: 0, why: '', lastMs: 0 };
     try { c.ear.mode = localStorage.getItem('netra_ear') || 'auto'; c.ear.size = localStorage.getItem('netra_ear_size') || 'auto'; } catch (eEM) {}
     if (c.ear.mode !== 'on' && c.ear.mode !== 'off') c.ear.mode = 'auto';
-    if (c.ear.size !== 'tiny' && c.ear.size !== 'base') c.ear.size = 'auto';   // auto = base on a GPU, tiny elsewhere
+    if (!_earSizeKnown(c.ear.size)) c.ear.size = 'auto';   // auto = small on a desktop GPU, base on a desktop CPU, tiny on a phone
+    c.earSizes = ['auto', 'tiny', 'base', 'small'];
+    c.earSizeLabel = function (size) { return _earSizeLabel(size); };
     var _earWorker = null, _earBusy = false, _earQueue = [], _earNativeSeen = 0, _earSaid = false, _earEngageOnLoad = false;
     var _earAnnounce = '';                         // R21 - said once the ear really listens, not while it downloads
     var _earLastSaid = null, _earHandbackAt = 0;   // R21 - the ear's last words, and when it handed back
@@ -3796,8 +3902,9 @@ api.controller = function ($scope, $timeout, $window) {
     function _plainGateText(raw) {
         var s = String(raw == null ? '' : raw);
         if (/^ready( \(.*\))?$/i.test(s)) return 'Ready';
-        var mb = (s.match(/about (\d+) MB/) || [])[1];
-        s = s.replace(/loading my on-device ear( \d+%)?( \(about \d+ MB, once\))?/, 'downloading speech recognition, one time' + (mb ? ' (about ' + mb + ' MB)' : ''))
+        // the download's note: the size word and MB (v7.8), or the bare MB of an older line
+        var note = (s.match(/\(([^()]*about \d+ MB[^()]*), once\)/) || [])[1];
+        s = s.replace(/loading my on-device ear( \d+%)?( \([^()]*, once\))?/, 'downloading speech recognition, one time' + (note ? ' (' + note + ')' : ''))
              .replace(/preparing my on-device ear( \(the first time can take a minute\))?/, 'setting up speech recognition$1')
              .replace(/switching to my own ear/, 'switching to on-device listening')
              .replace(/my on-device ear|on-device ear/g, 'on-device listening')
@@ -3831,7 +3938,7 @@ api.controller = function ($scope, $timeout, $window) {
         var say = (ready.length ? _andList(ready).replace(/^./, function (ch) { return ch.toUpperCase(); }) + ' ready. ' : '') +
                   'Waiting for ' + _andList(waiting) + '.';
         if (g.cantHear) say = 'Netra can\'t hear in this browser. ' + (g.brain ? 'Answers are ready. Press Type instead to type to Netra.' : 'You can type to Netra once answers are ready.');
-        else if (earLoading) say += ' Downloading speech recognition, about ' + _earSizeMb() + ' MB, one time. This can take a minute.';
+        else if (earLoading) say += ' Downloading speech recognition, the ' + _earSizeName() + ' model, about ' + _earSizeMb() + ' MB, one time. This can take ' + (_earSizeMb() >= 200 ? 'a few minutes.' : 'a minute.') + (_earSlowHere() ? ' It is the most accurate, and slower on this device.' : '');
         else if (!g.hearing && g.micPrompt) say += ' Your browser will ask to use the microphone. Choose Allow.';
         else if (!g.hearing && g.slowHear) say += ' Hearing is taking longer than usual.' + (g.brain ? ' You can type while you wait.' : '');
         if (g.needsTap && !g.cantHear) say += ' Press Start so Netra can speak.';
@@ -4128,7 +4235,7 @@ api.controller = function ($scope, $timeout, $window) {
             // reaches 100 % before the model is compiled and warmed up
             var why = _nativeVerdict === 'blocked' ? 'the browser can not reach its speech service - ' : (!c.hasSR ? 'this browser has no speech recognizer - ' : '');
             if (c.ear.status === 'loading') c.readyText = 'Getting ready — ' + why + (c.ear.prepared ? 'preparing my on-device ear (the first time can take a minute)…'
-                                                        : 'loading my on-device ear' + (c.ear.progress ? ' ' + c.ear.progress + '%' : '') + ' (about ' + _earSizeMb() + ' MB, once)…');
+                                                        : 'loading my on-device ear' + (c.ear.progress ? ' ' + c.ear.progress + '%' : '') + ' (' + _earSizeNote() + ', once)…');
             else if (_nativeVerdict === 'blocked') c.readyText = 'Getting ready — the browser can not reach its speech service, switching to my own ear…';
             else if (!c.hasSR) c.readyText = 'Getting ready…';
             else c.readyText = 'Getting ready — checking the browser can hear…';
@@ -4142,8 +4249,24 @@ api.controller = function ($scope, $timeout, $window) {
         _nativeVerdict = verdict;
         _readyUpdate();
     }
-    // R24 - what the ear's download weighs, said on the loading screen
-    function _earSizeMb() { return /base/.test(c.ear.model) ? (c.ear.device === 'webgpu' ? 200 : 80) : 40; }
+    // R24 - what the ear's download weighs, said on the loading screen: the
+    // GPU build is an fp32 encoder with a q4 decoder, the CPU build is q8
+    function _earSizeMb() {
+        var gpu = c.ear.device === 'webgpu';
+        if (/small/.test(c.ear.model)) return gpu ? 590 : 250;
+        if (/base/.test(c.ear.model)) return gpu ? 200 : 80;
+        return gpu ? 60 : 40;
+    }
+    function _earSizeKnown(size) { return size === 'auto' || size === 'tiny' || size === 'base' || size === 'small'; }
+    // the size in the user's words (Settings) and the model's own (the Lab)
+    function _earModelShort(model) { return /small/.test(model || c.ear.model) ? 'small' : (/base/.test(model || c.ear.model) ? 'base' : 'tiny'); }
+    function _earSizeName() { return { small: 'best', base: 'balanced', tiny: 'quick' }[_earModelShort()]; }
+    function _earSizeLabel(size) {
+        return size === 'tiny' ? 'Quick (tiny, 40 MB)' : (size === 'base' ? 'Balanced (base, 80 MB)' : (size === 'small' ? 'Best (small, about 250 MB on CPU, slower)' : 'Auto (best for this device)'));
+    }
+    // the most accurate model on a CPU: right, and seconds a phrase
+    function _earSlowHere() { return /small/.test(c.ear.model) && c.ear.device !== 'webgpu'; }
+    function _earSizeNote() { return _earSizeName() + ', about ' + _earSizeMb() + ' MB' + (_earSlowHere() ? ', the most accurate and slower on this device' : ''); }
     // a phone: never the big model, whatever its browser offers
     function _isPhone() {
         try {
@@ -4151,13 +4274,21 @@ api.controller = function ($scope, $timeout, $window) {
             return !!(c.app && c.app.ios) || /Android|iPhone|iPad|iPod|Mobi/i.test(ua);
         } catch (e) { return false; }
     }
-    // auto: the clearer base model on a desktop GPU, tiny elsewhere; a
-    // phone always gets tiny (its data plan and memory), whatever is set
+    // v7.8 - auto: small on a desktop GPU, base on a desktop CPU; a chosen size
+    // wins on a desktop (small on a CPU is slow, and the most accurate); a
+    // phone always gets tiny (its data plan and memory; its own recognizer
+    // is primary), whatever is set
+    function _earModelFor(size, gpu) {
+        if (size === 'tiny') return EAR_MODEL_TINY;
+        if (size === 'small') return EAR_MODEL_SMALL;
+        if (size === 'base') return EAR_MODEL_BASE;
+        return gpu ? EAR_MODEL_SMALL : EAR_MODEL_BASE;
+    }
     function _earPickModel() {
         var phone = _isPhone(), gpu = false;
         try { gpu = !!($window.navigator && $window.navigator.gpu) && !phone; } catch (eG) {}
         c.ear.device = gpu ? 'webgpu' : 'wasm';
-        c.ear.model = phone || c.ear.size === 'tiny' ? EAR_MODEL : (c.ear.size === 'base' || gpu ? EAR_MODEL_GPU : EAR_MODEL);
+        c.ear.model = phone ? EAR_MODEL_TINY : _earModelFor(c.ear.size, gpu);
     }
     var _earProc = null, _earSink = null, _earRing = [], _earRingMs = 0, _earSeg = [], _earSegMs = 0, _earVoiceMs = 0, _earInSpeech = false, _earSilenceMs = 0, _earRate = 48000;
     var _earLastPartialAt = 0, _earPartialMs = 0, _earPartialOk = true;
@@ -4197,31 +4328,49 @@ api.controller = function ($scope, $timeout, $window) {
         "      const w = Date.now(); await asr(new Float32Array(16000)); self.postMessage({ loaded: true, warmMs: Date.now() - w });\n" +
         "    } else if (e.data.cmd === 'run') {\n" +
         "      const t = Date.now();\n" +
-        "      const r = await asr(e.data.audio);\n" +
+        // no decode options: transformers.js 3.7.1 has no beam search or
+        // prompt, and an n-gram ban would force a repeated digit run wrong
+"      const r = await asr(e.data.audio);\n" +
         "      self.postMessage({ id: e.data.id, partial: !!e.data.partial, text: String(r && r.text || ''), ms: Date.now() - t });\n" +
         "    }\n" +
         "  } catch (err) { self.postMessage({ id: e.data && e.data.id, error: String(err && err.message || err) }); }\n" +
         "};\n";
-    c.earSummary = function () {
+    c.earSummary = function () { return _earSummary(); };
+    // what hears now, for the Lab and the Settings hint (v7.8: the size named)
+    function _earSummary() {
         var e = c.ear;
         if (e.status === 'loading') return 'on-device: loading Whisper ' + e.progress + '%';
-        if (e.status === 'standby') return 'browser recognizer (' + (c.recLang || 'en-US') + '); on-device Whisper (' + (/base/.test(e.model) ? 'base' : 'tiny') + ') ready in standby';
-        if (e.status === 'on') return 'on-device Whisper (' + (/base/.test(e.model) ? 'base' : 'tiny') + ', English, ' + e.device + ') - ' + e.heard + ' heard' + (e.lastMs ? ', last ' + (e.lastMs / 1000).toFixed(1) + 's' : '') + (e.why ? ' - ' + e.why : '');
+        if (e.status === 'standby') return 'browser recognizer (' + (c.recLang || 'en-US') + '); on-device Whisper (' + _earModelShort(e.model) + ', ' + _earSizeName() + ') ready in standby';
+        if (e.status === 'on') return 'on-device Whisper (' + _earModelShort(e.model) + ', ' + _earSizeName() + ', English, ' + e.device + ') - ' + e.heard + ' heard' + (e.lastMs ? ', last ' + (e.lastMs / 1000).toFixed(1) + 's' : '') + (e.why ? ' - ' + e.why : '');
         if (e.status === 'error') return 'on-device failed: ' + e.error;
         return 'browser recognizer (' + (c.recLang || 'en-IN') + ')' + (c.hasSR ? '' : ' - none in this browser');
-    };
-    // the model size: tiny is quick anywhere, base is clearer on a GPU; a
-    // change while the ear is on reloads it
-    c.labSetEarSize = function () {
+    }
+    // v7.8 - the size, from Settings or the Lab: kept, and an ear that is
+    // loaded (on, loading, or waiting in standby) is reloaded at the new
+    // size - unless the pick is the same model (a phone stays tiny)
+    function _setEarSize(size) {
+        c.ear.size = _earSizeKnown(size) ? size : 'auto';
         try { localStorage.setItem('netra_ear_size', c.ear.size); } catch (e) {}
         logEvent('lab', 'ear model -> ' + c.ear.size);
-        if (c.ear.on || c.ear.status === 'loading') {
-            var why = c.ear.why || 'switched on in the Lab';
-            try { if (_earWorker) _earWorker.terminate(); } catch (e) {}
-            _earWorker = null; _earBusy = false; _earQueue = []; c.ear.on = false; c.ear.status = 'off';
-            _earStart(why, true);
+        // after a failed load (a refused download, no memory for the big
+        // model) a new size is the way back in: load it
+        var failed = c.ear.status === 'error';
+        if (!_earWorker && c.ear.status !== 'loading' && !failed) return;
+        var wasModel = c.ear.model, wasDevice = c.ear.device;
+        _earPickModel();
+        if (failed) {
+            c.ear.error = ''; c.ear.status = 'off';
+            if (c.ear.why || !c.hasSR || _nativeVerdict === 'blocked') _earStart(c.ear.why || 'a new size after a failed load', true); else _earLoad(true);
+            return;
         }
-    };
+        if (c.ear.model === wasModel && c.ear.device === wasDevice) return;
+        var engaged = c.ear.on || (c.ear.status === 'loading' && (_earEngageOnLoad || !c.ear.background)), why = c.ear.why || 'switched on in the Lab';
+        try { if (_earWorker) _earWorker.terminate(); } catch (e) {}
+        _earWorker = null; _earBusy = false; _earQueue = []; c.ear.on = false; c.ear.status = 'off';
+        if (engaged) _earStart(why, true); else _earLoad(true);
+    }
+    c.labSetEarSize = function () { _setEarSize(c.ear.size); };
+    c.setEarSize = c.labSetEarSize;   // the Settings sheet's "Hearing"
     c.labSetEar = function () {
         try { localStorage.setItem('netra_ear', c.ear.mode); } catch (e) {}
         logEvent('lab', 'ear -> ' + c.ear.mode);
@@ -4237,7 +4386,9 @@ api.controller = function ($scope, $timeout, $window) {
     // load the ear without engaging it: ready in standby for the moment the
     // browser's recognizer turns out deaf. R24 - only once it has shown it
     // may be (the first deaf strike), never on every boot: the download is
-    // 40-200 MB and a working recognizer never needs it
+    // 40-590 MB and a working recognizer never needs it. v7.8 - the
+    // background copy is the very model the ear will use, so the switch
+    // costs nothing later (a phone's is tiny by _earPickModel)
     function _earLoad(background) {
         if (c.ear.mode === 'off' || _earWorker || c.ear.status === 'loading') return;
         if (typeof Worker === 'undefined' || typeof Blob === 'undefined') return;
@@ -4245,8 +4396,10 @@ api.controller = function ($scope, $timeout, $window) {
         logEvent('rec', 'on-device ear loading in standby' + (background ? ' (in the background)' : ''));
         try {
             _earPickModel();
-            // the background copy is the small one on the CPU: about 40 MB, once
-            if (background && c.ear.size !== 'base') { c.ear.model = EAR_MODEL; c.ear.device = 'wasm'; }
+            // the standby copy on a desktop that can still hear is the
+            // balanced model on the CPU (80 MB, once): the best model is
+            // fetched when the ear is really needed, or when it was chosen
+            if (background && c.ear.size === 'auto' && !_isPhone()) { c.ear.model = EAR_MODEL_BASE; c.ear.device = 'wasm'; }
             _earSpawn();
         } catch (e) { _earFail(String(e && e.message || e)); }
         _readyUpdate();
@@ -4281,13 +4434,15 @@ api.controller = function ($scope, $timeout, $window) {
         logEvent('rec', 'on-device ear loading ' + c.ear.model + ' on ' + c.ear.device);
         _earWorker.postMessage({ cmd: 'load', model: c.ear.model, device: c.ear.device });
     }
-    // the GPU model would not load or run: the small model on WebAssembly instead
+    // the GPU model would not load or run: WebAssembly instead - base for
+    // auto (v7.8: a desktop never drops to tiny), a chosen size as chosen
     function _earLoadFailed(msg) {
         if (c.ear.device === 'webgpu') {
-            logEvent('warn', 'on-device ear: ' + c.ear.model + ' on webgpu failed (' + msg + ') - trying ' + EAR_MODEL + ' on wasm');
+            var next = _earModelFor(c.ear.size, false);
+            logEvent('warn', 'on-device ear: ' + c.ear.model + ' on webgpu failed (' + msg + ') - trying ' + next + ' on wasm');
             try { if (_earWorker) _earWorker.terminate(); } catch (e) {}
             _earWorker = null; _earBusy = false; _earQueue = [];
-            c.ear.device = 'wasm'; c.ear.model = EAR_MODEL; c.ear.progress = 0;
+            c.ear.device = 'wasm'; c.ear.model = next; c.ear.progress = 0;
             if (c.ear.status !== 'loading') c.ear.status = 'loading';
             try { _earSpawn(); } catch (e2) { _earFail(String(e2 && e2.message || e2)); }
             return;
@@ -4437,18 +4592,47 @@ api.controller = function ($scope, $timeout, $window) {
             if (_handleFinalWhileSpeaking(t, conf)) return;
             if (_lastBargeText) { t = _lastBargeText; _lastBargeText = ''; }
         }
+        var forgiven = _forgive(t);
+        if (forgiven !== t) { logEvent('train', 'forgiven: "' + t + '" -> "' + forgiven + '"'); t = forgiven; }
         var aliased = applyAliases(t);
         if (aliased !== t) { logEvent('train', 'alias-rewrite: "' + t + '" -> "' + aliased + '"'); t = aliased; }
         _earLastSaid = { text: t, at: Date.now() };
         _enqueueFinalTranscript(t, conf);
     }
+    // v7.8 - the mic graph runs at the ear's 16 kHz when the browser allows
+    // it, so the browser resamples the mic with its own proper filter; one
+    // that refuses (older WebKit) gets its default rate, and the ear's own
+    // low-pass decimator does the job
+    function _newMicContext() {
+        var Ctor = window.AudioContext || window.webkitAudioContext, ctx = null;
+        try { ctx = new Ctor({ sampleRate: EAR_RATE }); } catch (eRate) { ctx = null; }
+        return ctx || new Ctor();
+    }
+    // a browser that gave the 16 kHz context but will not feed a 48 kHz mic
+    // into it (old Firefox): the default rate, so the mic graph still runs
+    function _micSourceFor(stream) {
+        try { return _micCtx.createMediaStreamSource(stream); }
+        catch (eSrc) {
+            if (!_micCtx || _micCtx.sampleRate !== EAR_RATE) throw eSrc;
+            logEvent('warn', 'mic audio: no 16 kHz graph for this mic (' + (eSrc && eSrc.message || eSrc) + ') - using the default rate');
+            var was = _micCtx;
+            try { was.close(); } catch (eClose) {}
+            _micCtx = new (window.AudioContext || window.webkitAudioContext)();
+            _micCtx.onstatechange = was.onstatechange;
+            return _micCtx.createMediaStreamSource(stream);
+        }
+    }
     // the mic's own audio, tapped after the gain stage; a silent sink keeps
     // the processor running without playing the mic through the speakers
+    function _earFrameSize(rate) { return rate <= 16000 ? 1024 : (rate <= 24000 ? 2048 : 4096); }
     function _earTapAttach() {
         if (_earProc || !_micCtx || !_micGainNode) return;
         try {
             _earRate = _micCtx.sampleRate || 48000;
-            _earProc = _micCtx.createScriptProcessor(4096, 1, 1);
+            // a frame stays 64-85 ms whatever the rate: at 16 kHz a 4096
+            // frame is 256 ms, and the frame the meter rises in is pre-roll,
+            // not voiced, so a one-word "yes" fell under EAR_MIN_SPEECH_MS
+            _earProc = _micCtx.createScriptProcessor(_earFrameSize(_earRate), 1, 1);
             _earSink = _micCtx.createGain(); _earSink.gain.value = 0;
             _earProc.onaudioprocess = function (ev) {
                 if (!c.ear.on) return;
@@ -4497,23 +4681,52 @@ api.controller = function ($scope, $timeout, $window) {
         if (_earSilenceMs >= EAR_SILENCE_MS || _earSegMs >= EAR_MAX_MS) {
             // the voiced part is what was said after the meter rose, less the trailing silence: the pre-roll is not speech
             var seg = _earSeg, voicedMs = _earVoiceMs - _earSilenceMs;
-            var meta = { overlap: _earSegHerMs > 0, herShare: _earVoiceMs ? Math.min(1, _earSegHerMs / _earVoiceMs) : 0, spoken: _earSegSpoken.slice() };
+            // v7.8 - her share is of the voiced part: the longer wait for silence must not dilute it
+            var meta = { overlap: _earSegHerMs > 0, herShare: voicedMs > 0 ? Math.min(1, _earSegHerMs / voicedMs) : 0, spoken: _earSegSpoken.slice() };
             _earSeg = []; _earSegMs = 0; _earVoiceMs = 0; _earInSpeech = false; _earSilenceMs = 0; _earSegHerMs = 0; _earSegSpoken = [];
             if (voicedMs < EAR_MIN_SPEECH_MS) { if (c.interim && /on-device/.test(c.interim)) { c.interim = ''; $scope.$applyAsync(); } return; }
             _earSubmit(_earTo16k(seg, rate), meta);
         }
     }
+    // v7.8 - a proper decimator: a 33-tap windowed-sinc low-pass (Hamming,
+    // cutoff 7 kHz) evaluated at each 16 kHz output sample, so what lies
+    // above 8 kHz is removed rather than folded onto the speech (the block
+    // average it replaces left a 19 kHz tone only 14 dB down, as a 3 kHz
+    // alias). A mic rate that is not a whole multiple (44.1 kHz) blends the
+    // two nearest centres. The taps are made once per rate
+    var EAR_FIR_TAPS = 33;
+    var _earFir = null, _earFirRate = 0;
+    function _earFirTaps(rate) {
+        if (_earFir && _earFirRate === rate) return _earFir;
+        var n = EAR_FIR_TAPS, mid = (n - 1) / 2, fc = 7000 / rate, taps = new Float32Array(n), sum = 0, i;
+        for (i = 0; i < n; i++) {
+            var u = i - mid, sinc = u === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * u) / (Math.PI * u);
+            taps[i] = sinc * (0.54 - 0.46 * Math.cos(2 * Math.PI * i / (n - 1)));
+            sum += taps[i];
+        }
+        for (i = 0; i < n; i++) taps[i] /= sum;   // unity gain in the passband
+        _earFir = taps; _earFirRate = rate;
+        return taps;
+    }
+    // the filter centred on input sample `at` (edges are zero-padded)
+    function _earFirAt(x, taps, at) {
+        var n = taps.length, start = at - ((n - 1) >> 1), acc = 0, k;
+        if (start >= 0 && start + n <= x.length) { for (k = 0; k < n; k++) acc += x[start + k] * taps[k]; return acc; }
+        for (k = 0; k < n; k++) { var j = start + k; if (j >= 0 && j < x.length) acc += x[j] * taps[k]; }
+        return acc;
+    }
     function _earTo16k(frames, rate) {
-        var total = 0, i, j;
+        var total = 0, i;
         for (i = 0; i < frames.length; i++) total += frames[i].length;
         var all = new Float32Array(total), off = 0;
         for (i = 0; i < frames.length; i++) { all.set(frames[i], off); off += frames[i].length; }
-        if (rate === 16000) return all;
-        var ratio = rate / 16000, n = Math.floor(all.length / ratio), out = new Float32Array(n);
+        if (rate === EAR_RATE) return all;
+        var ratio = rate / EAR_RATE, n = Math.floor(all.length / ratio), out = new Float32Array(n), taps = _earFirTaps(rate);
+        var whole = ratio === Math.floor(ratio);
         for (i = 0; i < n; i++) {
-            var a = Math.floor(i * ratio), b = Math.min(all.length, Math.floor((i + 1) * ratio)), acc = 0;
-            for (j = a; j < b; j++) acc += all[j];
-            out[i] = b > a ? acc / (b - a) : 0;
+            var pos = i * ratio, c0 = Math.floor(pos), frac = pos - c0, v = _earFirAt(all, taps, c0);
+            if (!whole && frac > 0) v += (_earFirAt(all, taps, c0 + 1) - v) * frac;
+            out[i] = v;
         }
         return out;
     }
@@ -4746,6 +4959,9 @@ api.controller = function ($scope, $timeout, $window) {
                     t = picked.transcript;
                     conf = picked.confidence;
                 }
+                // heard, not typed: a mis-heard command word is forgiven first
+                var forgivenT = _forgive(t);
+                if (forgivenT !== t) { logEvent('train', 'forgiven: "' + t + '" -> "' + forgivenT + '"'); t = forgivenT; }
                 // R2.2 - apply alias map (e.g. "agar" -> "Adam")
                 var aliasedT = applyAliases(t);
                 if (aliasedT !== t) {
@@ -5350,6 +5566,7 @@ api.controller = function ($scope, $timeout, $window) {
         // (the server now accepts 16000).
         var clean = (text || '').trim().substring(0, 12000);
         if (!clean) return;
+        c._typedTurn = false;   // heard, not typed
         // muted: not even her name wakes her - only Unmute does
         if (c.micOff) { _heardLog(clean, conf, 'ignored: mic muted - press Unmute'); return; }
         // R8.1 - calibration read-back has priority over command routing
@@ -5376,6 +5593,10 @@ api.controller = function ($scope, $timeout, $window) {
         // self-reinforce over time.
         if (conf >= MIN_CONFIDENCE) learnFromTranscript(clean);
         $scope.$applyAsync();
+
+        // a yes or no to 'I heard "...". Is that right?' - hers was the last
+        // question, so it is answered before the server's read-back is
+        if (_heardCheckAnswer(clean)) return;
 
         // ---- 0. "no" / "stop" to a running plan or a waiting read-back is
         // the server's answer - not sleep, and never too short to count ----
@@ -5612,6 +5833,8 @@ api.controller = function ($scope, $timeout, $window) {
             });
             return;
         }
+        // heard, but not well: read it back for a yes rather than run a guess
+        if (_heardUnsure(text, conf)) return;
 
         // Normalize spoken numbers and send to server
         var normalized = normalizeNumbers(text);
@@ -5676,6 +5899,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (!c.data.auto) c._lastReplyUnheard = false;
         // R8.2 - live-stage flag (server strips navigation tools) + prosody
         c.data.live_mode = !!c.liveMode;
+        c.data.typed = !!c._typedTurn;   // typed words are never rewritten on the fast lane
         // spoken clock times follow this clock, not the profile's timezone
         try {
             c.data.tz_offset_min = -new Date().getTimezoneOffset();
@@ -6028,6 +6252,43 @@ api.controller = function ($scope, $timeout, $window) {
         if (_planRunning()) return _isDecline(s) || HARD_INTERRUPT_RE.test(s);
         return !!c._awaitingConfirm && Date.now() - (c._awaitingConfirmAt || 0) < 10 * 60000 && _isDecline(s);
     }
+    // a final the recognizer was unsure of (after the local shortcuts, and
+    // never a yes/no - that is the server's answer): read it back once. A yes
+    // runs it, a no or a rephrase replaces it - never a guessed record for a
+    // half-heard word
+    function _heardUnsure(text, conf) {
+        var t = String(text || '').trim();
+        if (!t || !(conf > 0 && conf < HEARD_ASK_CONF)) return false;
+        if (HEARD_YES_RE.test(t) || HEARD_NO_RE.test(t) || _isNoAnswer(t)) return false;
+        // a long one is quicker to send: the model asks its one question
+        if (t.split(/\s+/).length > 12) return false;
+        _heardCheck = { text: t, at: Date.now() };
+        logEvent('warn', 'low confidence ' + conf.toFixed(2) + ' - reading "' + t + '" back');
+        _heardFate('asked to confirm (low confidence)');
+        speak('I heard "' + t + '". Is that right?', function () { setState('idle'); });
+        return true;
+    }
+    // the answer to that read-back: false when nothing waits, or when
+    // something else was said - that is the request, said again
+    function _heardCheckAnswer(text) {
+        var hc = _heardCheck;
+        if (!hc) return false;
+        _heardCheck = null;
+        var t = String(text || '').trim();
+        if (Date.now() - hc.at > HEARD_ASK_WINDOW_MS) return false;
+        if (HEARD_YES_RE.test(t)) {
+            _heardFate('yes - running "' + hc.text + '"');
+            logEvent('conv', 'read-back confirmed: "' + hc.text + '"');
+            processCommand(hc.text, 1.0);
+            return true;
+        }
+        if (HEARD_NO_RE.test(t)) {
+            _heardFate('no - dropped');
+            speak('Okay, say it once more.', function () { setState('idle'); });
+            return true;
+        }
+        return false;
+    }
     function _answerNo(heard) {
         _cancelPlanContinue();
         logEvent('conv', '"' + heard + '" is a no - telling the server');
@@ -6147,6 +6408,11 @@ api.controller = function ($scope, $timeout, $window) {
     // the same reflex with something after it
     var LEADING_STOP_RE = /^((hey|ok|okay) )?(netra[,!.\s]*)?(stop|wait|hold on|hang on|shut up|be quiet|quiet|silence|pause|enough|ruko|chup|bas)\b[.!,?\s]*(.*)$/i;
     var BARGE_ASK_CONF = 0.66;   // a barge-in below this is asked again, not sent as a command
+    var HEARD_ASK_CONF = 0.55;   // a final below this is read back for a yes before it runs
+    var HEARD_ASK_WINDOW_MS = 20000;   // how long that yes may take
+    var HEARD_YES_RE = /^(netra[,!.\s]*)?(yes|yeah|yep|yup|ya|haan|correct|right|that'?s right|yes it is|yes that'?s right|ok|okay|sure)[.!,?\s]*$/i;
+    var HEARD_NO_RE = /^(netra[,!.\s]*)?(no|nope|no no|nah|nahi|wrong|that'?s wrong|not right|no it'?s not|not that)[.!,?\s]*$/i;
+    var _heardCheck = null;   // { text, at } while 'I heard "...". Is that right?' waits
     // a word after "stop" that continues a command ("stop watching", "pause the
     // mission", "wait for the approval"): the whole utterance is the command
     var STOP_TAIL_COMMAND_RE = /^(watching|tracking|following|chasing|nudging|escalating|monitoring|notifications?|alerts?|reminders?|missions?|orders?|plans?|scanner|tasks?|the|my|all|everything|standing|for|until|till|on|at|in|with|to|before|after|while|about|when|if|unless|because|so|but)$/i;
