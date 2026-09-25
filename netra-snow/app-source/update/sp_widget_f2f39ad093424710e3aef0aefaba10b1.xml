@@ -3845,6 +3845,7 @@ api.controller = function ($scope, $timeout, $window) {
     var _voiceHeld = [], _voiceRestarts = 0, _voiceRestartAt = 0, _voiceFirstStart = 0, _voiceWaitTimer = null, _voiceEverReady = false;
     var _voiceOut = [], _voiceHeadSince = 0, _voiceLastMsg = 0, _voiceLoadTimer = null;   // what the worker still owes an answer, and when it last spoke
     var _voiceReadyAt = 0, VOICE_HEALTHY_MS = 120000;   // two healthy minutes earn a fresh restart budget: the cap bounds flapping, not the visit
+    var _voiceOutLen = {};   // the length of each sentence the worker still owes, kept even after the page drops the job
     var VOICE_WAIT_MS = 90000;          // lines wait this long (from her first load) for her voice before this device's speaks them
     var VOICE_RESTART_WAIT_MS = 25000;  // ... and this long for her to come back after a failure later in the visit (her files are cached then)
     var VOICE_RESTARTS = 4;             // failures she is started again after, in one visit
@@ -3927,7 +3928,7 @@ api.controller = function ($scope, $timeout, $window) {
             return;
         }
         if (d.id !== undefined) {
-            var at = _voiceOut.indexOf(d.id);
+            var at = _voiceOut.indexOf(d.id); delete _voiceOutLen[d.id];
             if (at >= 0) { _voiceOut.splice(at, 1); if (at === 0) _voiceHeadSince = Date.now(); }
             var job = _voiceJobs[d.id]; delete _voiceJobs[d.id];
             _netraVoiceWatch();
@@ -3951,7 +3952,7 @@ api.controller = function ($scope, $timeout, $window) {
     function _netraVoiceFail(msg, fatal) {
         c.voice.status = 'error'; c.voice.error = msg; c.voice.stage = '';
         try { if (_voiceWorker) _voiceWorker.terminate(); } catch (e) {}
-        _voiceWorker = null; _voiceOut = [];
+        _voiceWorker = null; _voiceOut = []; _voiceOutLen = {};
         if (_voiceLoadTimer) { $timeout.cancel(_voiceLoadTimer); _voiceLoadTimer = null; }
         // made again (its files are cached now), a few times a visit, any time in the visit: decided first,
         // so the lines she was on know whether to wait for her. A failure that would only repeat (a file the
@@ -3975,7 +3976,7 @@ api.controller = function ($scope, $timeout, $window) {
     // the page goes: the worker with it, and nothing waits for her any more
     function _netraVoiceStop() {
         try { if (_voiceWorker) _voiceWorker.terminate(); } catch (e) {}
-        _voiceWorker = null; _voiceOut = [];
+        _voiceWorker = null; _voiceOut = []; _voiceOutLen = {};
         if (_voiceStallTimer) { $timeout.cancel(_voiceStallTimer); _voiceStallTimer = null; }
         if (_voiceLoadTimer) { $timeout.cancel(_voiceLoadTimer); _voiceLoadTimer = null; }
         if (_voiceWaitTimer) { $timeout.cancel(_voiceWaitTimer); _voiceWaitTimer = null; }
@@ -4027,7 +4028,7 @@ api.controller = function ($scope, $timeout, $window) {
         var id = ++_voiceJobId, job = { cb: cb, text: String(text), filler: !!(cb && cb.filler) };
         _voiceJobs[id] = job;
         if (!_voiceOut.length) _voiceHeadSince = Date.now();
-        _voiceOut.push(id);
+        _voiceOut.push(id); _voiceOutLen[id] = String(text).length;
         _netraVoiceWatch();
         var rate = parseFloat(c.speechRate) || 1;
         _voiceWorker.postMessage({ cmd: 'say', id: id, text: String(text), lengthScale: 1 / rate });
@@ -4039,7 +4040,7 @@ api.controller = function ($scope, $timeout, $window) {
         if (!_voiceOut || !_voiceOut.length) { if (_voiceStallTimer) { $timeout.cancel(_voiceStallTimer); _voiceStallTimer = null; } return; }
         if (_voiceStallTimer) return;   // already watching; it looks again when it fires
         // a long sentence is allowed longer (100 ms a character on top): busy is not stuck
-        var head = _voiceJobs && _voiceJobs[_voiceOut[0]], allow = VOICE_STALL_MS + (head ? head.text.length * 100 : 0);
+        var head = _voiceJobs && _voiceJobs[_voiceOut[0]], allow = VOICE_STALL_MS + (_voiceOutLen[_voiceOut[0]] || (head ? head.text.length : 0)) * 100;
         var left = allow - (Date.now() - _voiceHeadSince);
         if (left <= 0) {
             // the sentence that stalled is left out (never another voice), so the restarted line does not begin with it again
@@ -23268,7 +23269,7 @@ _timeLine();
     }
 
 })();
-]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>136</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-25 19:20:31</sys_updated_on><template><![CDATA[<!--
+]]></script><servicenow>false</servicenow><sys_class_name>sp_widget</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-09 04:42:54</sys_created_on><sys_id>f2f39ad093424710e3aef0aefaba10b1</sys_id><sys_mod_count>137</sys_mod_count><sys_name>Netra Mic</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sp_widget_f2f39ad093424710e3aef0aefaba10b1</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-25 19:31:39</sys_updated_on><template><![CDATA[<!--
   Netra Mic widget template - R9 "Prism"
 
   R8.1: the prism hue engine drives every colour in this template via

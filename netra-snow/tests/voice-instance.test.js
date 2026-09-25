@@ -26,7 +26,7 @@ function page() {
     cl.set('_voiceWorker', null); cl.set('_voiceJobs', {}); cl.set('_voiceJobId', 0); cl.set('_voiceLoadStart', 0); cl.set('_voiceWaitSaid', false);
     cl.set('_voiceHeld', []); cl.set('_voiceRestarts', 0); cl.set('_voiceRestartAt', 0); cl.set('VOICE_WAIT_MS', 90000); cl.set('_voiceFirstStart', 0); cl.set('_voiceWaitTimer', null); cl.set('_voiceStallTimer', null);
     cl.set('_voiceEverReady', false); cl.set('_voiceOut', []); cl.set('_voiceHeadSince', 0); cl.set('_voiceLastMsg', 0); cl.set('_voiceLoadTimer', null);
-    cl.set('VOICE_RESTART_WAIT_MS', 25000); cl.set('VOICE_RESTARTS', 4); cl.set('VOICE_LOAD_STALL_MS', 45000); cl.set('VOICE_STALL_MS', 30000); cl.set('VOICE_GROUP_MAX', 220); cl.set('_voiceReadyAt', 0); cl.set('VOICE_HEALTHY_MS', 120000);
+    cl.set('VOICE_RESTART_WAIT_MS', 25000); cl.set('VOICE_RESTARTS', 4); cl.set('VOICE_LOAD_STALL_MS', 45000); cl.set('VOICE_STALL_MS', 30000); cl.set('VOICE_GROUP_MAX', 220); cl.set('_voiceReadyAt', 0); cl.set('VOICE_HEALTHY_MS', 120000); cl.set('_voiceOutLen', {});
     cl.set('VOICE_FILLERS', ['One moment, please.', 'Checking on that now.']); cl.set('_fillersPrepared', false); cl.set('fillerCache', []);
     return cl;
 }
@@ -419,7 +419,7 @@ T.test('her voice all visit long: a failure after the first minutes starts her a
     T.eq(tm.timers.filter(stallWatch).length, 1, 'still one watch');
     cl.set('_voiceHeadSince', Date.now() - 31000);
     tm.fire(stallWatch);
-    T.eq(c.voice.status, 'error'); T.ok(c.events.some(function (e) { return /no sound in 30 s for "\(a dropped sentence\)"/.test(e); }), c.events.slice(-3).join(' | '));
+    T.eq(c.voice.status, 'error'); T.ok(c.events.some(function (e) { return /no sound in 3[01] s for "\(a dropped sentence\)"/.test(e); }), c.events.slice(-3).join(' | '));
     T.eq(cl.get('_voiceOut'), [], 'nothing owed by a dead worker');
     tm.fire(function (t) { return t.delay === 1500; }); answers.length = 0; f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
     T.eq(answers.map(function (a) { return a.text; }), ['Third.'], 'the line the stall cut off waited for her and is hers again');
@@ -561,8 +561,19 @@ T.test('the rest of a cut line is hers again if she is back in time; a file the 
     f._netraVoiceWatch(); T.eq(c.voice.status, 'ready', 'a 220-char sentence 40 s in is busy, not stuck');
     cl.set('_voiceStallTimer', null); cl.set('_voiceHeadSince', Date.now() - 53000);
     f._netraVoiceWatch(); T.eq(c.voice.status, 'error', 'past 30 s + 22 s it is stuck'); T.ok(c.events.some(function (e) { return /no sound in 5[0-2] s/.test(e); }), c.events.slice(-2).join(' | '));
-    // a device line still going when hers starts is cut first
+    // a long sentence dropped by a new line while the worker is still on it keeps its allowance: busy, not stuck
+    cl.set('_voiceHeld', []);   // (the rest of the stalled run-on line is not wanted here)
     tm.fire(function (t) { return t.delay === 1500; }); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } });
+    answers.length = 0; f.speakNetraVoice(runOn.slice(0, 217), noop); var longId = answers[0].id; T.eq(answers[0].text.length, 217);
+    f.speakNetraVoice('A new line.', noop);
+    T.ok(!cl.get('_voiceJobs')[longId], 'the long one is dropped page-side'); T.eq(cl.get('_voiceOut')[0], longId, 'but still owed by the worker');
+    cl.set('_voiceStallTimer', null); cl.set('_voiceHeadSince', Date.now() - 40000);
+    f._netraVoiceWatch(); T.eq(c.voice.status, 'ready', 'a dropped 217-char head 40 s in is busy, not stuck'); T.ok(tm.timers.some(function (t) { return t.delay >= 11000 && t.delay <= 12000; }), 'watched on for the rest of its allowance');
+    cl.set('_voiceStallTimer', null); cl.set('_voiceHeadSince', Date.now() - 53000);
+    f._netraVoiceWatch(); T.eq(c.voice.status, 'error', 'past its allowance it is stuck');
+    // a device line still going when hers starts is cut first
+    cl.set('_voiceRestarts', 0); cl.set('_voiceRestartAt', 0); cl.set('_voiceWorker', null); c.voice.status = 'off'; cl.set('_voiceHeld', []);
+    f._netraVoiceLoad(); f._netraVoiceOnMessage({ data: { ready: true, ms: 100 } }); T.eq(f._netraVoiceReady(), true);
     var cancelled = 0; cl.set('TTS', { speaking: true, pending: false, cancel: function () { cancelled++; }, getVoices: function () { return []; } });
     f.speakNetraVoice('Hers now.', noop); T.eq(cancelled, 1, 'the device utterance is cancelled');
     // an interjection (a reminder, a polled notification) waits while a line waits for her, so it is not said twice
@@ -616,11 +627,51 @@ T.test('a healthy run earns a fresh restart budget; her engine picked again whil
     T.match(CLIENT, /fetch\(pdiBase \+ 'voice\/' \+ d\.model \+ '\.onnx-json'\)\.then\(okR\), fetch\(pdiBase \+ 'voice\/piper_phonemize-js'\)\.then\(okR\)/, 'a missing config or glue file is an HTTP error (final), not a parse error retried four times');
 });
 
+T.test('the worker: a sentence the phonemizer never answers is given up after four tries (5 s each, the phonemizer made afresh twice), reported, never said by another voice', function () {
+    var src = workerSrc();
+    var posted = [], timers = [], fired = 0;
+    var fakeSetTimeout = function (fn, ms) { var t = { fn: fn, ms: ms }; timers.push(t); return t; };
+    var fakeClearTimeout = function (t) { var i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); };
+    var plain = { ok: true, clone: function () { return this; },
+        json: function () { return Promise.resolve({ audio: { sample_rate: 22050 }, espeak: { voice: 'en' }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 }, num_speakers: 1 }); },
+        text: function () { return Promise.resolve('var createPiperPhonemize = function (opts) { self.__factoryCalls++; return Promise.resolve({ callMain: function (args) { self.__mains++; var t = JSON.parse(args[3])[0].text; if (t !== "Silent one.") opts.print(JSON.stringify({ phoneme_ids: [1, 2] })); } }); };'); },
+        arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(8)); } };
+    var self = { caches: null, __factoryCalls: 0, __mains: 0, postMessage: function (m) { posted.push(m); }, fetch: function () { return Promise.resolve(plain); } };
+    var ort = { env: { wasm: {} }, Tensor: function () {}, InferenceSession: { create: function () { return Promise.resolve({ run: function () { return Promise.resolve({ output: { data: Float32Array.from([0.1]) } }); } }); } } };
+    new Function('self', '__import', 'setTimeout', 'clearTimeout', 'fetch', 'caches', src)(self, function () { return Promise.resolve(ort); }, fakeSetTimeout, fakeClearTimeout, function (u, o) { return self.fetch(u, o); }, self.caches);
+    self.onmessage({ data: { cmd: 'load', base: 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/', model: 'en_GB-cori-medium' } });
+    var tick = function () { return new Promise(function (r) { setImmediate(r); }); };
+    var settle = function () { return tick().then(tick).then(tick).then(tick); };
+    return settle().then(function () {
+        T.ok(posted.some(function (m) { return m.ready; }), 'ready (the warm-up answered at once)'); T.eq(self.__factoryCalls, 1);
+        self.onmessage({ data: { cmd: 'say', id: 5, text: 'Silent one.' } });
+        self.onmessage({ data: { cmd: 'say', id: 6, text: 'Fine.' } });
+        var drive = function (n) {
+            if (n > 20) return Promise.resolve();
+            return settle().then(function () {
+                if (posted.some(function (m) { return m.id === 6; })) return;
+                var due = timers.filter(function (t) { return t.ms === 5000; });
+                due.forEach(function (t) { fakeClearTimeout(t); fired++; t.fn(); });
+                return drive(n + 1);
+            });
+        };
+        return drive(0);
+    }).then(function () {
+        T.eq(fired, 4, 'four tries, 5 s each, then given up');
+        T.eq(self.__factoryCalls, 3, 'the phonemizer made afresh after each silent try (twice)');
+        var five = posted.filter(function (m) { return m.id === 5; })[0], six = posted.filter(function (m) { return m.id === 6; })[0];
+        T.ok(five && /phonemizer silent/.test(five.error), 'reported for the page to leave out: ' + JSON.stringify(five));
+        T.ok(six && six.pcm && six.pcm.length === 1, 'and the next sentence is still made');
+        T.eq(timers.filter(function (t) { return t.ms === 5000; }).length, 0, 'no timer left behind');
+    });
+});
+
 T.test('the worker: the bytes are told as they land, from a streamed body or a cached one', function () {
     var src = workerSrc();
     var posted = [];
-    var chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])];
-    var streamed = function () { var i = 0; return { ok: true, clone: function () { return this; }, body: { getReader: function () { return { read: function () { return Promise.resolve(i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }); } }; } } }; };
+    var chunks = [new Uint8Array(1048576), new Uint8Array(1048576), new Uint8Array(1048576)]; chunks[0][0] = 1; chunks[0][1] = 2; chunks[2][1048575] = 9;
+    // a megabyte a piece, 600 ms apart: the worker tells every piece (its throttle is 500 ms)
+    var streamed = function () { var i = 0; return { ok: true, clone: function () { return this; }, body: { getReader: function () { return { read: function () { return new Promise(function (r) { setTimeout(function () { r(i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }); }, i < chunks.length ? 600 : 0); }); } }; } } }; };
     var plain = { ok: true, clone: function () { return this; },
         json: function () { return Promise.resolve({ audio: { sample_rate: 22050 }, espeak: { voice: 'en' }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 }, num_speakers: 1 }); },
         text: function () { return Promise.resolve('var createPiperPhonemize = function (opts) { self.__phonOpts = opts; return Promise.resolve({ callMain: function (args) { opts.print(JSON.stringify({ phoneme_ids: [1] })); } }); };'); },
@@ -629,11 +680,12 @@ T.test('the worker: the bytes are told as they land, from a streamed body or a c
     var ort = { env: { wasm: {} }, Tensor: function () {}, InferenceSession: { create: function (model) { self.__model = model; return Promise.resolve({ run: function () { return Promise.resolve({ output: { data: Float32Array.from([0.1]) } }); } }); } } };
     new Function('self', '__import', 'setTimeout', 'clearTimeout', 'fetch', 'caches', src)(self, function () { return Promise.resolve(ort); }, setTimeout, clearTimeout, function (u, o) { return self.fetch(u, o); }, self.caches);
     self.onmessage({ data: { cmd: 'load', base: 'https://x.service-now.com/api/x_196061_netra_v1/voice/ear/', model: 'en_GB-cori-medium' } });
-    return new Promise(function (r) { setTimeout(r, 60); }).then(function () {
-        T.eq(Array.from(new Uint8Array(self.__model)), [1, 2, 3, 4, 5], 'the streamed pieces make the model, whole and in order');
-        T.ok(posted.some(function (m) { return m.stage === 'fetching' && m.mb === 0; }), 'the bytes so far are told as they land: ' + JSON.stringify(posted.filter(function (m) { return m.stage; })));
+    return new Promise(function (r) { setTimeout(r, 2200); }).then(function () {
+        var model = new Uint8Array(self.__model);
+        T.eq([model.length, model[0], model[1], model[3 * 1048576 - 1]], [3 * 1048576, 1, 2, 9], 'the streamed pieces make the model, whole and in order');
+        T.eq(posted.filter(function (m) { return m.stage === 'fetching'; }).map(function (m) { return m.mb; }), [0, 1, 2, 3], 'the bytes so far are told as each piece lands');
         var starting = posted.filter(function (m) { return m.stage === 'starting'; });
-        T.eq(starting.map(function (m) { return m.step; }), ['engine', 'warm-up']); T.eq(starting[0].mb, 0, '5 + 8 + 8 + 8 bytes round to 0 MB');
+        T.eq(starting.map(function (m) { return m.step; }), ['engine', 'warm-up']); T.eq(starting[0].mb, 3, '3 MiB of model plus a few bytes round to 3 MB');
         T.ok(posted.some(function (m) { return m.ready; }), 'ready');
         T.ok(self.__phonOpts.getPreloadedPackage() instanceof ArrayBuffer, 'the language data (read the plain way when a body cannot be streamed) still handed over');
     });

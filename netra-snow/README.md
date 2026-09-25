@@ -292,8 +292,9 @@ times at most, after a pause that doubles from 1.5 s to 12 s) and lines
 wait up to 25 s for it to come back, since its files are cached by then; a
 load that goes quiet for 45 s (no bytes landing, no start step begun) is
 started again too; a worker that gives no answer for 30 s (plus 100 ms a
-character of the sentence, so a long one is busy, not stuck) to the sentence
-it is on is stuck and is started again - and that watch is not moved by new
+character of the sentence, so a long one is busy, not stuck - even one the
+page has since dropped) to the sentence it is on is stuck and is started
+again - and that watch is not moved by new
 lines or by a barge-in, so a stuck worker is caught while the user keeps
 talking. A failure that would only repeat - a file the instance does not
 have, a worker the browser will not make - is not retried: the device
