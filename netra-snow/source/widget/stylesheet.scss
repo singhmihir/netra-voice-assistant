@@ -2061,6 +2061,17 @@
     color: var(--iris-bright, #b9a8ee);
     margin-bottom: 8px;
 }
+.netra-lab-diag {
+    margin-left: auto; min-height: 36px; padding: 6px 12px; border-radius: 10px;
+    font: 600 12px/1.2 inherit; letter-spacing: 0.02em; text-transform: none;
+    color: #ffffff; background: rgba(66, 133, 244, 0.28); border: 1px solid rgba(168, 199, 250, 0.45); cursor: pointer;
+}
+.netra-lab-diag:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+.netra-lab-diagtext {
+    width: 100%; box-sizing: border-box; min-height: 140px; margin: 0 0 8px; padding: 8px;
+    font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; color: #e8eaed;
+    background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px;
+}
 .netra-lab-chip {
     font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em;
     border: 1px solid rgba(216,200,255,0.22);

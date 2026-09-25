@@ -2373,6 +2373,16 @@ api.controller = function ($scope, $timeout, $window) {
                 });
             } catch (eTrk) {}
             _micCtx = new (window.AudioContext || window.webkitAudioContext)();
+            // R27 - WebKit: follow the context; a capturing page may resume it
+            try {
+                _micCtx.onstatechange = function () {
+                    if (!_micCtx) return;
+                    logEvent('mic', 'mic audio ' + _micCtx.state);
+                    if (_micCtx.state !== 'running' && _micCtx.state !== 'closed') $timeout(function () { _resumeAudio('mic audio ' + (_micCtx && _micCtx.state)); }, 300);
+                    else _micTapCheck();
+                };
+            } catch (eSC) {}
+            _resumeAudio('mic started');
             var source = _micCtx.createMediaStreamSource(stream);
             // R3.5.1 - GainNode set to 1.0 (no extra boost). AGC already
             // normalises the stream; doubling on top made the ring dance
@@ -2466,10 +2476,7 @@ api.controller = function ($scope, $timeout, $window) {
             var __micHealthTick = function () {
                 if (_ctrlDestroyed) return;   // R4.5
                 try {
-                    if (_micCtx && _micCtx.state === 'suspended') {
-                        logEvent('mic', 'AudioContext was suspended - resuming');
-                        _micCtx.resume();
-                    }
+                    if (_micCtx && _micCtx.state !== 'running' && _micCtx.state !== 'closed') _resumeAudio('health check: ' + _micCtx.state);
                     var tracks = _micStream ? _micStream.getAudioTracks() : [];
                     var live = tracks.filter(function (t) { return t.readyState === 'live' && !t.muted; });
                     if (tracks.length && !live.length) {
@@ -2489,6 +2496,75 @@ api.controller = function ($scope, $timeout, $window) {
         });
     }
 
+    /* R27 - iPhone (WebKit): an audio context starts "suspended" unless it
+     * was made inside a tap, and speech playing or a call turns it
+     * "interrupted". The mic meter and the on-device ear run on _micCtx, and
+     * a context that is not running hands them silence - lvl 0, and nothing
+     * heard. So both contexts are resumed on every tap, when the mic starts
+     * (a page that is capturing may start audio in WebKit), when a context
+     * changes state, and after she speaks. If iOS still says no, the status
+     * asks for one tap instead of listening to nothing. */
+    function _resumeAudio(why) {
+        var need = false;
+        [audioCtx, _micCtx].forEach(function (ctx) {
+            if (!ctx || ctx.state === 'running' || ctx.state === 'closed') return;
+            need = true;
+            try {
+                var pr = ctx.resume();
+                if (pr && pr.then) pr.then(function () { _micTapCheck(); }, function () { _micTapCheck(); });
+            } catch (e) {}
+        });
+        if (need) logEvent('mic', 'audio resumed (' + why + ')');
+        _micTapCheck();
+        return need;
+    }
+    // the mic's context still not running once the page is active: one tap fixes it
+    function _micTapCheck() {
+        var stuck = !!(_micCtx && _micCtx.state !== 'running' && _micCtx.state !== 'closed');
+        if (stuck === !!c.micNeedsTap) return;
+        c.micNeedsTap = stuck;
+        if (stuck) {
+            logEvent('warn', 'mic audio is ' + _micCtx.state + ' - asking for a tap');
+            if (c.state === 'idle' || c.state === 'awaiting') c.liveStatus = 'Tap anywhere so I can hear you';
+        } else if (c.liveStatus === 'Tap anywhere so I can hear you') {
+            setState(c.state);
+        }
+        $scope.$applyAsync();
+    }
+    /* R27 - what this device sees, for a developer who can not hold it: the
+     * recognizer, the ear, the mic track and both audio contexts, and the
+     * recent log - copied as plain text (nothing secret in it) */
+    function _diagReport() {
+        var L = [], nav = ($window && $window.navigator) || {};
+        var st = function (ctx) { return ctx ? ctx.state + (ctx.sampleRate ? ' @' + ctx.sampleRate : '') : 'none'; };
+        L.push('Netra diagnostics ' + new Date().toISOString() + ' build ' + (typeof NETRA_BUILD !== 'undefined' ? NETRA_BUILD : '?'));
+        L.push('ua: ' + String(nav.userAgent || ''));
+        L.push('app: ' + JSON.stringify(c.app || {}) + ' guest: ' + !!(c.data && c.data.is_guest) + ' page: ' + (c.liveMode ? 'live' : 'portal'));
+        L.push('state: ' + c.state + ' speaking: ' + !!_speakingNow + ' alert: ' + !!c.alert + ' micOff: ' + !!c.micOff + ' ended: ' + !!c.ended);
+        L.push('gate: ' + (c.gate ? [c.gate.open ? 'open' : 'shut', 'hearing=' + c.gate.hearingText, 'voice=' + c.gate.voiceText, 'answers=' + c.gate.brainText].join(' | ') : 'none'));
+        L.push('recognizer: hasSR=' + !!c.hasSR + ' running=' + !!c.recRunning + ' lang=' + c.recLang + ' verdict=' + _nativeVerdict + ' heardWords=' + !!_nativeHeardWords + ' health=' + JSON.stringify(c.micHealth || {}));
+        L.push('ear: ' + JSON.stringify({ mode: c.ear.mode, status: c.ear.status, on: c.ear.on, model: c.ear.model, device: c.ear.device, progress: c.ear.progress, error: c.ear.error, heard: c.ear.heard }));
+        var tracks = [];
+        try { if (_micStream) _micStream.getAudioTracks().forEach(function (t) { tracks.push(t.readyState + (t.muted ? ' muted' : '') + (t.enabled ? '' : ' disabled') + ' "' + String(t.label || '').substring(0, 40) + '"'); }); } catch (eT) {}
+        L.push('mic: stream=' + !!c.micStreamActive + ' tracks=[' + tracks.join('; ') + '] micCtx=' + st(_micCtx) + ' audioCtx=' + st(audioCtx) + ' level=' + c.micLevel + ' peak=' + c.micLevelPeak + ' needsTap=' + !!c.micNeedsTap);
+        var voices = 0;
+        try { voices = (TTS && TTS.getVoices) ? TTS.getVoices().length : 0; } catch (eV) {}
+        L.push('voice: hasTTS=' + !!c.hasTTS + ' voices=' + voices + ' ttsSpeaking=' + !!(TTS && TTS.speaking) + ' ttsPending=' + !!(TTS && TTS.pending));
+        L.push('-- last events --');
+        (c.events || []).slice(0, 80).forEach(function (e) { L.push(e.t + ' ' + e.l + ' ' + e.m); });
+        return L.join('\n');
+    }
+    c.copyDiag = function () { _copyDiag(); };
+    function _copyDiag() {
+        var text = _diagReport();
+        c.diagText = '';
+        var done = function (ok) { c.diagCopied = ok; if (!ok) c.diagText = text; logEvent('lab', ok ? 'diagnostics copied' : 'diagnostics shown to copy by hand'); $scope.$applyAsync(); };
+        try {
+            var cb = $window.navigator && $window.navigator.clipboard;
+            if (cb && cb.writeText) { cb.writeText(text).then(function () { done(true); }, function () { done(false); }); return; }
+        } catch (eC) {}
+        done(false);
+    }
     function stopMicLevelMeter() {
         if (_micRafId) cancelAnimationFrame(_micRafId);
         if (_micStream) _micStream.getTracks().forEach(function (t) { t.stop(); });
@@ -3047,7 +3123,7 @@ api.controller = function ($scope, $timeout, $window) {
     function _speechUnlock(ev) {
         var type = String(ev && ev.type || 'button');
         unlockAudio();
-        try { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); } catch (eR) {}
+        _resumeAudio('tap');   // R27 - the mic's context too (WebKit)
         if (_speechUnlocked) return;
         // iOS unlocks speech only for a call made inside the tap itself: a
         // silent, empty line now lets every later line play
@@ -4219,10 +4295,13 @@ api.controller = function ($scope, $timeout, $window) {
                 var advancing = playedTo >= 0 && playedTo !== watchdogLastPlayedTo;
                 watchdogLastPlayedTo = playedTo;
                 var ttsAllowance = (TTS && (TTS.speaking || TTS.pending)) ? String(_speakingText || '').length * 110 : 0;
+                // R27 - WebKit on iPhone can leave speechSynthesis.speaking set
+                // after the line has ended: there the text's own time decides
+                var stuckAfter = (c.app && c.app.ios) ? 6000 + String(_speakingText || '').length * 90 : 30000 + ttsAllowance;
                 if (!watchdogLastSpeakingStart || advancing) {
                     watchdogLastSpeakingStart = now;
-                } else if (now - watchdogLastSpeakingStart > 30000 + ttsAllowance) {
-                    logEvent('warn', 'watchdog: stuck in speaking >30s - full floor release');
+                } else if (now - watchdogLastSpeakingStart > stuckAfter) {
+                    logEvent('warn', 'watchdog: stuck in speaking - full floor release');
                     watchdogLastSpeakingStart = 0;
                     stopSpeaking('watchdog stuck-speaking');
                     ignoreFinalsUntil = now;
@@ -6659,7 +6738,7 @@ api.controller = function ($scope, $timeout, $window) {
     // a genuinely-broken build (e.g. the pre-GEC Edge 403 storm) stayed
     // open in localStorage across every future session, permanently
     // pinning Netra to the robotic fallback even after the fix shipped.
-    var NETRA_BUILD = 'v7.5-ready';   // bumped: reopens Edge TTS for everyone whose breaker tripped on an old build
+    var NETRA_BUILD = 'v7.6-ios';   // bumped: reopens Edge TTS for everyone whose breaker tripped on an old build
     try {
         if (_store && _store.getItem('netra_build') !== NETRA_BUILD) {
             _store.removeItem('netra_edgeFails');
@@ -7352,6 +7431,7 @@ api.controller = function ($scope, $timeout, $window) {
             _clearSpeaking();   // R6
             if (!voiced) c.captionKeep = true;   // ended without a sound (no voice installed)
             logEvent('tts', 'onend');
+            _resumeAudio('after speech');   // R27 - WebKit interrupts the mic's context while she speaks
             if (done) done();
         };
         u.onerror = function (ev) {
