@@ -770,17 +770,23 @@
                     if (toolLog.length) return _pr('brain');
                     // R21 - a short overload: the page holds the question,
                     // shows its loading screen, and asks again the moment the
-                    // brain answers its readiness probe. Out for longer than
-                    // five minutes: answered now the simple way (the web)
+                    // brain answers its readiness probe. R24 - every model out
+                    // for longer than about a minute: answered now the simple
+                    // way (the web), as the page's web mode promised
                     var nowB = new GlideDateTime().getNumericValue();
                     var restB = _brain().pickChain(_modelChain(null), nowB);
-                    if (!restB.tryList.length && restB.all_resting_until_ms && restB.all_resting_until_ms - nowB > 5 * 60000) {
+                    if (!restB.tryList.length && _restIsLong(restB.all_resting_until_ms, nowB)) {
                         return _offlineAnswer(userMessage, contents, { why: 'brain', resting_until_ms: restB.all_resting_until_ms });
                     }
                     return _brainDownReply(resp);
                 }
-                if (ecode === 401 || ecode === 403) friendly = 'My API key is not authorised. Kindly check the configuration.';
-                else if (ecode === 400 || err.indexOf('400') >= 0) {
+                // R24 - the key refused: the page was told web answers, so
+                // answer that way now instead of refusing once per model
+                if (ecode === 401 || ecode === 403) {
+                    if (toolLog.length) return _pr('brain');
+                    return _offlineAnswer(userMessage, contents, { why: 'key' });
+                }
+                if (ecode === 400 || err.indexOf('400') >= 0) {
                     // R11 - 400 after a long session usually means payload too
                     // large. The old behaviour nuked the WHOLE memory
                     // (force_history_reset) which felt like amnesia. Now:
@@ -1475,6 +1481,9 @@ _timeLine();
         return { ready: true, mode: 'web', model: '', wait_ms: 120000, resting_until_ms: untilMs || 0,
                  say: 'answers from the web only - ' + why.charAt(0).toLowerCase() + why.substring(1) };
     }
+    // R24 - every model resting past a short wait: web answers, not the
+    // loading screen. Only a rest of about a minute or less holds the question
+    function _restIsLong(untilMs, nowMs) { return !!untilMs && untilMs - nowMs > 60000; }
     function _longRestSay(untilMs, allQuota) {
         return (allQuota ? 'My reasoning models are out of today\'s free quota' : 'My reasoning models are out of quota or overloaded') +
                (untilMs ? ' until about ' + _clockAt(untilMs) : '');
@@ -1491,9 +1500,14 @@ _timeLine();
         var pick = brain.pickChain(chain, nowMs);
         if (!pick.tryList.length) {
             var wait = Math.max(10000, (pick.all_resting_until_ms || nowMs + 60000) - nowMs);
-            var quota = 0;
-            for (var sk = 0; sk < pick.skipped.length; sk++) if (pick.skipped[sk].reason === 'per_day' || pick.skipped[sk].reason === 'limit') quota++;
-            if (pick.all_resting_until_ms && pick.all_resting_until_ms - nowMs > 5 * 60000) return _webReady(pick.all_resting_until_ms, _longRestSay(pick.all_resting_until_ms, quota === pick.skipped.length));
+            var quota = 0, refused = 0;
+            for (var sk = 0; sk < pick.skipped.length; sk++) {
+                if (pick.skipped[sk].reason === 'per_day' || pick.skipped[sk].reason === 'limit') quota++;
+                if (pick.skipped[sk].reason === 'auth') refused++;
+            }
+            // one key for every model: a refusal is the reason, not quota
+            if (refused) return _webReady(pick.all_resting_until_ms, 'My Gemini key was refused');
+            if (_restIsLong(pick.all_resting_until_ms, nowMs)) return _webReady(pick.all_resting_until_ms, _longRestSay(pick.all_resting_until_ms, quota === pick.skipped.length));
             var what = quota === pick.skipped.length ? 'All my reasoning models are out of today\'s free quota'
                      : quota ? 'My reasoning models are out of quota or overloaded' : 'My reasoning models are overloaded';
             return { ready: false, reason: 'all_resting', wait_ms: Math.min(wait, 60000), resting_until_ms: pick.all_resting_until_ms,
@@ -1517,12 +1531,14 @@ _timeLine();
             }
             var code = (typeof r.code === 'number') ? r.code : 0;
             if (code !== 400) brain.recordFail(m, code, r.raw || r.error, new GlideDateTime().getNumericValue());
-            if (code === 401 || code === 403) { try { brain.flush(); } catch (eF2) {} return { ready: false, reason: 'auth', wait_ms: 60000, say: 'My Gemini key was refused.' }; }
+            // R24 - the key refused: web answers now, saying why, instead of
+            // a loading screen that waits out every model in turn
+            if (code === 401 || code === 403) { try { brain.flush(); } catch (eF2) {} return _webReady(0, 'My Gemini key was refused'); }
         }
         try { brain.flush(); } catch (eF3) {}
         var nowQ = new GlideDateTime().getNumericValue();
         var after = brain.pickChain(chain, nowQ);
-        if (!after.tryList.length && after.all_resting_until_ms && after.all_resting_until_ms - nowQ > 5 * 60000) {
+        if (!after.tryList.length && _restIsLong(after.all_resting_until_ms, nowQ)) {
             return _webReady(after.all_resting_until_ms, _longRestSay(after.all_resting_until_ms, false));
         }
         return { ready: false, reason: 'busy', wait_ms: 10000, say: 'The free AI models are overloaded right now - I will keep trying.' };
@@ -2613,6 +2629,7 @@ _timeLine();
         if (first) {
             notice = (why && why.why === 'budget') ? 'I have used this turn\'s thinking budget, so I will answer the simple way. '
                    : (why && why.why === 'no_key') ? 'Heads up: my Gemini key is not set up yet, so I am in basic mode. '
+                   : (why && why.why === 'key') ? 'Heads up: my Gemini key was refused, so I will answer the simple way for now. '
                    : 'Heads up: my reasoning models are unavailable right now, so I am in basic mode. ';
             b.offlineNoticeAt = new GlideDateTime().getNumericValue();
             _ctxWriteBlob(b);

@@ -257,14 +257,17 @@ api.controller = function ($scope, $timeout, $window) {
     }
     _appShell();
 
-    c.liveExit = function () {
+    c.liveExit = _liveExit;
+    function _liveExit() {
         _stage3dOn = false;
+        // the portal's header and footer outlive this widget: give them back first
+        _gateInertRestore();
         try { if (window.NetraStage3D) window.NetraStage3D.unmount(); } catch (e3d) {}
         try {
             if ($window.history && $window.history.length > 1) $window.history.back();
             else $window.location.assign('/sp');
         } catch (e) { $window.location.assign('/sp'); }
-    };
+    }
 
     /* ============================================================
      *  R22 - THE GEMINI STAGE (the netra_stage3d UI script, a widget
@@ -455,6 +458,8 @@ api.controller = function ($scope, $timeout, $window) {
     c.labSendCmd = function () {
         var t = String(c.labCmd || '').trim();
         if (!t) return;
+        // R24 - the loading screen's own rule: typing needs answers, not ears
+        if (_typedRefused(t)) return;
         c.labCmd = '';
         logEvent('lab', 'typed command: "' + t + '"');
         processCommand(t, 1.0);
@@ -1404,15 +1409,21 @@ api.controller = function ($scope, $timeout, $window) {
         c.charts.toolBars = rows;
     }
 
-    var STATE_LABEL = {
-        idle:      'alert - listening for "Netra"',
-        awaiting:  'just heard wake word, listening for your command',
-        thinking:  'thinking',
-        speaking:  'speaking',
-        dormant:   'asleep - say "Netra" or "Netra wake up" to resume',
-        error:     'error - check the event log',
-        boot:      'getting ready'
-    };
+    // R24 - what a screen reader hears for each state. This page has no wake
+    // word, and while the loading screen is up she is only getting ready
+    function _stateLabel(s) {
+        if ((s === 'idle' || s === 'awaiting') && c.gate && !c.gate.open) return 'getting ready';
+        var labels = {
+            idle:      'listening - just speak',
+            awaiting:  'listening - just speak',
+            thinking:  'thinking',
+            speaking:  'speaking',
+            dormant:   'asleep - say "Netra" or "Netra wake up" to resume',
+            error:     'error - check the event log',
+            boot:      'getting ready'
+        };
+        return labels[s] || s;
+    }
 
     /* ============================================================
      *  ENGINES
@@ -2108,6 +2119,8 @@ api.controller = function ($scope, $timeout, $window) {
         try { stopMicLevelMeter(); } catch (e) {}
         if (TTS) TTS.cancel();
         if (audioCtx) try { audioCtx.close(); } catch (e) {}
+        // the portal page stays after a single-page navigation: nothing left inert
+        _gateInertRestore();
     }
 
     function checkMicPermission() {
@@ -2696,7 +2709,7 @@ api.controller = function ($scope, $timeout, $window) {
             // screen can finish
             var earPossible = c.ear.mode !== 'off' && typeof Worker !== 'undefined' && typeof Blob !== 'undefined';
             logEvent('warn', 'no SpeechRecognition in this browser - ' + (earPossible ? 'the on-device ear hears instead' : 'typing only'));
-            if (!earPossible) speak('This browser can not listen, so I can not hear you here. Use Chrome or Edge to talk to me, or type to me in the Lab once my answers are ready.');
+            if (!earPossible) speak('This browser can not listen, so I can not hear you here. Use Chrome or Edge to talk to me, or type to me once my answers are ready.');
         }
         // no key is basic mode, not a dead end: the server still reads and
         // lists tickets, raises one and gives the debrief, so the mic starts
@@ -2707,9 +2720,16 @@ api.controller = function ($scope, $timeout, $window) {
         populateVoices();
 
         try {
+            // R24 - no ear download holds the loading screen: it loads when the
+            // browser's recognizer is missing, blocked or deaf (startContinuous,
+            // onerror, _deafCheck). A desktop also keeps the small ear ready in
+            // the background a little later, because some recognizers start and
+            // then hear nothing with no error at all (corporate networks do
+            // this): the first deaf strike then swaps it in at once. A phone
+            // downloads nothing up front
             startContinuous();
-            _earLoad();                 // R20: the on-device ear warms up in standby for every visitor
             _readyUpdate();
+            if (!_isPhone()) $timeout(function () { if (!_nativeHeardWords && !_ctrlDestroyed) _earLoad(true); }, 15000);
             _brainProbe('boot');        // R21: the loading screen waits for a real answer from the brain
             $timeout(_gateUpdate, 4200);   // the no-voice case resolves after 4 s
             startListeningWatchdog();   // R1: aggressive mic-health watchdog
@@ -2800,7 +2820,7 @@ api.controller = function ($scope, $timeout, $window) {
     var DEAF_WINDOW_MS = 10000;   // judged every ten seconds
     var DEAF_LOUD_MS = 1500;      // this much speech with no words is a strike
     var EAR_HALLUCINATION_RE = /^[\s\W]*$|^\[.*\]$|^\(.*\)$|^(you|thank you|thanks|thanks for watching|bye|so|the end|okay)[.!]?$/i;
-    c.ear = { mode: 'auto', size: 'auto', on: false, status: 'off', progress: 0, model: EAR_MODEL, device: 'wasm', error: '', heard: 0, why: '', lastMs: 0 };
+    c.ear = { mode: 'auto', size: 'auto', on: false, status: 'off', progress: 0, prepared: false, model: EAR_MODEL, device: 'wasm', error: '', heard: 0, why: '', lastMs: 0 };
     try { c.ear.mode = localStorage.getItem('netra_ear') || 'auto'; c.ear.size = localStorage.getItem('netra_ear_size') || 'auto'; } catch (eEM) {}
     if (c.ear.mode !== 'on' && c.ear.mode !== 'off') c.ear.mode = 'auto';
     if (c.ear.size !== 'tiny' && c.ear.size !== 'base') c.ear.size = 'auto';   // auto = base on a GPU, tiny elsewhere
@@ -2834,30 +2854,50 @@ api.controller = function ($scope, $timeout, $window) {
         try { var ua = $window.navigator && $window.navigator.userActivation; return !!(ua && !ua.hasBeenActive); } catch (eA) { return false; }
     }
     function _onPageActivated(ev) {
-        if (_ctrlDestroyed || (_activated && !_voiceBlocked)) return;
+        if (_ctrlDestroyed) return;
         if (ev && ev.type === 'keydown' && /^(Shift|Control|Alt|Meta|CapsLock|Escape|Tab)$/.test(String(ev.key || ''))) return;
+        // every gesture runs the unlock (it is idempotent): a pointerdown
+        // may have come first, and iOS did not count that one
+        _speechUnlock(ev);
+        if (_activated && !_voiceBlocked) return;
+        // on iOS a pointerdown is not the gesture: the touchend or click of
+        // the same tap is, and a greeting started before it would be dropped
+        if (ev && ev.type === 'pointerdown' && c.app && c.app.ios) return;
         _activated = true; _voiceBlocked = false;
-        unlockAudio();
-        try { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); } catch (eR) {}
-        // iOS unlocks speech only for a call made inside the tap itself: a
-        // silent, empty line now lets every later line play
-        try {
-            if (c.hasTTS && TTS && typeof SpeechSynthesisUtterance !== 'undefined') {
-                var unlock = new SpeechSynthesisUtterance(' ');
-                unlock.volume = 0;
-                TTS.speak(unlock);
-            }
-        } catch (eU) {}
         logEvent('gate', 'page activated (' + (ev && ev.type || 'button') + ') - my voice may play now');
         _gateUpdate();
     }
-    c.gateActivate = function () { _onPageActivated({ type: 'button' }); };
+    // R24 - WebKit starts audio only from a touchend or a click, so the
+    // unlock runs inside those too. Once one of them has spoken the silent
+    // line it is not spoken again (until the browser refuses her voice)
+    var _speechUnlocked = false;
+    function _speechUnlock(ev) {
+        var type = String(ev && ev.type || 'button');
+        unlockAudio();
+        try { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); } catch (eR) {}
+        if (_speechUnlocked) return;
+        // iOS unlocks speech only for a call made inside the tap itself: a
+        // silent, empty line now lets every later line play
+        try {
+            if (c.hasTTS && TTS && typeof SpeechSynthesisUtterance !== 'undefined' && !_speakingNow) {
+                var unlock = new SpeechSynthesisUtterance(' ');
+                unlock.volume = 0;
+                TTS.speak(unlock);
+                if (/^(click|touchend|button)$/.test(type) || (type === 'keydown' && !(c.app && c.app.ios))) _speechUnlocked = true;
+            }
+        } catch (eU) {}
+    }
+    // the Start button: its own click is the gesture, so it always unlocks
+    function _gateStart() { _onPageActivated({ type: 'button' }); }
+    c.gateActivate = _gateStart;
+    function _listenForActivation(doc) {
+        var types = ['keydown', 'pointerdown', 'touchend', 'click'];
+        types.forEach(function (t) { doc.addEventListener(t, _onPageActivated, true); });
+        return function () { types.forEach(function (t) { try { doc.removeEventListener(t, _onPageActivated, true); } catch (eD) {} }); };
+    }
     try {
-        $window.document.addEventListener('keydown', _onPageActivated, true);
-        $window.document.addEventListener('pointerdown', _onPageActivated, true);
-        $scope.$on('$destroy', function () {
-            try { $window.document.removeEventListener('keydown', _onPageActivated, true); $window.document.removeEventListener('pointerdown', _onPageActivated, true); } catch (eD) {}
-        });
+        var _stopActivation = _listenForActivation($window.document);
+        $scope.$on('$destroy', _stopActivation);
     } catch (eL) {}
     function _voiceReady() {
         var eng = c.ttsEngine || 'browser';
@@ -2885,46 +2925,197 @@ api.controller = function ($scope, $timeout, $window) {
         g.hearing = !!c.ready;
         g.hearingText = c.ready ? (c.ear.on ? 'on-device ear' : 'browser recognizer')
                                 : String(c.readyText || 'checking…').replace(/^Getting ready( — )?/, '').replace(/…$/, '') || 'checking';
-        if (!c.ready && !c.hasSR && (c.ear.status === 'error' || c.ear.mode === 'off' || typeof Worker === 'undefined')) {
-            g.hearingText = 'this browser can not listen' + (c.ear.error ? ' (' + c.ear.error + ')' : '') + ' - you can type to me in the Lab once answers are ready';
+        // no recognizer that works, and no ear to stand in: typing is what is left
+        g.cantHear = !c.ready && _cantHear();
+        if (g.cantHear) {
+            g.hearingText = (c.hasSR ? 'the browser can not reach its speech service and my on-device ear did not load' : 'this browser can not listen') +
+                            (c.ear.error ? ' (' + c.ear.error + ')' : '') + (g.brain ? ' - you can type to me instead' : ' - you can type to me once answers are ready');
         }
         g.voice = _voiceReady();
         var was = g.open;
         g.open = g.hearing && g.voice && g.brain;
+        if (g.open) { g.typing = false; g.statusKey = ''; }   // the next closed spell is announced afresh
         if (g.open && !was) _gateOpened();
         else if (!g.open && was) logEvent('gate', 'closed - ' + (!g.brain ? 'brain: ' + g.brainText : !g.hearing ? 'hearing: ' + g.hearingText : 'voice'));
-        if (c.state === 'idle' || c.state === 'awaiting') c.liveStatus = g.open ? 'Listening' : 'Getting ready…';
+        if (c.state === 'idle' || c.state === 'awaiting') {
+            c.liveStatus = g.open ? 'Listening' : (g.typing ? TYPING_STATUS : 'Getting ready…');
+            c.stateLabel = _stateLabel(c.state);
+        }
+        _gateAnnounce();
+        // R24 - the card is a modal: what is behind it goes inert and the
+        // focus moves, once the card is on (or off) the page
+        var shut = !g.open && !g.typing;
+        if (shut !== _gateShut || (shut && !!g.needsTap !== _gateTapShown)) {
+            _gateShut = shut; _gateTapShown = !!g.needsTap;
+            $timeout(_gateModal, 30, false);
+        }
         $scope.$applyAsync();
+    }
+    // R24 - the browser recognizer failed or is missing, and the on-device
+    // ear can not stand in (it failed, is switched off, or can not run here)
+    function _cantHear() {
+        // an ear that is on, loading or waiting can hear, whatever this browser lacks
+        if (c.ear.on || c.ear.status === 'loading' || c.ear.status === 'standby') return false;
+        var nativeGone = !c.hasSR || _nativeVerdict === 'blocked';
+        return nativeGone && (c.ear.status === 'error' || c.ear.mode === 'off' || typeof Worker === 'undefined');
+    }
+    // R24 - the one line a screen reader hears on the loading screen. It
+    // changes only when a check passes or a real problem shows up - never
+    // for a download percentage
+    function _gateAnnounce() {
+        var g = c.gate;
+        if (!g || g.open) return;
+        var earLoading = !g.hearing && c.ear.status === 'loading';
+        var key = [g.hearing, g.voice, g.brain, g.cantHear, g.needsTap, earLoading, !g.brain && g.brainDown, g.typing].map(function (b) { return b ? 1 : 0; }).join('');
+        if (key === g.statusKey) return;
+        g.statusKey = key;
+        if (g.typing) { g.status = TYPING_STATUS + '.'; return; }
+        var ready = [], waiting = [];
+        [['hearing', g.hearing], ['voice', g.voice], ['answers', g.brain]].forEach(function (k) { (k[1] ? ready : waiting).push(k[0]); });
+        var say = (ready.length ? _andList(ready).replace(/^./, function (ch) { return ch.toUpperCase(); }) + ' ready. ' : '') +
+                  'Waiting for ' + _andList(waiting) + '.';
+        if (g.cantHear) say = 'I can not hear in this browser. ' + (g.brain ? 'Answers are ready - press Type instead to type to me.' : 'You can type to me once answers are ready.');
+        else if (earLoading) say += ' Loading my on-device ear, about ' + _earSizeMb() + ' MB, once - this can take a minute.';
+        if (g.needsTap && !g.cantHear) say += ' Press Start so I can speak.';
+        if (!g.brain && g.brainDown && g.brainText) say += ' Answers: ' + String(g.brainText).replace(/[.\s]+$/, '') + '.';
+        g.status = say;
+    }
+    // where typing is, said to match what is on the screen right now
+    function _typeHint() {
+        var g = c.gate;
+        if (!g || g.open || g.typing) return 'You can still type to me in the Lab.';
+        return g.brain ? 'Press Type instead to type to me.' : 'You can type to me once my answers are ready.';
+    }
+    function _andList(a) { return a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
+    // R24 - answers work, hearing never will here: the card steps aside and
+    // the Lab's typing box takes the focus
+    var TYPING_STATUS = 'Typing only - I can not hear you in this browser';
+    function _gateTypeInstead() {
+        var g = c.gate;
+        if (!g || g.open) return;
+        g.typing = true;
+        if (!c.labOn) c.labToggle();
+        logEvent('gate', 'typing instead - this browser can not hear');
+        _gateUpdate();
+        $timeout(function () {
+            try { var box = $window.document.querySelector('.netra-lab-cmd input'); if (box) box.focus(); } catch (eF) {}
+        }, 60);
+    }
+    c.gateType = _gateTypeInstead;
+    // R24 - while the card is up it is a real modal: everything behind it
+    // (the stage, the orb, the portal's own header and links) is inert and
+    // the focus is in the card. All of it is given back when the card goes
+    var _gateShut, _gateTapShown, _gateInert = [];
+    function _gateModal() {
+        // a late timer after destroy must not make the portal inert again
+        if (_ctrlDestroyed) { _gateInertRestore(); return; }
+        var g = c.gate, doc = $window && $window.document;
+        if (!g || !c.liveMode || !doc || !doc.querySelector) return;
+        var dlg = (!g.open && !g.typing) ? doc.querySelector('.netra-ready') : null;
+        if (dlg) {
+            if (!_gateInert.length) _gateInertAround(doc, dlg);
+            // Start if it is there, else the title: never the page body
+            var ae = doc.activeElement;
+            if (!ae || !dlg.contains(ae)) {
+                var to = dlg.querySelector('.netra-ready-start') || dlg.querySelector('.netra-ready-title');
+                try { if (to) to.focus(); } catch (eF) {}
+            }
+            return;
+        }
+        var had = _gateInert.length;
+        _gateInertRestore();
+        // the card took the focus with it: Netra's own button has it next
+        if (had && g.open) {
+            var now = doc.activeElement;
+            if (!now || now === doc.body) {
+                var blob = doc.querySelector('.netra-stage-blob-wrap');
+                try { if (blob) blob.focus(); } catch (eB) {}
+            }
+        }
+    }
+    function _gateInertAround(doc, dlg) {
+        for (var el = dlg; el && el.parentNode && el !== doc.body; el = el.parentNode) {
+            var sib = el.parentNode.children || [];
+            for (var i = 0; i < sib.length; i++) {
+                var s = sib[i], cls = String((s.getAttribute && s.getAttribute('class')) || '');
+                // the page's spoken-words regions stay: they hold no controls
+                if (s === el || /^(SCRIPT|STYLE|LINK|META|TEMPLATE)$/i.test(String(s.tagName || '')) || /\bnetra-sr-only\b/.test(cls)) continue;
+                var rec = { el: s, inert: s.hasAttribute('inert'), hidden: s.getAttribute('aria-hidden'), tabs: [] };
+                s.setAttribute('inert', '');
+                s.setAttribute('aria-hidden', 'true');
+                // a browser without inert: at least keep Tab out of it
+                if (!('inert' in s) && s.querySelectorAll) {
+                    var f = s.querySelectorAll('a[href], button, input, select, textarea, [tabindex]');
+                    for (var k = 0; k < f.length; k++) { rec.tabs.push([f[k], f[k].getAttribute('tabindex')]); f[k].setAttribute('tabindex', '-1'); }
+                }
+                _gateInert.push(rec);
+            }
+        }
+    }
+    function _gateInertRestore() {
+        while (_gateInert && _gateInert.length) {
+            var r = _gateInert.pop();
+            try {
+                if (!r.inert) r.el.removeAttribute('inert');
+                if (r.hidden === null || r.hidden === undefined) r.el.removeAttribute('aria-hidden'); else r.el.setAttribute('aria-hidden', r.hidden);
+                for (var k = 0; k < r.tabs.length; k++) {
+                    if (r.tabs[k][1] === null || r.tabs[k][1] === undefined) r.tabs[k][0].removeAttribute('tabindex'); else r.tabs[k][0].setAttribute('tabindex', r.tabs[k][1]);
+                }
+            } catch (eR) {}
+        }
     }
     function _gateOpened() {
         var g = c.gate, first = !g.everOpen;
         g.everOpen = true;
         logEvent('gate', 'open - hearing: ' + g.hearingText + ', voice: ' + g.voiceText + ', brain: ' + g.brainText);
         cue('wake');
-        var held = _gateHeld;
+        // R24 - every held question, oldest first
+        var held = _gateHeld ? [].concat(_gateHeld) : [];
         _gateHeld = null;
         _gateNudged = false; _gateNudgedAt = 0;   // the next closed spell gets its own explanation
-        if (first) {
+        if (first && !held.length) {
             var guest = !!(c.data && c.data.is_guest);
             var nm = String((c.data && c.data.user_name) || '').split(' ')[0];
             if (guest || /^(system|guest)$/i.test(nm)) nm = '';
             var h = new Date().getHours();
             var tod = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
-            var webOnly = g.brainMode === 'web' ? ' My reasoning is resting right now, so I will answer from the web until it is back.' : '';
+            // R24 - a key or a switch is not "resting": the real reason, said plainly
+            var why = String(g.brainText || '').replace(/^answers from the web only - /, '');
+            var webOnly = g.brainMode !== 'web' ? ''
+                        : /key|administrator/i.test(why) ? ' ' + why.charAt(0).toUpperCase() + why.substring(1) + ', so I will answer from the web for now.'
+                        : ' My reasoning is resting right now, so I will answer from the web until it is back.';
             speak(tod + (nm ? ', ' + nm : '') + '. I am Netra, and I am ready - just speak.' + webOnly, function () { if (c.alert) setState('idle'); });
             return;
         }
-        // a free model is often out for longer than three minutes: the
+        var bare = function (t) { return String(t).replace(/[.?!\s]+$/, ''); };
+        // a free model is often out for longer than three minutes: a
         // question is held for ten, and never dropped without a word
-        if (held && Date.now() - held.at < 10 * 60000) {
-            logEvent('gate', 'brain is back - asking the held question again: "' + held.text + '"');
+        var fresh = held.filter(function (q) { return Date.now() - q.at < 10 * 60000; });
+        var late = held.filter(function (q) { return fresh.indexOf(q) < 0; });
+        var lateSay = late.length ? 'I could not answer "' + late.map(function (q) { return bare(q.text); }).join('" or "') + '" in time - please ask me again.' : '';
+        if (fresh.length) {
+            var texts = fresh.map(function (q) { return q.text; });
+            logEvent('gate', 'brain is back - asking again: "' + texts.join('", "') + '"');
             // asked again ONCE: a second "busy" gives up instead of looping
-            _gateReasked = { text: held.text, at: Date.now() };
-            speak('Back now. You asked: ' + String(held.text).replace(/[.?!\s]+$/, '') + '.', function () { handleHeard(held.text); });
+            _gateReasked = { text: texts[0], texts: texts, at: Date.now() };
+            speak('Back now. You asked: ' + texts.map(bare).join('. Then: ') + '.' + (lateSay ? ' ' + lateSay : ''), function () {
+                handleHeard(texts[0]);
+                // the rest follow one at a time, each after the answer before it
+                _gateAskAfter = texts.slice(1);
+                if (!_queuedUtterance && _gateAskAfter.length) _queuedUtterance = _gateAskAfter.shift();
+            });
             return;
         }
-        speak(held ? 'I am ready again. I could not answer "' + String(held.text).replace(/[.?!\s]+$/, '') + '" in time - please ask me again.'
-                   : 'I am ready again - just speak.', function () { if (c.alert) setState('idle'); });
+        speak(lateSay ? 'I am ready again. ' + lateSay : 'I am ready again - just speak.', function () { if (c.alert) setState('idle'); });
+    }
+    // R24 - a question the brain could not take is kept in order, never
+    // replaced by the next one; three at most
+    var _gateAskAfter = [];
+    function _gateHold(text) {
+        if (!text) return;
+        var list = _gateHeld ? [].concat(_gateHeld) : [];
+        if (!list.some(function (q) { return q.text === text; })) list.push({ text: text, at: Date.now() });
+        _gateHeld = list.slice(-3);
     }
     // R21 - typing needs answers, not ears: a browser that can not listen
     // at all can still be typed to (and typing is the key press a voice needs)
@@ -2958,7 +3149,14 @@ api.controller = function ($scope, $timeout, $window) {
         var done = function (d) {
             d = d || { ready: false, say: 'no answer from the server', wait_ms: 8000 };
             if (!c.gate) { _brainProbeBusy = false; return; }
+            // R24 - already answering from the web: models resting or busy
+            // keep web mode - only a web search that is down (or no server)
+            // closes the gate again
+            if (!d.ready && (d.reason === 'all_resting' || d.reason === 'busy') && c.gate.brain && c.gate.brainMode === 'web') {
+                d = { ready: true, mode: 'web', say: c.gate.brainText, wait_ms: d.wait_ms };
+            }
             c.gate.brain = !!d.ready;
+            c.gate.brainDown = !d.ready;
             c.gate.brainMode = d.ready ? (d.mode || 'full') : '';
             c.gate.brainText = d.ready ? (d.mode === 'web' ? String(d.say || 'answers from the web only').replace(/[.\s]+$/, '') : 'ready' + (d.model ? ' (' + d.model + ')' : ''))
                                        : String(d.say || 'not answering yet').replace(/[.\s]+$/, '');
@@ -2975,7 +3173,8 @@ api.controller = function ($scope, $timeout, $window) {
             _gateUpdate();
         };
         if (!c.server || typeof c.server.get !== 'function') { done({ ready: true, model: '' }); return; }
-        if (c.gate) c.gate.brainText = 'checking…';
+        // a web-mode check keeps its line: the page is open and answering
+        if (c.gate && !c.gate.brain) c.gate.brainText = 'checking…';
         try {
             var rq = { action: 'ready_check' };
             try { rq.tz_offset_min = -new Date().getTimezoneOffset(); rq.tz_name = (Intl.DateTimeFormat().resolvedOptions() || {}).timeZone || ''; } catch (eTz) {}
@@ -2985,24 +3184,25 @@ api.controller = function ($scope, $timeout, $window) {
     }
 
     // R20 - readiness: the stage says "getting ready" until an ear can hear.
-    // The browser's recognizer counts as able once it started and three
-    // seconds passed without a network error, or once it returned words;
-    // the on-device ear counts once it is engaged.
+    // The browser's recognizer counts as able once it started and settled
+    // without a network error, or once it returned words; the on-device ear
+    // counts once it is engaged.
     var _nativeVerdict = 'unknown', _nativeVerdictTimer = null, _nativeHeardWords = false;
+    var NATIVE_SETTLE_MS = 2000;   // a blocked speech service errors well inside this
     c.ready = false; c.readyText = 'Getting ready…';
     function _readyUpdate() {
         var was = c.ready;
-        // R21 - a recognizer that merely STARTED proves nothing: some fail
-        // silently (no error, no words). Hearing is the ear engaged, or the
-        // browser recognizer having returned words; its clean start counts
-        // only when the on-device ear can not be used at all.
-        var earUsable = c.ear.mode !== 'off' && c.ear.status !== 'error' && typeof Worker !== 'undefined';
-        c.ready = c.ear.on || _nativeHeardWords || (_nativeVerdict === 'ok' && !earUsable);
+        // R24 - a clean start is enough: waiting for words (or for the ear's
+        // 40-200 MB download) kept every first visit on the loading screen
+        // though the browser could hear. A recognizer that fails silently is
+        // caught later by the deaf check, and the ear takes over then
+        c.ready = c.ear.on || _nativeHeardWords || _nativeVerdict === 'ok';
         if (!c.ready) {
-            // the download reaches 100 % before the model is compiled and
-            // warmed up, which can take a while more on a slow machine
-            if (c.ear.status === 'loading') c.readyText = c.ear.progress >= 100 ? 'Getting ready — preparing my on-device ear (the first time can take a minute)…'
-                                                        : 'Getting ready — loading my on-device ear' + (c.ear.progress ? ' ' + c.ear.progress + '%' : '') + '…';
+            // why the ear is loading at all, then how far: the download
+            // reaches 100 % before the model is compiled and warmed up
+            var why = _nativeVerdict === 'blocked' ? 'the browser can not reach its speech service - ' : (!c.hasSR ? 'this browser has no speech recognizer - ' : '');
+            if (c.ear.status === 'loading') c.readyText = 'Getting ready — ' + why + (c.ear.prepared ? 'preparing my on-device ear (the first time can take a minute)…'
+                                                        : 'loading my on-device ear' + (c.ear.progress ? ' ' + c.ear.progress + '%' : '') + ' (about ' + _earSizeMb() + ' MB, once)…');
             else if (_nativeVerdict === 'blocked') c.readyText = 'Getting ready — the browser can not reach its speech service, switching to my own ear…';
             else if (!c.hasSR) c.readyText = 'Getting ready…';
             else c.readyText = 'Getting ready — checking the browser can hear…';
@@ -3015,6 +3215,23 @@ api.controller = function ($scope, $timeout, $window) {
         if (verdict === 'ok' && _nativeVerdict === 'blocked') logEvent('rec', 'the browser recognizer is reachable again');
         _nativeVerdict = verdict;
         _readyUpdate();
+    }
+    // R24 - what the ear's download weighs, said on the loading screen
+    function _earSizeMb() { return /base/.test(c.ear.model) ? (c.ear.device === 'webgpu' ? 200 : 80) : 40; }
+    // a phone: never the big model, whatever its browser offers
+    function _isPhone() {
+        try {
+            var nav = $window.navigator || {}, ua = String(nav.userAgent || '');
+            return !!(c.app && c.app.ios) || /Android|iPhone|iPad|iPod|Mobi/i.test(ua);
+        } catch (e) { return false; }
+    }
+    // auto: the clearer base model on a desktop GPU, tiny elsewhere; a
+    // phone always gets tiny (its data plan and memory), whatever is set
+    function _earPickModel() {
+        var phone = _isPhone(), gpu = false;
+        try { gpu = !!($window.navigator && $window.navigator.gpu) && !phone; } catch (eG) {}
+        c.ear.device = gpu ? 'webgpu' : 'wasm';
+        c.ear.model = phone || c.ear.size === 'tiny' ? EAR_MODEL : (c.ear.size === 'base' || gpu ? EAR_MODEL_GPU : EAR_MODEL);
     }
     var _earProc = null, _earSink = null, _earRing = [], _earRingMs = 0, _earSeg = [], _earSegMs = 0, _earVoiceMs = 0, _earInSpeech = false, _earSilenceMs = 0, _earRate = 48000;
     var _earLastPartialAt = 0, _earPartialMs = 0, _earPartialOk = true;
@@ -3042,8 +3259,15 @@ api.controller = function ($scope, $timeout, $window) {
         "  try {\n" +
         "    if (e.data.cmd === 'load') {\n" +
         "      const dtype = e.data.device === 'webgpu' ? { encoder_model: 'fp32', decoder_model_merged: 'q4' } : 'q8';\n" +
+        // one figure for all the model files together (bytes so far over
+        // bytes known), never 100 before the download is really done
+        "      const files = {};\n" +
         "      asr = await pipeline('automatic-speech-recognition', e.data.model, { dtype, device: e.data.device,\n" +
-        "        progress_callback: (p) => { if (p.status === 'progress' && p.file && /\\.onnx$/.test(p.file)) self.postMessage({ progress: Math.round(p.progress || 0), file: p.file }); } });\n" +
+        "        progress_callback: (p) => { if (p.status === 'progress' && p.file && /\\.onnx$/.test(p.file) && p.total) {\n" +
+        "          files[p.file] = [p.loaded || 0, p.total]; let got = 0, all = 0;\n" +
+        "          for (const k in files) { got += files[k][0]; all += files[k][1]; }\n" +
+        "          self.postMessage({ progress: Math.min(99, Math.floor(got / all * 100)) }); } } });\n" +
+        "      self.postMessage({ downloaded: true });\n" +
         "      const w = Date.now(); await asr(new Float32Array(16000)); self.postMessage({ loaded: true, warmMs: Date.now() - w });\n" +
         "    } else if (e.data.cmd === 'run') {\n" +
         "      const t = Date.now();\n" +
@@ -3077,20 +3301,26 @@ api.controller = function ($scope, $timeout, $window) {
         logEvent('lab', 'ear -> ' + c.ear.mode);
         if (c.ear.mode === 'on') _earStart('switched on in the Lab', true);
         else if (c.ear.mode === 'off') { _earStop('switched off in the Lab'); try { if (_earWorker) _earWorker.terminate(); } catch (e) {} _earWorker = null; c.ear.status = 'off'; _readyUpdate(); }
-        else { if (c.ear.on && /Lab/.test(c.ear.why || '')) _earStop('back to automatic'); _earLoad(); }
+        else {
+            if (c.ear.on && /Lab/.test(c.ear.why || '')) _earStop('back to automatic');
+            // R24 - automatic loads the ear only when the browser can not hear
+            if (!c.hasSR) _earStart('this browser has no speech recognizer', true);
+            else if (_nativeVerdict === 'blocked') _earStart('the browser can not reach its speech service', true);
+        }
     };
     // load the ear without engaging it: ready in standby for the moment the
-    // browser's recognizer turns out deaf (every boot, unless switched off)
-    function _earLoad() {
+    // browser's recognizer turns out deaf. R24 - only once it has shown it
+    // may be (the first deaf strike), never on every boot: the download is
+    // 40-200 MB and a working recognizer never needs it
+    function _earLoad(background) {
         if (c.ear.mode === 'off' || _earWorker || c.ear.status === 'loading') return;
         if (typeof Worker === 'undefined' || typeof Blob === 'undefined') return;
-        c.ear.status = 'loading'; c.ear.progress = 0; c.ear.error = '';
-        logEvent('rec', 'on-device ear loading in standby');
+        c.ear.status = 'loading'; c.ear.progress = 0; c.ear.error = ''; c.ear.background = !!background;
+        logEvent('rec', 'on-device ear loading in standby' + (background ? ' (in the background)' : ''));
         try {
-            var gpu = !!(navigator.gpu);
-            c.ear.device = gpu ? 'webgpu' : 'wasm';
-            // auto: the clearer base model where a GPU makes it quick, tiny elsewhere
-            c.ear.model = c.ear.size === 'base' ? EAR_MODEL_GPU : (c.ear.size === 'tiny' ? EAR_MODEL : (gpu ? EAR_MODEL_GPU : EAR_MODEL));
+            _earPickModel();
+            // the background copy is the small one on the CPU: about 40 MB, once
+            if (background && c.ear.size !== 'base') { c.ear.model = EAR_MODEL; c.ear.device = 'wasm'; }
             _earSpawn();
         } catch (e) { _earFail(String(e && e.message || e)); }
         _readyUpdate();
@@ -3108,18 +3338,17 @@ api.controller = function ($scope, $timeout, $window) {
         c.ear.status = 'loading'; c.ear.progress = 0;
         try {
             if (!_earWorker) {
-                var gpu = !!(navigator.gpu);
-                c.ear.device = gpu ? 'webgpu' : 'wasm';
-                c.ear.model = c.ear.size === 'base' ? EAR_MODEL_GPU : (c.ear.size === 'tiny' ? EAR_MODEL : (gpu ? EAR_MODEL_GPU : EAR_MODEL));
+                _earPickModel();
                 _earSpawn();
             } else {
                 _earReady();
             }
         } catch (e) { _earFail(String(e && e.message || e)); }
-        $scope.$applyAsync();
+        _readyUpdate();   // R24 - the loading screen says why and how big, at once
         return true;
     }
     function _earSpawn() {
+        c.ear.progress = 0; c.ear.prepared = false;   // a new download counts from zero once
         _earWorker = new Worker(URL.createObjectURL(new Blob([EAR_WORKER_SRC], { type: 'text/javascript' })), { type: 'module' });
         _earWorker.onmessage = _earOnMessage;
         _earWorker.onerror = function (ev) { _earLoadFailed('worker: ' + (ev && ev.message || 'failed')); };
@@ -3163,7 +3392,7 @@ api.controller = function ($scope, $timeout, $window) {
         _earWorker = null; _earBusy = false; _earQueue = [];
         // R21 - said only when the ear was needed and the browser has not
         // proven it can hear - and never over an answer
-        if (engaged && !_nativeHeardWords && !/Lab/.test(c.ear.why || '') && !_speakingNow && !_chatInFlight) speak('I could not load my on-device listening - ' + (/fetch|network|load/i.test(msg) ? 'the model would not download on this network' : 'this browser could not run it') + '. You can still type to me in the Lab.');
+        if (engaged && !_nativeHeardWords && !/Lab/.test(c.ear.why || '') && !_speakingNow && !_chatInFlight) speak('I could not load my on-device listening - ' + (/fetch|network|load/i.test(msg) ? 'the model would not download on this network' : 'this browser could not run it') + '. ' + _typeHint());
         _readyUpdate();   // R21 - the browser recognizer's clean start counts again now
         $scope.$applyAsync();
     }
@@ -3177,14 +3406,25 @@ api.controller = function ($scope, $timeout, $window) {
     }
     function _earOnMessage(ev) {
         var d = ev.data || {};
-        if (d.progress !== undefined) { c.ear.progress = d.progress; _readyUpdate(); return; }
+        // R24 - the figure shown only goes up, and "preparing" comes once,
+        // after the whole download
+        if (d.progress !== undefined) {
+            var pct = Math.min(99, Math.max(0, Math.floor(Number(d.progress) || 0)));
+            if (!c.ear.prepared && pct > c.ear.progress) { c.ear.progress = pct; _readyUpdate(); }
+            return;
+        }
+        if (d.downloaded) { c.ear.prepared = true; c.ear.progress = 100; _readyUpdate(); return; }
         if (d.loaded) {
             if (d.warmMs) logEvent('rec', 'on-device ear warmed up in ' + d.warmMs + ' ms');
             // R21 - the on-device ear is the default ear until the browser's
             // recognizer has returned words: a recognizer that starts and then
             // hears nothing (no error at all) is otherwise indistinguishable
             // from one that works, and the user would talk into nothing
-            if (_earEngageOnLoad || c.ear.mode === 'on' || !c.hasSR || !_nativeHeardWords) {
+            // R24 - a background copy waits in standby while the browser's
+            // recognizer is fine; the first deaf strike engages it
+            var bgReady = c.ear.background && !_earEngageOnLoad && c.ear.mode !== 'on' && c.hasSR && _nativeVerdict === 'ok';
+            c.ear.background = false;
+            if (!bgReady && (_earEngageOnLoad || c.ear.mode === 'on' || !c.hasSR || !_nativeHeardWords)) {
                 if (!c.ear.why) c.ear.why = !c.hasSR ? 'this browser has no speech recognizer' : (c.ear.mode === 'on' ? 'switched on in the Lab' : 'until the browser recognizer proves it can hear');
                 _earEngageOnLoad = false; _earReady();
             }
@@ -3384,6 +3624,9 @@ api.controller = function ($scope, $timeout, $window) {
         // an ear already loaded takes over at once; the browser's recognizer
         // is still healed in the background and hands back if it recovers
         if (_deafStrikes === 1 && c.ear.status === 'standby' && _earStart('the browser returned no words for clear speech')) { $scope.$applyAsync(); return; }
+        // R24 - the first sign the recognizer may be deaf: the ear starts
+        // downloading in standby while the browser is healed in steps
+        if (_deafStrikes === 1 && c.ear.status === 'off') _earLoad();
         if (_deafStrikes === 2) {
             _srNoGrammar = true;
             _fullMicRecycle('deaf: rebuilding without the grammar');
@@ -3447,10 +3690,10 @@ api.controller = function ($scope, $timeout, $window) {
             }
             c.recRunning = true;
             recRestartCount = 0;   // successful start - reset backoff counter
-            // started, and no network error for three seconds: the service is reachable
+            // started, and no network error while it settled: the service is reachable
             if (_nativeVerdict !== 'ok') {
                 if (_nativeVerdictTimer) $timeout.cancel(_nativeVerdictTimer);
-                _nativeVerdictTimer = $timeout(function () { if (_nativeVerdict === 'unknown' && c.recRunning) _nativeSaw('ok'); }, 3000);
+                _nativeVerdictTimer = $timeout(function () { if (_nativeVerdict === 'unknown' && c.recRunning) _nativeSaw('ok'); }, NATIVE_SETTLE_MS);
             }
             $scope.$applyAsync();
         };
@@ -3589,15 +3832,18 @@ api.controller = function ($scope, $timeout, $window) {
                 // as "she does not understand me" - say what it is, once.
                 _netErrStreak++;
                 c.micHealth.networkErrors = (c.micHealth.networkErrors || 0) + 1;
-                // the first refusal already switches to the ear that needs no service
-                if (_nativeVerdict !== 'ok') { _nativeSaw('blocked'); _earStart('the browser can not reach its speech service', true); }
+                // the first refusal already switches to the ear that needs no
+                // service. R24 - also after a clean start that never heard a
+                // word: the gate opens on a clean start now, and a slow refusal
+                // must still bring the ear
+                if (_nativeVerdict === 'unknown' || (_nativeVerdict === 'ok' && !_nativeHeardWords)) { _nativeSaw('blocked'); _earStart('the browser can not reach its speech service', true); }
                 if (_netErrStreak === 3) {
                     c.micHealth.speechService = 'unreachable';
                     logEvent('err', 'speech service unreachable - 3 network errors in a row (the browser can not reach its speech service: network, VPN or proxy)');
                     // the ear needs no speech service: it takes over now
                     if (!_earStart('the browser can not reach its speech service') && Date.now() - _lastNetErrSaidAt > 300000 && !_speakingNow) {
                         _lastNetErrSaidAt = Date.now();
-                        speak('I can hear sound, but the browser can not reach its speech service right now, so I can not make out words. That is usually the network or a VPN. You can still type to me in the Lab.');
+                        speak('I can hear sound, but the browser can not reach its speech service right now, so I can not make out words. That is usually the network or a VPN. ' + _typeHint());
                     }
                     $scope.$applyAsync();
                 }
@@ -4689,13 +4935,18 @@ api.controller = function ($scope, $timeout, $window) {
                 // the loading screen, ask again the moment the brain is back
                 if (r.brain_down) {
                     stopFillerChain();
-                    var again = !!(_gateReasked && _gateReasked.text === transcript && Date.now() - _gateReasked.at < 2 * 60000);
+                    var again = !!(_gateReasked && [].concat(_gateReasked.texts || _gateReasked.text).indexOf(transcript) >= 0 && Date.now() - _gateReasked.at < 2 * 60000);
                     _gateReasked = null;
                     // a question already asked again once is not held a second
-                    // time: the brain passed its ping but not the real question
-                    _gateHeld = again ? null : { text: transcript, at: Date.now() };
+                    // time: the brain passed its ping but not the real question.
+                    // R24 - held beside any held before it, never in its place,
+                    // and one said meanwhile waits too: it is not sent into a
+                    // closed gate
+                    if (!again) _gateHold(transcript);
+                    if (_queuedUtterance) { _gateHold(_queuedUtterance); _queuedUtterance = null; }
+                    if (_gateAskAfter && _gateAskAfter.length) { _gateAskAfter.forEach(function (t) { _gateHold(t); }); _gateAskAfter = []; }
                     if (c.gate) {
-                        c.gate.brain = false;
+                        c.gate.brain = false; c.gate.brainDown = true;
                         c.gate.brainText = again ? 'still too busy - try again in a minute' : 'busy - I will answer as soon as it is back';
                     }
                     logEvent('gate', again ? 'brain still busy after asking again - giving up on "' + String(transcript).substring(0, 60) + '"'
@@ -4773,8 +5024,19 @@ api.controller = function ($scope, $timeout, $window) {
         if (!_queuedUtterance) return;
         var q = _queuedUtterance;
         _queuedUtterance = null;
+        // R24 - the loading screen is up: held for when it opens, never sent
+        // into a gate that is shut (it would only come back "busy")
+        if (c.gate && !c.gate.open && !c.gate.typing) {
+            logEvent('gate', 'not ready - holding the queued "' + String(q).substring(0, 60) + '"');
+            _gateHold(q);
+            return;
+        }
         logEvent('srv', 'draining queued utterance: "' + q + '"');
-        $timeout(function () { handleHeard(q); }, 80);
+        $timeout(function () {
+            handleHeard(q);
+            // R24 - the next held question, after this one's answer
+            if (!_queuedUtterance && _gateAskAfter && _gateAskAfter.length) _queuedUtterance = _gateAskAfter.shift();
+        }, 80);
     }
 
     // R17 - the next plan hop, a moment after the last one's progress was
@@ -6898,6 +7160,7 @@ api.controller = function ($scope, $timeout, $window) {
                 // R21 - the page has not been pressed or tapped yet: say so on
                 // the loading screen instead of talking into nothing
                 _voiceBlocked = true;
+                _speechUnlocked = false;   // the next tap unlocks again
                 _gateUpdate();
             }
             if (done) done();
@@ -7410,9 +7673,9 @@ api.controller = function ($scope, $timeout, $window) {
         var prev = c.state;
         c.state = s;
         window.__netraState = s;   // R10 - 3D stage reads this per frame
-        c.stateLabel = STATE_LABEL[s] || s;
+        c.stateLabel = _stateLabel(s);
         c.liveStatus = LIVE_STATUS[s] || 'Listening';
-        if ((s === 'idle' || s === 'awaiting') && c.gate && !c.gate.open) c.liveStatus = 'Getting ready…';
+        if ((s === 'idle' || s === 'awaiting') && c.gate && !c.gate.open) c.liveStatus = c.gate.typing ? TYPING_STATUS : 'Getting ready…';
         $scope.$applyAsync();
         // R3.7 - filler chain is now started explicitly from handleHeard()
         // when the server call is dispatched. setState no longer triggers

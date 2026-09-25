@@ -302,8 +302,10 @@
      role="region"
      aria-label="Netra voice assistant">
 
-  <!-- SR live regions -->
-  <div class="netra-sr-only" role="status" aria-live="polite" aria-atomic="true">
+  <!-- SR live regions. R24 - on the Live stage its own status line (or the
+       loading card's) announces the state, so this one is off there: one
+       state, said once -->
+  <div class="netra-sr-only" role="status" aria-live="polite" aria-atomic="true" ng-if="!c.liveMode">
     {{c.stateLabel}}
   </div>
   <div class="netra-sr-only" role="alert" aria-live="assertive" aria-atomic="true">
@@ -642,15 +644,25 @@
 
     <!-- R21 - the loading screen: nothing is accepted until Netra can hear, speak and answer.
          A direct child of the stage, so it covers the Settings tab and the controls too -->
-    <div class="netra-ready" ng-if="c.gate && !c.gate.open" role="alertdialog" aria-live="assertive" aria-label="Netra is getting ready">
+    <!-- R24 - a modal dialog, named by its title and announced once; the one
+         polite status line inside changes only when a check passes or a real
+         problem shows up (never for a download percentage). Everything behind
+         it is made inert by client.js while it is up -->
+    <div class="netra-ready" ng-if="c.gate && !c.gate.open && !c.gate.typing" role="dialog" aria-modal="true"
+         aria-labelledby="netra-ready-title" aria-describedby="netra-ready-status">
       <div class="netra-ready-card">
-        <div class="netra-ready-title">{{c.gate.everOpen ? 'One moment - Netra is catching up' : 'Netra is getting ready'}}</div>
-        <div class="netra-ready-sub">Please wait - she can not take questions until all three are ready.</div>
+        <h2 class="netra-ready-title" id="netra-ready-title" tabindex="-1">{{c.gate.everOpen ? 'One moment - Netra is catching up' : 'Netra is getting ready'}}</h2>
+        <div class="netra-sr-only" id="netra-ready-status" role="status" aria-live="polite" aria-atomic="true">{{c.gate.status}}</div>
+        <div class="netra-ready-sub">{{c.gate.cantHear && c.gate.brain ? 'She can not hear in this browser, but you can type to her.' : 'Please wait - she can not take questions until all three are ready.'}}</div>
         <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.hearing}"><span class="dot"></span><b>Hearing</b><em>{{c.gate.hearingText}}</em></div>
         <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.voice}"><span class="dot"></span><b>Voice</b><em>{{c.gate.voiceText}}</em></div>
         <div class="netra-ready-row" ng-class="{'netra-ready-ok': c.gate.brain}"><span class="dot"></span><b>Answers</b><em>{{c.gate.brainText}}</em></div>
-        <button type="button" class="netra-ready-start" ng-if="c.gate.needsTap" ng-click="c.gateActivate()" autofocus
-                aria-label="Start Netra. Press Enter so the browser lets her speak.">Start Netra</button>
+        <div class="netra-ready-actions">
+          <button type="button" class="netra-ready-start" ng-if="c.gate.needsTap" ng-click="c.gateActivate()"
+                  aria-label="Start Netra. Press Enter so the browser lets her speak.">Start Netra</button>
+          <button type="button" class="netra-ready-type" ng-if="c.gate.cantHear && c.gate.brain" ng-click="c.gateType()">Type instead</button>
+          <button type="button" class="netra-ready-leave" ng-click="c.liveExit()" aria-label="Leave Netra Live">Leave</button>
+        </div>
       </div>
     </div>
     <div class="netra-stage-center">

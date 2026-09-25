@@ -108,7 +108,8 @@ T.test('iOS always gets the Start tap, and the tap unlocks speech inside the tap
     cl.set('TTS', { speak: function (u) { spoken.push(u); } });
     cl.set('_gateUpdate', function () {});
     cl.set('_ctrlDestroyed', false);
-    f._onPageActivated({ type: 'pointerdown' });
+    // the tap's touchend: the event WebKit counts as the gesture
+    f._onPageActivated({ type: 'touchend' });
     T.eq(spoken.length, 1);
     T.eq(spoken[0].volume, 0, 'silent');
     T.eq(f._needsActivation(), false, 'after the tap');

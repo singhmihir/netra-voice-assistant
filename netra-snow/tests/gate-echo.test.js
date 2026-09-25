@@ -106,9 +106,9 @@ T.test('the loading screen never sticks: a failed ear lets a working recognizer 
     global.Worker = global.Worker || function () {};   // a browser that can run the ear
     cl.set('_nativeVerdict', 'ok');
     f._readyUpdate();
-    T.eq(c.gate.open, false, 'the ear is still coming: wait for it or for words');
+    T.eq(c.gate.open, true, 'a clean start is enough: no waiting for an ear that is still downloading');
     f._earFail('network: model would not download');
-    T.eq(c.ready, true, 'no ear: the recognizer that started cleanly is what there is');
+    T.eq(c.ready, true, 'a failed ear changes nothing for a recognizer that works');
     T.eq(c.gate.open, true);
     // words from the recognizer count the moment they arrive
     var cl2 = page(), f2 = cl2.fn, c2 = cl2.c;

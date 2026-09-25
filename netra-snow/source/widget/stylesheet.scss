@@ -1899,9 +1899,14 @@
    Settings tab and the install button included), a solid card, large
    full-contrast text; rows are explicitly transparent so no portal theme
    class can paint over them (the theme's .ok once did: grey box, white text) */
-.netra-ready { position: absolute; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; background: rgba(8, 6, 14, 0.74); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
-.netra-ready-card { max-width: 440px; width: 100%; box-sizing: border-box; padding: 24px 24px 22px; border-radius: 20px; background: #16131f; border: 1px solid rgba(255, 255, 255, 0.14); color: #ffffff; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55); text-align: left; }
-.netra-ready-title { font-size: 22px; line-height: 1.25; font-weight: 700; color: #ffffff; margin: 0 0 6px; }
+/* R24 - clear of the notch and the home bar; a card taller than the screen
+   (a phone held sideways) scrolls inside itself, Start never below the edge */
+.netra-ready { position: absolute; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; box-sizing: border-box; background: rgba(8, 6, 14, 0.74); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    padding: calc(12px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); }
+.netra-ready-card { max-width: 440px; width: 100%; max-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; box-sizing: border-box; padding: 24px 24px 22px; border-radius: 20px; background: #16131f; border: 1px solid rgba(255, 255, 255, 0.14); color: #ffffff; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55); text-align: left; }
+.netra-ready-title { font-size: 22px; line-height: 1.25; font-weight: 700; color: #ffffff; margin: 0 0 6px; padding: 0; font-family: inherit; letter-spacing: normal; }
+.netra-ready-title:focus { outline: none; }
+.netra-ready-title:focus-visible { outline: 2px solid #ffffff; outline-offset: 4px; border-radius: 4px; }
 .netra-ready-sub { font-size: 15px; line-height: 1.45; color: #d9d6e2; opacity: 1; margin: 0 0 16px; }
 .netra-ready .netra-ready-row { display: flex; align-items: flex-start; gap: 12px; padding: 11px 0; border-top: 1px solid rgba(255, 255, 255, 0.12); font-size: 16px; line-height: 1.4; color: #ffffff; background: transparent !important; }
 .netra-ready .netra-ready-row b { min-width: 78px; flex: 0 0 auto; font-weight: 600; color: #ffffff; }
@@ -1910,12 +1915,27 @@
 .netra-ready-row.netra-ready-ok .dot { background: #3ddc84; animation: none; }
 @keyframes netra-ready-pulse { from { opacity: .45; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .netra-ready-row .dot { animation: none; } }
-.netra-ready-start { margin-top: 16px; width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #4285F4; color: #fff; font-size: 17px; font-weight: 700; cursor: pointer; }
-.netra-ready-start:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+/* Start (when the browser needs a press), Type instead (when she can not
+   hear), and Leave: the controls the card covers are never out of reach */
+.netra-ready-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.netra-ready-actions button { flex: 1 1 100%; min-height: 48px; border-radius: 12px; font-size: 17px; font-weight: 700; cursor: pointer; }
+.netra-ready-start, .netra-ready-type { border: 0; background: #1967d2; color: #fff;   /* 5.4:1 with white (WCAG AA) */ }
+.netra-ready-actions .netra-ready-leave { flex: 0 0 auto; min-height: 44px; margin-left: auto; padding: 0 18px; border: 1px solid rgba(255, 255, 255, 0.4); background: transparent; color: #ffffff; font-size: 15px; font-weight: 600; }
+.netra-ready-actions button:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
 @media (max-width: 420px) {
     .netra-ready-card { padding: 20px 18px 18px; }
     .netra-ready .netra-ready-row { gap: 10px; }
     .netra-ready .netra-ready-row b { min-width: 70px; }
+}
+/* a phone held sideways (844x390, 667x375): compact rows, buttons side by side */
+@media (max-height: 520px) and (orientation: landscape) {
+    .netra-ready-card { max-width: 600px; padding: 12px 18px; border-radius: 16px; }
+    .netra-ready-title { font-size: 18px; margin: 0 0 2px; }
+    .netra-ready-sub { font-size: 13px; line-height: 1.35; margin: 0 0 6px; }
+    .netra-ready .netra-ready-row { padding: 5px 0; font-size: 14px; line-height: 1.35; }
+    .netra-ready-row .dot { margin-top: 4px; }
+    .netra-ready-actions { margin-top: 8px; gap: 8px; }
+    .netra-ready-actions button { flex: 1 1 auto; min-height: 44px; font-size: 15px; }
 }
 .netra-stage-status {
     font-size: 17px;
