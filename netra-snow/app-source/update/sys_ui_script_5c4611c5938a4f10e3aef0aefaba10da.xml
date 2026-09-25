@@ -4,14 +4,16 @@
  * (flowing gradient light on the tap target; an opaque canvas carrying its own halo)
  * and Gemini Live's glow at the foot (repainted at 1/3 rate). On software GL the
  * compositor cost grows with canvas area, so the rest is a plain CSS background.
- * Canvas2D fallback without WebGL. Reads __netraState/__netraLevel/__netraBands.
- * API: window.NetraStage3D = { mount(host) -> bool, unmount(), fps() -> number }. ES5.
+ * Canvas2D fallback without WebGL. Reads __netraState/__netraLevel/__netraBands, plus
+ * __netraMode (muted / paused / ended: a look of its own) and __netraCalm (Calm visuals).
+ * The orb draws at most ~30 fps.
+ * API: window.NetraStage3D = { mount(host) -> bool, unmount(), fps() -> number, peek(st) }. ES5.
  */
 window.NetraStage3D = (function () {
     'use strict';
 
     var root = null, O = null, G = null, host = null, sprites = null;
-    var raf = 0, mq = null, reduced = false, onVis = null, onMq = null, onResize = null;
+    var raf = 0, mq = null, mqReduced = false, reduced = false, onVis = null, onMq = null, onResize = null;
     var lastTs = 0, lastDraw = 0, fpsEma = 0, age = 0, winN = 0, slowN = 0, tier = 0, frameNo = 0;
     var cssW = 0, cssH = 0, measAt = -1e9, ox = 0, oy = 0, oR = 0;
     var lvF = 0, lvS = 0, bLo = 0, bHi = 0, errP = 0, lastSt = '';
@@ -109,7 +111,20 @@ window.NetraStage3D = (function () {
         else if (st === 'speaking') { T.spd = 1.3; T.warm = 0.85; T.gain = 0.95; T.glowH = 0.14; T.glowG = 0.66; T.cool = 0.1; T.talk = 0; T.voice = 1; }
         else if (st === 'dormant') { T.spd = 0.3; T.dim = 1; T.gain = 0.4; T.glowH = 0.1; T.glowG = 0.2; T.cool = 0; T.warm = 0; T.talk = 0; }
         else if (st === 'boot') { T.gain = 0.6; T.glowG = 0.35; T.talk = 0; }
+        // the page's mode wins: mic off is grey and still with no glow, paused a dim
+        // breath, ended dark - each state has a look of its own
+        var m = window.__netraMode;
+        if (m === 'muted') { T.spd = 0; T.dim = 1; T.gain = 0.32; T.glowG = 0; T.glowH = 0.06; T.talk = 0; T.voice = 0; T.think = 0; T.warm = 0; T.cool = 0; }
+        else if (m === 'paused') { T.spd = 0.25; T.dim = 0.7; T.gain = 0.5; T.glowG = 0.12; T.glowH = 0.08; }
+        else if (m === 'ended') { T.spd = 0; T.dim = 1; T.gain = 0.25; T.glowG = 0; T.talk = 0; T.voice = 0; T.think = 0; }
     }
+    // the foot glow: rises with your voice while listening (talk) and with hers while
+    // she speaks (voice); a slow ~0.23 Hz swell while she works (well under 3 Hz)
+    function glowHeight() {
+        return P.glowH + (0.16 * P.talk + 0.08 * P.voice) * lvS + 0.07 * P.think * (0.5 + 0.5 * Math.sin(swPh * 0.55));
+    }
+    // breathing stops when the orb holds still (mic off, ended)
+    function breath() { return reduced ? 0 : 0.022 * (1 - 0.5 * P.dim) * Math.min(1, P.spd * 4) * Math.sin(brPh); }
 
     function css() {
         if (document.getElementById('ngs-css')) return;
@@ -169,12 +184,19 @@ window.NetraStage3D = (function () {
     // every ~500 ms and on resize; buffers are only touched when a size changes
     function measure(now) {
         measAt = now;
-        var hr = host.getBoundingClientRect(), wrap = document.querySelector('.netra-stage-blob-wrap'), r = wrap && wrap.getBoundingClientRect(), box, R, half, s, x, y;
+        // Calm visuals (the page's setting) or the system's reduced motion: a composed still
+        var calm = mqReduced || !!window.__netraCalm;
+        if (calm !== reduced) { reduced = calm; if (O) O.sig = -1; }
+        var hr = host.getBoundingClientRect(), wrap = document.querySelector('.netra-stage-blob-wrap'), r = wrap && wrap.getBoundingClientRect(), box, R, half, s, x, y, gone;
         cssW = hr.width || window.innerWidth || 1280; cssH = hr.height || window.innerHeight || 800;
         if (r && r.width > 10) { ox = r.left + r.width / 2 - hr.left; oy = r.top + r.height / 2 - hr.top; box = Math.min(r.width, r.height); }
         else { ox = cssW * 0.5; oy = cssH * 0.39; box = Math.min(cssW, cssH) * 0.58; }
         R = Math.round(0.36 * box); half = Math.round(OK * R);
         x = Math.round(ox - half) + 'px'; y = Math.round(oy - half) + 'px'; s = O.cv.style;
+        // the page gave the orb's row away (the keyboard is open on a small phone):
+        // no orb, rather than a big one painted over the captions at the centre
+        gone = r && !(r.width > 10) && wrap.getClientRects && wrap.getClientRects().length ? 'hidden' : '';
+        if (s.visibility !== gone) s.visibility = gone;
         if (R !== oR || s.left !== x || s.top !== y) { oR = R; s.left = x; s.top = y; s.width = s.height = 2 * half + 'px'; }
         x = Math.min(2 * half * O.scale * 0.8, 180); size(O, x, x);
         if (G) {   // the glow keeps its pixel height on tall screens: clear of the controls, less area to composite
@@ -187,7 +209,7 @@ window.NetraStage3D = (function () {
     function drawOrb(swell) {
         var gl = O.gl, U = O.U, lift = lvS * (0.5 * P.talk + 0.4 * P.voice), p3 = tFlow * 0.7, p2 = tFlow * 1.3;
         gl.uniform2f(U.uR, O.w, O.h);
-        gl.uniform4f(U.uA, tFlow, shPh, 1 + (reduced ? 0 : 0.022 * (1 - 0.5 * P.dim) * Math.sin(brPh)), 0.14 * Math.sin(tFlow * 0.31));
+        gl.uniform4f(U.uA, tFlow, shPh, 1 + breath(), 0.14 * Math.sin(tFlow * 0.31));
         gl.uniform4f(U.uL, swell, lvS, bLo * P.voice, bHi * P.voice);
         gl.uniform4f(U.uS, P.warm, P.think, P.dim, errP);
         gl.uniform4f(U.uG, P.gain * (1 + lift * 0.25) + (reduced ? 0 : 0.05 * P.think * Math.sin(brPh * 3.5)), P.cool + 0.5 * lvS * P.talk, Math.cos(swPh), Math.sin(swPh));
@@ -199,7 +221,7 @@ window.NetraStage3D = (function () {
         var gl = G.gl, U = G.U, lift = lvS * (0.55 * P.talk + 0.45 * P.voice);
         gl.uniform2f(U.uR, G.w, G.h);
         gl.uniform4f(U.uA, tFlow, GH, P.dim, errP);
-        gl.uniform4f(U.uG, P.glowH + 0.08 * lift, P.glowG + 0.34 * lift, P.cool + 0.6 * lvS * P.talk, P.warm * P.voice + 0.25 * P.think);
+        gl.uniform4f(U.uG, glowHeight(), P.glowG + 0.34 * lift, P.cool + 0.6 * lvS * P.talk, P.warm * P.voice + 0.25 * P.think);
         gl.uniform4f(U.uW, 0.24 + 0.08 * Math.sin(tFlow * 0.09), 0.78 + 0.07 * Math.sin(tFlow * 0.07 + 2), 0.3 + 0.22 * Math.sin(tFlow * 0.05), 0.72 + 0.2 * Math.sin(tFlow * 0.041 + 2));
         gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -225,7 +247,7 @@ window.NetraStage3D = (function () {
     }
     function blot(c2, i, x, y, w, h, a) { if (a > 0.004) { c2.globalAlpha = a > 1 ? 1 : a; c2.drawImage(sprites[i], x - w / 2, y - h / 2, w, h); } }
     function orb2D(swell) {
-        var c2 = O.c2, w = O.w, t = tFlow, cx = w / 2, cy = cx, R = w / (2 * OK) * (1 + swell) * (reduced ? 1 : 1 + 0.022 * Math.sin(brPh));
+        var c2 = O.c2, w = O.w, t = tFlow, cx = w / 2, cy = cx, R = w / (2 * OK) * (1 + swell) * (1 + breath());
         var g = P.gain * (1 + 0.25 * lvS * (0.5 * P.talk + 0.4 * P.voice)), k = g * (1 - 0.6 * P.dim), wm = P.warm;
         c2.globalCompositeOperation = 'source-over'; c2.globalAlpha = 1; c2.fillStyle = BG; c2.fillRect(0, 0, w, w);
         c2.globalCompositeOperation = 'lighter';
@@ -245,7 +267,7 @@ window.NetraStage3D = (function () {
     }
     function glow2D() {
         var c2 = G.c2, w = G.w, h = G.h, t = tFlow, lift = lvS * (0.55 * P.talk + 0.45 * P.voice), i, warm = P.warm * P.voice;
-        var gh = (P.glowH + 0.08 * lift) / GH * h * 3.3, ga = (P.glowG + 0.34 * lift) * 0.5 * (1 - 0.6 * P.dim);
+        var gh = glowHeight() / GH * h * 3.3, ga = (P.glowG + 0.34 * lift) * 0.5 * (1 - 0.6 * P.dim);
         c2.globalCompositeOperation = 'source-over'; c2.globalAlpha = 1; c2.clearRect(0, 0, w, h);
         c2.globalCompositeOperation = 'lighter';
         blot(c2, 0, w * 0.5, h, w * 1.5, gh * 0.9, ga * 0.7);
@@ -307,7 +329,8 @@ window.NetraStage3D = (function () {
             i = 1;
             if (P.dim > 0.9) { i = 2; k = 6; }   // muted: barely moving, so half-rate saves the CPU
             frameNo++;
-            dO = frameNo % i === 0;
+            // ~30 fps at most for the orb, whatever the display's refresh rate
+            dO = frameNo % i === 0 && ts - lastDraw >= 32;
             dG = frameNo % k === 1;
         } else {
             // calm: a composed still, redrawn only on visible change, at most ~8/s
@@ -329,7 +352,8 @@ window.NetraStage3D = (function () {
         if (!el) return false;
         try {
             host = el; css();
-            reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+            mqReduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+            reduced = mqReduced || !!window.__netraCalm;
             root = document.createElement('div'); root.className = 'ngs-stage'; root.setAttribute('aria-hidden', 'true');
             host.appendChild(root);
             targets(window.__netraState || 'boot');
@@ -345,7 +369,7 @@ window.NetraStage3D = (function () {
             window.addEventListener('resize', onResize);
             if (window.matchMedia) {
                 mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-                onMq = function () { reduced = mq.matches; O.sig = -1; };
+                onMq = function () { mqReduced = mq.matches; reduced = mqReduced || !!window.__netraCalm; O.sig = -1; };
                 if (mq.addEventListener) mq.addEventListener('change', onMq); else if (mq.addListener) mq.addListener(onMq);
             }
             if (!document.hidden) raf = requestAnimationFrame(frame);
@@ -372,6 +396,9 @@ window.NetraStage3D = (function () {
 
     function fps() { return Math.round(fpsEma); }
 
-    return { mount: mount, unmount: unmount, fps: fps };
+    // tests: the targets a state (and the page's __netraMode) asks for
+    function peek(st) { targets(st); return { spd: T.spd, glowG: T.glowG, glowH: T.glowH, dim: T.dim, think: T.think }; }
+
+    return { mount: mount, unmount: unmount, fps: fps, peek: peek };
 })();
-]]></script><script_name>netra_stage3d</script_name><sys_class_name>sys_ui_script</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-11 08:08:39</sys_created_on><sys_id>5c4611c5938a4f10e3aef0aefaba10da</sys_id><sys_mod_count>9</sys_mod_count><sys_name>x_196061_netra_v1.netra_stage3d</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_ui_script_5c4611c5938a4f10e3aef0aefaba10da</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-24 23:43:25</sys_updated_on><ui_type>0</ui_type><use_scoped_format>false</use_scoped_format></sys_ui_script></record_update>
+]]></script><script_name>netra_stage3d</script_name><sys_class_name>sys_ui_script</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-07-11 08:08:39</sys_created_on><sys_id>5c4611c5938a4f10e3aef0aefaba10da</sys_id><sys_mod_count>10</sys_mod_count><sys_name>x_196061_netra_v1.netra_stage3d</sys_name><sys_package display_value="Netra Voice Assistant" source="x_196061_netra_v1">26a2121093424710e3aef0aefaba106a</sys_package><sys_policy/><sys_scope display_value="Netra Voice Assistant">26a2121093424710e3aef0aefaba106a</sys_scope><sys_update_name>sys_ui_script_5c4611c5938a4f10e3aef0aefaba10da</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-25 02:58:10</sys_updated_on><ui_type>0</ui_type><use_scoped_format>false</use_scoped_format></sys_ui_script></record_update>
