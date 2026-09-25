@@ -271,7 +271,7 @@ T.test('a new size is kept and reloads a loaded ear - engaged or in standby - an
     f._setEarSize('small');
     T.eq(stored.netra_ear_size, 'small'); T.eq(c.ear.size, 'small'); T.eq(spawned, []);
     f._setEarSize('huge');
-    T.eq(c.ear.size, 'auto', 'an unknown size is auto');
+    T.eq(c.ear.size, 'small', 'an unknown size is Best');
     // engaged: reloaded at the new size, still engaged
     c.ear.on = true; c.ear.status = 'on'; c.ear.why = 'the browser can not reach its speech service'; c.ear.model = 'onnx-community/whisper-base.en'; c.ear.device = 'wasm';
     cl.set('_earWorker', { terminate: noop });

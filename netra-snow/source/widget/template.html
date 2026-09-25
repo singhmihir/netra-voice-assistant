@@ -741,10 +741,12 @@
           <select id="netra-set-lang" class="netra-set-select" ng-model="c.recLang" ng-change="c.labSetLang()"
                   ng-options="l as c.langName(l) for l in c.recLangs"></select>
           <!-- v7.8 - the on-device ear's size: accuracy first, the cost said plainly -->
+          <div ng-if="!(c.data && c.data.is_guest)">
           <label class="netra-set-label" for="netra-set-ear">Hearing</label>
           <select id="netra-set-ear" class="netra-set-select" ng-model="c.ear.size" ng-change="c.setEarSize()" aria-describedby="netra-set-ear-hint"
                   ng-options="s as c.earSizeLabel(s) for s in c.earSizes"></select>
           <p class="netra-set-hint" id="netra-set-ear-hint">Netra's own on-device hearing, used when the browser's recognizer is blocked; Best is the most accurate and slower. Now: {{c.earSummary()}}</p>
+          </div>
           <label class="netra-set-label" for="netra-set-gain">Microphone sensitivity</label>
           <input id="netra-set-gain" class="netra-set-range" type="range" min="0.5" max="3" step="0.1"
                  ng-model="c.micGain" ng-change="c.labSetGain()" aria-describedby="netra-set-gain-hint"/>

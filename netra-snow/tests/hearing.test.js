@@ -77,16 +77,11 @@ function body(src) {
 
 /* ---- N1: the recognizer's language ---- */
 
-T.test('with no stored choice the browser recognizer starts in the browser\'s own English, else en-US', function () {
-    var f = N.loadClient().fn;
-    [['en-IN', 'en-IN'], ['en-GB', 'en-GB'], ['en-gb', 'en-GB'], ['en-AU', 'en-AU'], ['en-US', 'en-US'],
-     ['en-NZ', 'en-US'], ['en', 'en-US'], ['hi-IN', 'en-US'], ['fr-FR', 'en-US'], ['ja', 'en-US'], ['', 'en-US'], [undefined, 'en-US']]
-        .forEach(function (x) { T.eq(f._defaultRecLang(x[0], LANGS), x[1], 'navigator.language ' + JSON.stringify(x[0])); });
-    T.eq(f._defaultRecLang('en-IN', []), 'en-US', 'only a language the page offers');
-    // the page starts from it, and a stored choice still wins
-    T.match(CLIENT, /c\.recLang = _defaultRecLang\(\$window\.navigator && \$window\.navigator\.language, c\.recLangs\);/);
+T.test('everyone starts in Indian English; a stored choice still wins', function () {
+    T.match(CLIENT, /c\.recLang = 'en-IN';/);
     T.match(CLIENT, /localStorage\.getItem\('netra_lang_v2'\) \|\| c\.recLang;/);
-    T.notMatch(CLIENT, /localStorage\.getItem\('netra_lang_v2'\) \|\| 'en-US'/);
+    T.notMatch(CLIENT, /_defaultRecLang/);
+    T.match(CLIENT, /c\.micGain = 1\.5;/, 'the default mic sensitivity');
 });
 
 /* ---- N2: forgiving mis-heard command words ---- */

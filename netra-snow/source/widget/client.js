@@ -534,10 +534,10 @@ api.controller = function ($scope, $timeout, $window) {
     var _micGainNode = null;
     c.labMute = false;
     c.recLangs = ['en-IN', 'en-US', 'en-GB', 'en-AU', 'hi-IN', 'es-ES', 'fr-FR', 'de-DE', 'ja-JP'];
-    // no stored choice: the browser's own English (en-IN, en-GB) knows the
-    // user's accent best; any other locale keeps en-US, the most widely served
-    c.recLang = _defaultRecLang($window.navigator && $window.navigator.language, c.recLangs);
-    c.micGain = 1.0;
+    // v7.9 - everyone starts in Indian English; a stored choice still wins
+    // (the deaf-strike and language-not-supported fallbacks to en-US stay)
+    c.recLang = 'en-IN';
+    c.micGain = 1.5;   // v7.9 - the default sensitivity, for every user and Guest
     try {
         c.recLang = localStorage.getItem('netra_lang_v2') || c.recLang;
         var g = parseFloat(localStorage.getItem('netra_mic_gain'));
@@ -560,13 +560,6 @@ api.controller = function ($scope, $timeout, $window) {
         try { localStorage.setItem('netra_mic_gain', String(c.micGain)); } catch (e) {}
         _micGainApply();   // muted stays at zero
     };
-    // the browser's English locale when the page offers it, else en-US (the
-    // deaf-strike and language-not-supported fallbacks to en-US stay)
-    function _defaultRecLang(navLang, langs) {
-        var m = String(navLang || '').match(/^en-([a-z]{2})$/i);
-        var want = m ? 'en-' + m[1].toUpperCase() : '';
-        return (want && (langs || []).indexOf(want) >= 0) ? want : 'en-US';
-    }
     c.labSetMute = function () {
         try { localStorage.setItem('netra_lab_mute', c.labMute ? '1' : '0'); } catch (e) {}
         logEvent('lab', 'TTS ' + (c.labMute ? 'muted' : 'unmuted'));
@@ -3740,10 +3733,12 @@ api.controller = function ($scope, $timeout, $window) {
     var DEAF_WINDOW_MS = 10000;   // judged every ten seconds
     var DEAF_LOUD_MS = 1500;      // this much speech with no words is a strike
     var EAR_HALLUCINATION_RE = /^[\s\W]*$|^\[.*\]$|^\(.*\)$|^(you|thank you|thanks|thanks for watching|bye|so|the end|okay)[.!]?$/i;
-    c.ear = { mode: 'auto', size: 'auto', on: false, status: 'off', progress: 0, prepared: false, model: EAR_MODEL_TINY, device: 'wasm', error: '', heard: 0, why: '', lastMs: 0 };
-    try { c.ear.mode = localStorage.getItem('netra_ear') || 'auto'; c.ear.size = localStorage.getItem('netra_ear_size') || 'auto'; } catch (eEM) {}
+    c.ear = { mode: 'auto', size: 'small', on: false, status: 'off', progress: 0, prepared: false, model: EAR_MODEL_TINY, device: 'wasm', error: '', heard: 0, why: '', lastMs: 0 };
+    try { c.ear.mode = localStorage.getItem('netra_ear') || 'auto'; c.ear.size = localStorage.getItem('netra_ear_size') || 'small'; } catch (eEM) {}
     if (c.ear.mode !== 'on' && c.ear.mode !== 'off') c.ear.mode = 'auto';
-    if (!_earSizeKnown(c.ear.size)) c.ear.size = 'auto';   // auto = small on a desktop GPU, base on a desktop CPU, tiny on a phone
+    // v7.9 - Best (small) for everyone by default; a Guest is always on Best
+    // and Settings offers no Hearing choice to a Guest (a phone stays tiny)
+    if (!_earSizeKnown(c.ear.size) || (c.data && c.data.is_guest)) c.ear.size = 'small';
     c.earSizes = ['auto', 'tiny', 'base', 'small'];
     c.earSizeLabel = function (size) { return _earSizeLabel(size); };
     var _earWorker = null, _earBusy = false, _earQueue = [], _earNativeSeen = 0, _earSaid = false, _earEngageOnLoad = false;
@@ -4349,7 +4344,8 @@ api.controller = function ($scope, $timeout, $window) {
     // loaded (on, loading, or waiting in standby) is reloaded at the new
     // size - unless the pick is the same model (a phone stays tiny)
     function _setEarSize(size) {
-        c.ear.size = _earSizeKnown(size) ? size : 'auto';
+        c.ear.size = _earSizeKnown(size) ? size : 'small';
+        if (c.data && c.data.is_guest) c.ear.size = 'small';   // v7.9 - a Guest is always on Best
         try { localStorage.setItem('netra_ear_size', c.ear.size); } catch (e) {}
         logEvent('lab', 'ear model -> ' + c.ear.size);
         // after a failed load (a refused download, no memory for the big
