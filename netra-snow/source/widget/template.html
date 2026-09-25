@@ -339,6 +339,13 @@
     border-radius: 50%;
     box-shadow: 0 0 0 12px rgba(8, 6, 14, 0.85);
   }
+  /* on the near-black Gemini stage a thinner Gemini-blue ring is plenty
+     (#8ab4f8 is 9:1 against it) and frames the orb instead of boxing it */
+  .netra-stage.netra-3d-on .netra-stage-blob-wrap:focus-visible {
+    outline: 2px solid #8ab4f8 !important;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
   /* a phone held sideways: a short caption instead of none */
   @media (max-height: 520px) and (orientation: landscape) {
     .netra-stage .netra-stage-caption {
