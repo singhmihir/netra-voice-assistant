@@ -247,8 +247,10 @@ journey (hunters per area, then an adversarial verifier per finding; 13 of
 **Defaults for everyone (v7.9).** Hearing is **Best** (small) by default for
 every user and Guest, and a Guest gets no Hearing choice in Settings (a
 phone still stays on tiny); the microphone sensitivity starts at 1.5x; the
-recognizer starts in **English (India)** for everyone. A signed-in user's own
-choices still win and persist.
+recognizer starts in **English (India)** for everyone; Netra's voice is
+**Sonia (British English)** by default - the neural Sonia on the Edge engine,
+and the device's own Sonia on the browser engine wherever it has her. A
+signed-in user's own choices still win and persist.
 
 **Hearing, accuracy first (v7.8).** "It fails to catch simple phrases I
 speak" - so the on-device ear now takes the most accurate Whisper its

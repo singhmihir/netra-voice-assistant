@@ -231,3 +231,18 @@ T.test('Y3: the voices get the same "12:25 PM" - no step of the speech path rewr
 });
 
 T.run(__filename);
+
+T.test('v7.9 - Sonia (British English) is the default voice on both engines', function () {
+    T.match(SRC, /c\.edgeVoice = 'en-GB-SoniaNeural';/);
+    T.match(SRC, /var EDGE_VOICES = \[\s*'en-GB-SoniaNeural',/);
+    var p = page(); var c = p.c;
+    var mk = function (name, lang, local) { return { name: name, lang: lang, localService: !!local }; };
+    var list = [mk('Samantha', 'en-US', true), mk('Microsoft Aria Online (Natural) - English (United States)', 'en-US', false), mk('Microsoft Sonia Online (Natural) - English (United Kingdom)', 'en-GB', false)];
+    p.set('TTS', { speaking: false, pending: false, cancel: noop, getVoices: function () { return list; }, speak: noop }); c.hasTTS = true;
+    p.set('forcedVoiceName', ''); c.voicePick = '';
+    T.eq(p.f.chooseVoice().name, list[2].name, 'the online Sonia beats an installed voice');
+    list.push(mk('Sonia', 'en-GB', true));
+    T.eq(p.f.chooseVoice().name, 'Sonia', 'an installed Sonia beats the online one');
+    p.set('forcedVoiceName', 'Samantha');
+    T.eq(p.f.chooseVoice().name, 'Samantha', 'a picked voice still wins');
+});

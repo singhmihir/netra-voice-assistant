@@ -7419,15 +7419,16 @@ api.controller = function ($scope, $timeout, $window) {
     // expressive than the older en-IN voices (closest free match to the
     // "GPT Live" sound) and handles Hinglish code-switching natively.
     // User's pick persists in localStorage via the dev-panel voice picker.
-    c.edgeVoice = 'en-US-AvaMultilingualNeural';
+    c.edgeVoice = 'en-GB-SoniaNeural';   // v7.9 - Sonia (British English) is Netra's voice by default
     var EDGE_VOICES = [
-        'en-US-AvaMultilingualNeural',   // newest gen, most human (default)
+        'en-GB-SoniaNeural',             // Netra's voice (default)
+        'en-US-AvaMultilingualNeural',   // newest gen, most human
         'en-US-EmmaMultilingualNeural',  // newest gen, brighter
         'en-US-AndrewMultilingualNeural',// newest gen, male
         'en-US-BrianMultilingualNeural', // newest gen, male casual
         'en-US-JennyNeural', 'en-US-AriaNeural',
         'en-IN-NeerjaNeural', 'en-IN-AashiNeural', 'en-IN-AnanyaNeural',
-        'hi-IN-SwaraNeural', 'en-GB-SoniaNeural'
+        'hi-IN-SwaraNeural'
     ];
     c.edgeVoices = EDGE_VOICES;   // R13 - the setup panel lists them too
     // R7 - Edge audio: 48 -> 96 kbps. The low bitrate was a big part of
@@ -8452,6 +8453,11 @@ api.controller = function ($scope, $timeout, $window) {
             var fv = voices.find(function (vv) { return vv.name === forcedVoiceName; });
             if (fv) return fv;
         }
+        // v7.9 - Sonia (English, United Kingdom) is Netra's voice wherever
+        // this device has her: an installed copy first, else the online one
+        var sonia = voices.find(function (vv) { return /Sonia/i.test(vv.name || '') && vv.localService; }) ||
+                    voices.find(function (vv) { return /Sonia/i.test(vv.name || ''); });
+        if (sonia) return sonia;
         // R13 FIX - the browser fallback now honors the picked voice too:
         // match the same speaker name first (Edge exposes "Microsoft Ava
         // Online (Natural)..." locally), then the same locale, and only
@@ -8495,7 +8501,7 @@ api.controller = function ($scope, $timeout, $window) {
 
         // Tier 1: top-shelf neural voices by exact name, best first.
         var premium = [
-            'Ava', 'Aria', 'Emma', 'Jenny', 'Michelle', 'Sonia', 'Libby',
+            'Sonia', 'Ava', 'Aria', 'Emma', 'Jenny', 'Michelle', 'Libby',
             'Google US English', 'Google UK English Female',
             'Samantha', 'Karen', 'Moira', 'Tessa', 'Neerja', 'Heera'
         ];
